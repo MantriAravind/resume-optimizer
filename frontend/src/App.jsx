@@ -4,14 +4,40 @@ import './App.css'
 function App() {
   const [resumeText, setResumeText] = useState('')
   const [jobText, setJobText] = useState('')
-  const [result, setResult] = useState('Your ATS score and optimized resume will appear here.')
+  const [result, setResult] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
-  function handleOptimize() {
+  async function handleOptimize() {
     if (resumeText.trim() === '' || jobText.trim() === '') {
-      setResult('Please fill in both your resume and the job description.')
+      setError('Please fill in both your resume and the job description.')
       return
     }
-    setResult(`Resume length: ${resumeText.length} characters. Job description length: ${jobText.length} characters.`)
+
+    setError('')
+    setResult('')
+    setLoading(true)
+
+    try {
+      const response = await fetch('http://localhost:3001/optimize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resumeText, jobText })
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        setError(data.error || 'Something went wrong.')
+        return
+      }
+
+      setResult(data)
+    } catch (err) {
+      setError('Could not connect to the server. Make sure the backend is running.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -40,12 +66,20 @@ function App() {
           ></textarea>
         </section>
 
-        <button onClick={handleOptimize}>Optimize My Resume</button>
+        <button onClick={handleOptimize} disabled={loading}>
+          {loading ? 'Optimizing...' : 'Optimize My Resume'}
+        </button>
 
-        <section>
-          <h2>Results</h2>
-          <p>{result}</p>
-        </section>
+        {error && <p style={{ color: 'red' }}>{error}</p>}
+
+        {result && (
+          <section>
+            <h2>Results</h2>
+            <p><strong>ATS Score:</strong> {result.score}/100</p>
+            <p><strong>Optimized Resume:</strong></p>
+            <p>{result.optimizedResume}</p>
+          </section>
+        )}
       </main>
     </>
   )
