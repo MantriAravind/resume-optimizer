@@ -19,7 +19,7 @@ function App() {
     setLoading(true)
 
     try {
-      const response = await fetch('http://localhost:3001/optimize', {
+      const response = await fetch('https://resume-optimizer-cuii.onrender.com/optimize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resumeText, jobText })
