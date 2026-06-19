@@ -1,0 +1,126 @@
+.auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #172554 0%, #1E40AF 100%);
+  padding: 2rem;
+}
+
+.auth-card {
+  background: #ffffff;
+  border-radius: 20px;
+  padding: 2.75rem;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+
+.auth-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  margin-bottom: 2rem;
+}
+
+.auth-logo-mark {
+  width: 32px;
+  height: 32px;
+  background: #2563EB;
+  color: white;
+  font-weight: 800;
+  font-size: 14px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.auth-logo-text {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 700;
+  font-size: 1rem;
+  color: #111827;
+}
+
+.auth-title {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 1.625rem;
+  font-weight: 800;
+  color: #111827;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.5rem;
+}
+
+.auth-sub {
+  font-size: 0.9375rem;
+  color: #6B7280;
+  margin-bottom: 2rem;
+  line-height: 1.5;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-bottom: 1.5rem;
+}
+
+.auth-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auth-field label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: #374151;
+}
+
+.auth-field input {
+  padding: 0.75rem 1rem;
+  border: 1.5px solid #E5E7EB;
+  border-radius: 10px;
+  font-size: 0.9375rem;
+  font-family: 'Inter', sans-serif;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.auth-field input:focus {
+  outline: none;
+  border-color: #3B82F6;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+}
+
+.auth-submit {
+  margin-top: 0.5rem;
+  padding: 0.875rem;
+  background: #2563EB;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 700;
+  font-size: 0.9375rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.auth-submit:hover { background: #1D4ED8; }
+
+.auth-switch {
+  text-align: center;
+  font-size: 0.875rem;
+  color: #6B7280;
+}
+
+.auth-switch a {
+  color: #2563EB;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.auth-switch a:hover { text-decoration: underline; }
