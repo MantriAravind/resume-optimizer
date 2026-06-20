@@ -1,0 +1,82 @@
+/* Steps */
+.hiw-section { padding: 5rem 2rem; background: #ffffff; }
+.hiw-section-alt { background: #F9FAFB; }
+.hiw-inner { max-width: 1100px; margin: 0 auto; }
+.hiw-section-sub { margin-bottom: 3rem; }
+
+.hiw-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem;
+}
+
+.hiw-card {
+  padding: 2rem;
+  background: #F9FAFB;
+  border: 1px solid #E5E7EB;
+  border-radius: 16px;
+}
+
+.hiw-number {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 2rem;
+  font-weight: 800;
+  color: #DBEAFE;
+  letter-spacing: -0.03em;
+  margin-bottom: 1rem;
+  line-height: 1;
+}
+
+.hiw-card h3 {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 0.625rem;
+}
+
+.hiw-card p { font-size: 0.9375rem; color: #6B7280; line-height: 1.6; }
+
+/* What we check */
+.checks-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1.5rem;
+}
+
+.check-card {
+  padding: 2rem;
+  background: #ffffff;
+  border: 1px solid #E5E7EB;
+  border-radius: 16px;
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+
+.check-card:hover {
+  box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+  transform: translateY(-2px);
+}
+
+.check-icon { font-size: 1.75rem; margin-bottom: 1rem; }
+
+.check-card h3 {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #111827;
+  margin-bottom: 0.625rem;
+}
+
+.check-card p { font-size: 0.875rem; color: #6B7280; line-height: 1.6; }
+
+/* Responsive */
+@media (max-width: 900px) {
+  .hiw-grid { grid-template-columns: repeat(2, 1fr); }
+  .checks-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 600px) {
+  .hiw-grid { grid-template-columns: 1fr; }
+  .checks-grid { grid-template-columns: 1fr; }
+  .hiw-section { padding: 3.5rem 1.5rem; }
+}
