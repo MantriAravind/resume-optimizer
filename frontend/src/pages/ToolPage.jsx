@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
+import { UserButton } from '@clerk/clerk-react'
 import '../App.css'
 
 function ScoreRing({ score }) {
@@ -111,11 +113,18 @@ export default function ToolPage() {
     <div className="app">
       <nav className="navbar">
         <div className="navbar-inner">
-          <div className="logo">
-            <span className="logo-mark">R</span>
-            <span className="logo-text">ResumeAI</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+            <Link to="/" style={{ textDecoration: 'none' }}>
+              <div className="logo">
+                <span className="logo-mark">R</span>
+                <span className="logo-text">ResumeAI</span>
+              </div>
+            </Link>
           </div>
-          <span className="navbar-tagline">ATS-optimized resumes in seconds</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <span className="navbar-tagline">ATS-optimized resumes in seconds</span>
+            <UserButton afterSignOutUrl="/" />
+          </div>
         </div>
       </nav>
 
