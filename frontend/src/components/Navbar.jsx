@@ -1,9 +1,8 @@
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
+import { SignedIn, SignedOut, UserButton } from '@clerk/clerk-react'
 import './Navbar.css'
 
 export default function Navbar() {
-  const navigate = useNavigate()
-
   return (
     <nav className="nav">
       <div className="nav-inner">
@@ -19,8 +18,14 @@ export default function Navbar() {
         </div>
 
         <div className="nav-actions">
-          <Link to="/login" className="nav-btn-ghost">Log in</Link>
-          <Link to="/signup" className="nav-btn-primary">Get started</Link>
+          <SignedOut>
+            <Link to="/login" className="nav-btn-ghost">Log in</Link>
+            <Link to="/signup" className="nav-btn-primary">Get started</Link>
+          </SignedOut>
+          <SignedIn>
+            <Link to="/app" className="nav-btn-ghost">My dashboard</Link>
+            <UserButton afterSignOutUrl="/" />
+          </SignedIn>
         </div>
       </div>
     </nav>
