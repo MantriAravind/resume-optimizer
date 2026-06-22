@@ -59,7 +59,8 @@ Respond in this exact JSON format with no extra text:
     })
 
     const responseText = message.content[0].text
-    const parsed = JSON.parse(responseText)
+    const cleaned = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+    const parsed = JSON.parse(cleaned)
 
     res.json(parsed)
 
