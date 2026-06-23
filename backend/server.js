@@ -300,28 +300,35 @@ function esc(str) {
 }
 
 // ── DOWNLOAD PDF
+// ── DOWNLOAD PDF
 app.post('/download-pdf', async (req, res) => {
   const { resumeText, template, length } = req.body
   if (!resumeText) return res.status(400).json({ error: 'No resume text provided.' })
 
   try {
-    const puppeteer = await import('puppeteer')
-    const browser   = await puppeteer.default.launch({
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      headless: 'new'
-    })
-    const page = await browser.newPage()
+    const htmlPdf = await import('html-pdf-node')
     const html = buildResumeHTML(resumeText, template || 'google', length || 'standard')
-    await page.setContent(html, { waitUntil: 'networkidle0' })
-    const pdf = await page.pdf({ format: 'Letter', printBackground: true })
-    await browser.close()
+    
+    const options = { 
+      format: 'Letter',
+      margin: { top: '0', right: '0', bottom: '0', left: '0' }
+    }
+    
+    const file = { content: html }
+    
+    const pdfBuffer = await new Promise((resolve, reject) => {
+      htmlPdf.default.generatePdf(file, options, (err, buffer) => {
+        if (err) reject(err)
+        else resolve(buffer)
+      })
+    })
 
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': 'attachment; filename="optimized-resume.pdf"',
-      'Content-Length': pdf.length
+      'Content-Length': pdfBuffer.length
     })
-    res.send(pdf)
+    res.send(pdfBuffer)
   } catch (error) {
     console.error('PDF error:', error)
     res.status(500).json({ error: 'Failed to generate PDF. Please try again.' })
