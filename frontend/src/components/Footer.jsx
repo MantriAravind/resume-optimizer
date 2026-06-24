@@ -36,7 +36,7 @@ export default function Footer() {
 
       <div className="footer-bottom">
         <p>© 2026 ResumeAI. All rights reserved.</p>
-        <p>Built with AI · Powered by Claude</p>
+        <p>Resume optimization, reimagined.</p>
       </div>
     </footer>
   )
