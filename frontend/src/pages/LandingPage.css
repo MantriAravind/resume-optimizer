@@ -110,7 +110,9 @@
 .billing-save { font-size: 11px; background: #D1FAE5; color: #047857; padding: 2px 7px; border-radius: 100px; font-weight: 600; margin-left: 4px; }
 .pricing-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 .pricing-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 24px; padding: 36px; position: relative; }
-.pricing-card-pro { background: #111827; border-color: #111827; }
+.pricing-card-pro { background: #111827 !important; border-color: #111827 !important; }
+.pricing-card-pro .pricing-price { color: #ffffff !important; }
+.pricing-card-pro .pricing-price span { color: #ffffff !important; }
 .pricing-popular { position: absolute; top: -12px; left: 50%; transform: translateX(-50%); background: #2563EB; color: #fff; font-size: 12px; font-weight: 700; padding: 4px 16px; border-radius: 100px; white-space: nowrap; font-family: 'Space Grotesk', sans-serif; }
 .pricing-tier { font-size: 14px; font-weight: 700; color: #6B7280; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.06em; }
 .pricing-card-pro .pricing-tier { color: #9CA3AF; }
