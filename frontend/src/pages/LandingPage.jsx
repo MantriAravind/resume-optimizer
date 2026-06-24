@@ -32,7 +32,6 @@ function MockCard() {
           <div className="mock-score-sub">Your resume aligns well with the role</div>
         </div>
       </div>
-
       <div className="mock-section">
         <div className="mock-label">Choose template</div>
         <div className="mock-tpls">
@@ -58,7 +57,6 @@ function MockCard() {
           ))}
         </div>
       </div>
-
       <div className="mock-len-wrap">
         {[['Concise', '1 page'], ['Standard', 'Auto 1–2']].map(([l, s], i) => (
           <div key={l} onClick={() => setLen(i)} className={`mock-len-btn ${i === len ? 'mock-len-active' : ''}`}>
@@ -67,7 +65,6 @@ function MockCard() {
           </div>
         ))}
       </div>
-
       <div className="mock-downloads">
         <div className="mock-dl-word">📄 Word</div>
         <div className="mock-dl-pdf">⬇ PDF</div>
@@ -77,10 +74,13 @@ function MockCard() {
 }
 
 export default function LandingPage() {
+  const [billingYearly, setBillingYearly] = useState(false)
+
   return (
     <div className="landing">
       <Navbar />
 
+      {/* HERO */}
       <section className="hero-split">
         <div className="hero-left">
           <div className="hero-badge">✦ AI-Powered Resume Optimization</div>
@@ -94,7 +94,7 @@ export default function LandingPage() {
           </p>
           <div className="hero-actions">
             <Link to="/signup" className="btn-primary-lg">Get started free →</Link>
-            <Link to="/how-it-works" className="btn-ghost-lg">How it works</Link>
+            <a href="#how-it-works" className="btn-ghost-lg">How it works</a>
           </div>
           <p className="hero-note">No credit card required · Results in under 30 seconds</p>
           <div className="hero-pills">
@@ -108,6 +108,7 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* PROOF BAR */}
       <section className="proof">
         <div className="proof-inner">
           <p className="proof-text">Helping job seekers land interviews at top companies</p>
@@ -119,6 +120,7 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* HOW IT WORKS */}
       <section className="steps" id="how-it-works">
         <div className="steps-inner">
           <div className="section-label">How it works</div>
@@ -147,7 +149,8 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="templates-section" id="pricing">
+      {/* TEMPLATES */}
+      <section className="templates-section">
         <div className="templates-inner">
           <div className="section-label">Professional Templates</div>
           <h2 className="section-title">Inspired by top companies</h2>
@@ -183,6 +186,7 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* FEATURES */}
       <section className="features">
         <div className="features-inner">
           <div className="section-label">Why ResumeAI</div>
@@ -206,7 +210,102 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="cta-section" id="about">
+      {/* PRICING */}
+      <section className="pricing-section" id="pricing">
+        <div className="pricing-inner">
+          <div className="section-label">Pricing</div>
+          <h2 className="section-title">Simple, transparent pricing</h2>
+          <p className="section-sub">Start free. Upgrade when you need more.</p>
+          <div className="billing-toggle">
+            <span className={!billingYearly ? 'billing-active' : ''} onClick={() => setBillingYearly(false)}>Monthly</span>
+            <div className="billing-switch" onClick={() => setBillingYearly(!billingYearly)}>
+              <div className={`billing-thumb ${billingYearly ? 'billing-thumb-on' : ''}`} />
+            </div>
+            <span className={billingYearly ? 'billing-active' : ''} onClick={() => setBillingYearly(true)}>
+              Yearly <span className="billing-save">Save 20%</span>
+            </span>
+          </div>
+          <div className="pricing-grid">
+            <div className="pricing-card">
+              <div className="pricing-tier">Free</div>
+              <div className="pricing-price">$0<span className="pricing-period">/month</span></div>
+              <div className="pricing-desc">Perfect for trying ResumeAI and occasional job applications.</div>
+              <Link to="/signup" className="pricing-btn-free">Get started free</Link>
+              <ul className="pricing-features">
+                <li>✓ 3 resume optimizations per month</li>
+                <li>✓ ATS score analysis</li>
+                <li>✓ 1 professional template</li>
+                <li>✓ PDF download</li>
+                <li className="pricing-no">✗ Word download</li>
+                <li className="pricing-no">✗ All 5 templates</li>
+                <li className="pricing-no">✗ Priority processing</li>
+              </ul>
+            </div>
+            <div className="pricing-card pricing-card-pro">
+              <div className="pricing-popular">Most popular</div>
+              <div className="pricing-tier">Pro</div>
+              <div className="pricing-price">
+                ${billingYearly ? '7' : '9'}<span className="pricing-period">/month</span>
+              </div>
+              {billingYearly && <div className="pricing-billed">Billed $84/year</div>}
+              <div className="pricing-desc">For active job seekers who want the best possible resume.</div>
+              <Link to="/signup" className="pricing-btn-pro">Get started →</Link>
+              <ul className="pricing-features">
+                <li>✓ Unlimited optimizations</li>
+                <li>✓ ATS score analysis</li>
+                <li>✓ All 5 professional templates</li>
+                <li>✓ PDF download</li>
+                <li>✓ Word (.docx) download</li>
+                <li>✓ Concise & Standard length control</li>
+                <li>✓ Priority processing</li>
+              </ul>
+            </div>
+          </div>
+          <p className="pricing-note">No contracts. Cancel anytime. All plans include a 7-day free trial.</p>
+        </div>
+      </section>
+
+      {/* ABOUT */}
+      <section className="about-section" id="about">
+        <div className="about-inner">
+          <div className="about-left">
+            <div className="section-label">About ResumeAI</div>
+            <h2 className="section-title">Built for the modern job seeker</h2>
+            <p className="about-body">
+              Getting a job interview shouldn't depend on knowing the right keywords or paying a career coach hundreds of dollars. ResumeAI was built to level the playing field — giving every job seeker access to the same quality of resume optimization that top candidates use to land roles at Google, Amazon, Apple, and beyond.
+            </p>
+            <p className="about-body">
+              We use Claude — one of the world's most capable AI systems — to analyze job descriptions and rewrite resumes with precision. The result is a tailored, professional resume that speaks directly to what each employer is looking for.
+            </p>
+            <div className="about-stats">
+              {[
+                { n: '5', l: 'Professional templates' },
+                { n: '30s', l: 'Average optimization time' },
+                { n: '100', l: 'Maximum ATS score possible' },
+              ].map(s => (
+                <div key={s.n} className="about-stat">
+                  <div className="about-stat-num">{s.n}</div>
+                  <div className="about-stat-label">{s.l}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="about-right">
+            <div className="about-card">
+              <div className="about-quote">"</div>
+              <p className="about-quote-text">Getting past ATS filters is the first battle in any job search. ResumeAI makes sure your resume is fighting with every advantage.</p>
+              <div className="about-mission-label">Our mission</div>
+            </div>
+            <div className="about-powered">
+              <div className="about-powered-label">Powered by</div>
+              <div className="about-powered-badge">Claude AI by Anthropic</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* CTA */}
+      <section className="cta-section">
         <div className="cta-inner">
           <h2 className="cta-title">Ready to land more interviews?</h2>
           <p className="cta-sub">Join thousands of job seekers who use ResumeAI to stand out in competitive job markets.</p>
