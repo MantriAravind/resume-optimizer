@@ -22,7 +22,7 @@ export default function Navbar() {
   return (
     <nav className="nav">
       <div className="nav-inner">
-        <Link to="/" className="nav-logo">
+        <Link to="/" className="nav-logo" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
           <span className="nav-logo-mark">R</span>
           <span className="nav-logo-text">ResumeAI</span>
         </Link>
