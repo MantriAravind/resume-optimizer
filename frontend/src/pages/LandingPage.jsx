@@ -119,7 +119,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="steps">
+      <section className="steps" id="how-it-works">
         <div className="steps-inner">
           <div className="section-label">How it works</div>
           <h2 className="section-title">Three steps to a better resume</h2>
@@ -147,7 +147,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="templates-section">
+      <section <section className="templates-section" id="pricing">
         <div className="templates-inner">
           <div className="section-label">Professional Templates</div>
           <h2 className="section-title">Inspired by top companies</h2>
@@ -206,7 +206,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="cta-section">
+      <section className="cta-section" id="about">
         <div className="cta-inner">
           <h2 className="cta-title">Ready to land more interviews?</h2>
           <p className="cta-sub">Join thousands of job seekers who use ResumeAI to stand out in competitive job markets.</p>

@@ -1,8 +1,24 @@
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { SignedIn, SignedOut, UserButton } from '@clerk/clerk-react'
 import './Navbar.css'
 
 export default function Navbar() {
+  const location = useLocation()
+  const navigate = useNavigate()
+
+  function handleScroll(sectionId) {
+    if (location.pathname === '/') {
+      const el = document.getElementById(sectionId)
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    } else {
+      navigate('/')
+      setTimeout(() => {
+        const el = document.getElementById(sectionId)
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 300)
+    }
+  }
+
   return (
     <nav className="nav">
       <div className="nav-inner">
@@ -12,9 +28,9 @@ export default function Navbar() {
         </Link>
 
         <div className="nav-links">
-          <Link to="/how-it-works" className="nav-link">How it works</Link>
-          <Link to="/pricing" className="nav-link">Pricing</Link>
-          <Link to="/about" className="nav-link">About</Link>
+          <button className="nav-link" onClick={() => handleScroll('how-it-works')}>How it works</button>
+          <button className="nav-link" onClick={() => handleScroll('pricing')}>Pricing</button>
+          <button className="nav-link" onClick={() => handleScroll('about')}>About</button>
         </div>
 
         <div className="nav-actions">

@@ -34,11 +34,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
 }
 
 .nav-logo-text {
-  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-weight: 700;
   font-size: 1rem;
   color: #111827;
@@ -52,16 +52,19 @@
 }
 
 .nav-link {
+  font-family: 'Space Grotesk', sans-serif;
   font-size: 0.9rem;
   font-weight: 500;
   color: #6B7280;
   text-decoration: none;
   transition: color 0.15s;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
 }
 
-.nav-link:hover {
-  color: #111827;
-}
+.nav-link:hover { color: #111827; }
 
 .nav-actions {
   display: flex;
@@ -70,6 +73,7 @@
 }
 
 .nav-btn-ghost {
+  font-family: 'Space Grotesk', sans-serif;
   font-size: 0.9rem;
   font-weight: 600;
   color: #374151;
@@ -79,11 +83,10 @@
   transition: background 0.15s;
 }
 
-.nav-btn-ghost:hover {
-  background: #F3F4F6;
-}
+.nav-btn-ghost:hover { background: #F3F4F6; }
 
 .nav-btn-primary {
+  font-family: 'Space Grotesk', sans-serif;
   font-size: 0.9rem;
   font-weight: 600;
   color: white;
@@ -94,9 +97,7 @@
   transition: background 0.15s;
 }
 
-.nav-btn-primary:hover {
-  background: #1D4ED8;
-}
+.nav-btn-primary:hover { background: #1D4ED8; }
 
 @media (max-width: 768px) {
   .nav-links { display: none; }
