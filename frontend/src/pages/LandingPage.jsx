@@ -147,7 +147,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section <section className="templates-section" id="pricing">
+      <section className="templates-section" id="pricing">
         <div className="templates-inner">
           <div className="section-label">Professional Templates</div>
           <h2 className="section-title">Inspired by top companies</h2>
