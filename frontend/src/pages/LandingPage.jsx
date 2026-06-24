@@ -245,7 +245,7 @@ export default function LandingPage() {
               <div className="pricing-popular">Most popular</div>
               <div className="pricing-tier">Pro</div>
               <div className="pricing-price">
-                ${billingYearly ? '7' : '9'}<span className="pricing-period">/month</span>
+                <span>${billingYearly ? '7' : '9'}</span><span className="pricing-period">/month</span>
               </div>
               {billingYearly && <div className="pricing-billed">Billed $84/year</div>}
               <div className="pricing-desc">For active job seekers who want the best possible resume.</div>
@@ -261,7 +261,7 @@ export default function LandingPage() {
               </ul>
             </div>
           </div>
-          <p className="pricing-note">No contracts. Cancel anytime. All plans include a 7-day free trial.</p>
+          
         </div>
       </section>
 
