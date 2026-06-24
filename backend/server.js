@@ -63,6 +63,70 @@ Respond in this exact JSON format with no extra text:
   }
 })
 
+// ── JOBS (JSearch API)
+app.get('/jobs', async (req, res) => {
+  const {
+    query = 'software engineer',
+    page = '1',
+    time_posted = '',      // '' | 'today' | '3days' | 'week' | 'month'
+    experience = '',       // '' | 'entry_level' | 'mid_level' | 'senior_level'
+  } = req.query
+
+  try {
+    const params = new URLSearchParams({
+      query: `${query} United States`,
+      page,
+      num_pages: '1',
+      employment_types: 'FULLTIME',
+      ...(time_posted  && { date_posted: time_posted }),
+      ...(experience   && { job_requirements: experience }),
+    })
+
+    const response = await fetch(
+      `https://jsearch.p.rapidapi.com/search?${params.toString()}`,
+      {
+        headers: {
+          'X-RapidAPI-Key': process.env.JSEARCH_API_KEY,
+          'X-RapidAPI-Host': 'jsearch.p.rapidapi.com',
+        },
+      }
+    )
+
+    if (!response.ok) {
+      const err = await response.text()
+      console.error('JSearch error:', err)
+      return res.status(500).json({ error: 'Failed to fetch jobs. Please try again.' })
+    }
+
+    const data = await response.json()
+
+    // Normalize to a clean shape the frontend can use
+    const jobs = (data.data || []).map(job => ({
+      id:          job.job_id,
+      title:       job.job_title,
+      company:     job.employer_name,
+      location:    job.job_city
+                     ? `${job.job_city}, ${job.job_state || ''}`
+                     : (job.job_is_remote ? 'Remote' : 'United States'),
+      isRemote:    job.job_is_remote || false,
+      postedAt:    job.job_posted_at_datetime_utc || null,
+      description: job.job_description || '',
+      applyUrl:    job.job_apply_link || '',
+      logo:        job.employer_logo || null,
+      salary:      job.job_min_salary && job.job_max_salary
+                     ? `$${Math.round(job.job_min_salary / 1000)}k – $${Math.round(job.job_max_salary / 1000)}k`
+                     : null,
+      employmentType: job.job_employment_type || 'FULLTIME',
+    }))
+
+    res.json({ jobs, total: data.data?.length || 0 })
+
+  } catch (error) {
+    console.error('Jobs error:', error)
+    res.status(500).json({ error: 'Failed to fetch jobs. Please try again.' })
+  }
+})
+
 // ── PARSE resume text
 function parseResume(text) {
   const lines = text.split('\n').map(l => l.trim())
@@ -260,12 +324,10 @@ function buildResumeHTML(resumeText, template, length) {
     }
 
     if (isRoleLine(line)) {
-      // Split role line into title and company|date
       const parts = line.split(' | ')
       if (parts.length >= 2) {
         const role = parts[0]
         const rest = parts.slice(1).join(' | ')
-        // Check if next line is also a role detail or if it's all in one line
         body += `
           <div style="margin-top:${gap};margin-bottom:2pt">
             <div style="display:flex;justify-content:space-between;align-items:baseline">
