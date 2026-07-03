@@ -12,6 +12,7 @@ import FaqPage from './pages/FaqPage'
 import ContactPage from './pages/ContactPage'
 import PrivacyPage from './pages/PrivacyPage'
 import TermsPage from './pages/TermsPage'
+import JobBoard from './pages/JobBoard'
 
 function ProtectedRoute({ children }) {
   return (
@@ -31,6 +32,7 @@ export default function App() {
         <Route path="/signup/*" element={<SignupPage />} />
         <Route path="/app" element={<ProtectedRoute><ToolPage /></ProtectedRoute>} />
         <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+        <Route path="/jobs" element={<JobBoard />} />
         <Route path="/about" element={<AboutPage />} />
         <Route path="/how-it-works" element={<HowItWorksPage />} />
         <Route path="/pricing" element={<PricingPage />} />

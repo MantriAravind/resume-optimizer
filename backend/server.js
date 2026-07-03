@@ -2,7 +2,15 @@ import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import Anthropic from '@anthropic-ai/sdk'
+import mongoose from 'mongoose'
 import { Document, Packer, Paragraph, TextRun, AlignmentType, LevelFormat, BorderStyle } from 'docx'
+
+function stripHtml(html = '') {
+  return html
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+    .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+}
 
 dotenv.config()
 
@@ -11,8 +19,38 @@ const PORT = 3001
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
-app.use(cors())
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://localhost:5174', 'https://resume-optimizer-delta-dusky.vercel.app']
+}))
 app.use(express.json({ limit: '10mb' }))
+
+// ── MongoDB Connection
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log('✅ Connected to MongoDB'))
+  .catch(err => console.error('❌ MongoDB connection error:', err))
+
+// ── Job Schema
+const jobSchema = new mongoose.Schema({
+  id:           { type: String, unique: true },
+  title:        String,
+  company:      String,
+  companySlug:  String,
+  location:     String,
+  isRemote:     Boolean,
+  description:  String,
+  applyUrl:     String,
+  postedAt:     Date,
+  sponsorBadge: Boolean,
+  ats:          String,
+  fetchedAt:    Date,
+})
+
+jobSchema.index({ title: 'text', company: 'text' })
+jobSchema.index({ postedAt: -1 })
+jobSchema.index({ sponsorBadge: 1 })
+jobSchema.index({ isRemote: 1 })
+
+const Job = mongoose.models.Job || mongoose.model('Job', jobSchema)
 
 app.get('/', (req, res) => {
   res.json({ message: 'Resume Optimizer backend is running.' })
@@ -63,67 +101,93 @@ Respond in this exact JSON format with no extra text:
   }
 })
 
-// ── JOBS (JSearch API)
+// ── JOBS — Search from MongoDB
 app.get('/jobs', async (req, res) => {
   const {
-    query = 'software engineer',
+    query = '',
     page = '1',
-    time_posted = '',      // '' | 'today' | '3days' | 'week' | 'month'
-    experience = '',       // '' | 'entry_level' | 'mid_level' | 'senior_level'
+    time_posted = '',
+    remote = '',
+    sponsor = '',
   } = req.query
 
+  const pageNum = Math.max(1, parseInt(page))
+  const limit = 20
+  const skip = (pageNum - 1) * limit
+
   try {
-    const params = new URLSearchParams({
-      query: `${query} United States`,
-      page,
-      num_pages: '1',
-      employment_types: 'FULLTIME',
-      ...(time_posted  && { date_posted: time_posted }),
-      ...(experience   && { job_requirements: experience }),
-    })
+    const filter = {}
 
-    const response = await fetch(
-      `https://jsearch.p.rapidapi.com/search?${params.toString()}`,
-      {
-        headers: {
-          'X-RapidAPI-Key': process.env.JSEARCH_API_KEY,
-          'X-RapidAPI-Host': 'jsearch.p.rapidapi.com',
-        },
-      }
-    )
-
-    if (!response.ok) {
-      const err = await response.text()
-      console.error('JSearch error:', err)
-      return res.status(500).json({ error: 'Failed to fetch jobs. Please try again.' })
+    if (query.trim()) {
+      filter.$or = [
+        { title:   { $regex: query.trim(), $options: 'i' } },
+        { company: { $regex: query.trim(), $options: 'i' } },
+      ]
     }
 
-    const data = await response.json()
+    if (time_posted) {
+      const now = new Date()
+      const daysMap = { today: 1, '3days': 3, week: 7, month: 30 }
+      const days = daysMap[time_posted]
+      if (days) {
+        const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000)
+        filter.postedAt = { $gte: cutoff }
+      }
+    }
 
-    // Normalize to a clean shape the frontend can use
-    const jobs = (data.data || []).map(job => ({
-      id:          job.job_id,
-      title:       job.job_title,
-      company:     job.employer_name,
-      location:    job.job_city
-                     ? `${job.job_city}, ${job.job_state || ''}`
-                     : (job.job_is_remote ? 'Remote' : 'United States'),
-      isRemote:    job.job_is_remote || false,
-      postedAt:    job.job_posted_at_datetime_utc || null,
-      description: job.job_description || '',
-      applyUrl:    job.job_apply_link || '',
-      logo:        job.employer_logo || null,
-      salary:      job.job_min_salary && job.job_max_salary
-                     ? `$${Math.round(job.job_min_salary / 1000)}k – $${Math.round(job.job_max_salary / 1000)}k`
-                     : null,
-      employmentType: job.job_employment_type || 'FULLTIME',
-    }))
+    if (remote === 'true') filter.isRemote = true
+    if (sponsor === 'true') filter.sponsorBadge = true
 
-    res.json({ jobs, total: data.data?.length || 0 })
+    const [jobs, total] = await Promise.all([
+      Job.find(filter)
+        .sort({ sponsorBadge: -1, postedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .select('id title company location isRemote postedAt applyUrl sponsorBadge description ats')
+        .lean(),
+      Job.countDocuments(filter)
+    ])
+
+    res.json({
+      jobs,
+      total,
+      page: pageNum,
+      pages: Math.ceil(total / limit)
+    })
 
   } catch (error) {
-    console.error('Jobs error:', error)
+    console.error('Jobs search error:', error)
     res.status(500).json({ error: 'Failed to fetch jobs. Please try again.' })
+  }
+})
+
+// ── JOB DETAIL — Fetch full description from Greenhouse
+app.get('/jobs/:id', async (req, res) => {
+  const { id } = req.params
+
+  try {
+    const job = await Job.findOne({ id }).lean()
+    if (!job) return res.status(404).json({ error: 'Job not found.' })
+
+    let fullDescription = job.description || ''
+    if (job.ats === 'greenhouse' && job.companySlug) {
+      try {
+        const url = `https://boards-api.greenhouse.io/v1/boards/${job.companySlug}/jobs/${id}?questions=false`
+        const ghRes = await fetch(url, { signal: AbortSignal.timeout(8000) })
+        if (ghRes.ok) {
+          const data = await ghRes.json()
+          fullDescription = data.content ? stripHtml(data.content) : fullDescription
+        }
+      } catch {
+        // Fall back to stored description
+      }
+    }
+
+    res.json({ ...job, description: fullDescription })
+
+  } catch (error) {
+    console.error('Job detail error:', error)
+    res.status(500).json({ error: 'Failed to fetch job details. Please try again.' })
   }
 })
 
@@ -151,7 +215,6 @@ function parseResume(text) {
   return { header, bodyLines: lines.slice(bodyStart), isSection, isBullet, isRoleLine }
 }
 
-// ── Template configs
 const TEMPLATE_CONFIGS = {
   google:   { hex: '4285F4', center: false },
   amazon:   { hex: 'E07B00', center: false },
@@ -291,7 +354,6 @@ function buildResumeHTML(resumeText, template, length) {
     titleLine = header[1]; contactStart = 2
   }
 
-  // Header block
   body += `<div style="text-align:${align};padding-bottom:10pt;margin-bottom:14pt;border-bottom:2pt solid ${cfg.accent}">`
   body += `<div style="font-size:${isCompact ? '20pt' : '24pt'};font-weight:900;color:#111;letter-spacing:0.02em;text-transform:uppercase">${esc(name)}</div>`
   if (titleLine) body += `<div style="font-size:${isCompact ? '10pt' : '12pt'};font-weight:600;color:${cfg.accent};margin-top:4pt;letter-spacing:0.01em">${esc(titleLine)}</div>`
@@ -300,7 +362,6 @@ function buildResumeHTML(resumeText, template, length) {
   }
   body += `</div>`
 
-  // Body
   for (let i = 0; i < bodyLines.length; i++) {
     const line = bodyLines[i]
     if (!line) { body += `<div style="height:${isCompact ? '3pt' : '5pt'}"></div>`; continue }

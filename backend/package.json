@@ -17,6 +17,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "html-pdf-node": "^1.0.8",
+    "mongoose": "^9.7.2",
     "puppeteer": "^25.2.0"
   }
 }
