@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-const BACKEND = 'http://localhost:3001'
+const BACKEND = 'https://resume-optimizer-cuii.onrender.com'
 
 // ─────────────────────────────────────────────────────────────
 // Self-contained styles (matches the site: Space Grotesk, clean editorial)
