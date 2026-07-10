@@ -5,11 +5,10 @@ import Anthropic from '@anthropic-ai/sdk'
 import mongoose from 'mongoose'
 import { Document, Packer, Paragraph, TextRun, AlignmentType, LevelFormat, BorderStyle } from 'docx'
 
-function stripHtml(html = '') {
+function decodeHtmlEntities(html = '') {
   return html
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
     .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
 dotenv.config()
@@ -31,24 +30,35 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // ── Job Schema
 const jobSchema = new mongoose.Schema({
-  id:           { type: String, unique: true },
-  title:        String,
-  company:      String,
-  companySlug:  String,
-  location:     String,
-  isRemote:     Boolean,
-  description:  String,
-  applyUrl:     String,
-  postedAt:     Date,
-  sponsorBadge: Boolean,
-  ats:          String,
-  fetchedAt:    Date,
+  id:              { type: String, unique: true },
+  title:           String,
+  company:         String,
+  companySlug:     String,
+  location:        String,
+  isRemote:        Boolean,
+  description:     String,
+  applyUrl:        String,
+  postedAt:        Date,
+  sponsorBadge:    Boolean,
+  ats:             String,
+  fetchedAt:       Date,
+  experienceLevel: String,
+  workType:        String,
+  state:           String,
+  salaryMin:       Number,
+  salaryMax:       Number,
+  employmentType:  String,
+  yearsMin:        Number,
+  yearsMax:        Number,
 })
 
 jobSchema.index({ title: 'text', company: 'text' })
 jobSchema.index({ postedAt: -1 })
 jobSchema.index({ sponsorBadge: 1 })
 jobSchema.index({ isRemote: 1 })
+jobSchema.index({ state: 1 })
+jobSchema.index({ workType: 1 })
+jobSchema.index({ experienceLevel: 1 })
 
 const Job = mongoose.models.Job || mongoose.model('Job', jobSchema)
 
@@ -109,6 +119,9 @@ app.get('/jobs', async (req, res) => {
     time_posted = '',
     remote = '',
     sponsor = '',
+    state = '',
+    workType = '',
+    experienceLevel = '',
   } = req.query
 
   const pageNum = Math.max(1, parseInt(page))
@@ -137,13 +150,16 @@ app.get('/jobs', async (req, res) => {
 
     if (remote === 'true') filter.isRemote = true
     if (sponsor === 'true') filter.sponsorBadge = true
+    if (state.trim()) filter.state = state.trim()
+    if (workType.trim()) filter.workType = workType.trim()
+    if (experienceLevel.trim()) filter.experienceLevel = experienceLevel.trim()
 
     const [jobs, total] = await Promise.all([
       Job.find(filter)
         .sort({ sponsorBadge: -1, postedAt: -1 })
         .skip(skip)
         .limit(limit)
-        .select('id title company location isRemote postedAt applyUrl sponsorBadge description ats')
+        .select('id title company location isRemote postedAt applyUrl sponsorBadge description ats experienceLevel workType state salaryMin salaryMax employmentType yearsMin yearsMax')
         .lean(),
       Job.countDocuments(filter)
     ])
@@ -176,7 +192,7 @@ app.get('/jobs/:id', async (req, res) => {
         const ghRes = await fetch(url, { signal: AbortSignal.timeout(8000) })
         if (ghRes.ok) {
           const data = await ghRes.json()
-          fullDescription = data.content ? stripHtml(data.content) : fullDescription
+          fullDescription = data.content ? decodeHtmlEntities(data.content) : fullDescription
         }
       } catch {
         // Fall back to stored description
