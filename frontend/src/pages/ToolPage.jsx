@@ -1,6 +1,5 @@
 import { useState, useRef } from 'react'
-import { Link } from 'react-router-dom'
-import { UserButton } from '@clerk/clerk-react'
+import SidebarLayout from '../components/SidebarLayout'
 
 const BACKEND = 'https://resume-optimizer-cuii.onrender.com'
 
@@ -129,19 +128,9 @@ export default function ToolPage() {
   }
 
   return (
+    <SidebarLayout>
     <div className="ed-page">
       <style>{CSS}</style>
-
-      <nav className="ed-nav">
-        <Link to="/" className="ed-logo-link">
-          <span className="ed-logo-mark">R</span>
-          <span className="ed-logo-text">ResumeAI</span>
-        </Link>
-        <div className="ed-nav-right">
-          <span className="ed-nav-tag">ATS-optimized resumes in seconds</span>
-          <UserButton afterSignOutUrl="/" />
-        </div>
-      </nav>
 
       <header className="ed-hero">
         <div className="ed-hero-pill"><span className="ed-hero-pill-dot" />Powered by AI</div>
@@ -177,12 +166,12 @@ export default function ToolPage() {
 
         {result && !loading && (
           <section className="ed-results" ref={resultsRef}>
-            <div className="ed-divider"><span>Your Optimized Resume</span></div>
+            <div className="ed-divider"><span>Your Results</span></div>
 
             <div className="ed-score-card">
               <ScoreRing score={result.score} />
               <div className="ed-score-info">
-                <h2 className="ed-score-h">ATS Match Score</h2>
+                <h3 className="ed-score-h">ATS Match Score</h3>
                 <p className="ed-score-feedback">{result.feedback}</p>
                 <span className={`ed-badge ${badgeClass}`}>{badgeText}</span>
               </div>
@@ -191,14 +180,14 @@ export default function ToolPage() {
             <div className="ed-card">
               <div className="ed-card-head">
                 <div>
-                  <div className="ed-card-title">Choose a template</div>
-                  <div className="ed-card-sub">Each is designed and written in the style that company's recruiters favor.</div>
+                  <div className="ed-card-title">Choose your template</div>
+                  <div className="ed-card-sub">Each is inspired by a top company's resume style.</div>
                 </div>
-                <div className="ed-inspired-badge">✦ Inspired by top companies</div>
+                <span className="ed-inspired-badge">{activeTpl.label} · by {activeTpl.inspired}</span>
               </div>
               <div className="ed-thumbs">
-                {TEMPLATES.map(t => (
-                  <Thumb key={t.id} tpl={t} selected={t.id === template} onClick={() => setTemplate(t.id)} />
+                {TEMPLATES.map(tpl => (
+                  <Thumb key={tpl.id} tpl={tpl} selected={template === tpl.id} onClick={() => setTemplate(tpl.id)} />
                 ))}
               </div>
             </div>
@@ -207,22 +196,24 @@ export default function ToolPage() {
               <div className="ed-len-wrap">
                 <span className="ed-len-label">Length</span>
                 <div className="ed-len-toggle">
-                  {[['concise','Concise','Aims for 1 page'],['standard','Standard','Auto · 1–2 pages']].map(([id, lbl, sub]) => (
-                    <button key={id} onClick={() => setLength(id)} className={`ed-len-btn${length === id ? ' ed-len-active' : ''}`}>
-                      <span className="ed-len-main">{lbl}</span>
-                      <span className="ed-len-sub">{sub}</span>
-                    </button>
-                  ))}
+                  <button className={`ed-len-btn ${length === 'concise' ? 'ed-len-active' : ''}`} onClick={() => setLength('concise')}>
+                    <span className="ed-len-main">Concise</span>
+                    <span className="ed-len-sub">1 page</span>
+                  </button>
+                  <button className={`ed-len-btn ${length === 'standard' ? 'ed-len-active' : ''}`} onClick={() => setLength('standard')}>
+                    <span className="ed-len-main">Standard</span>
+                    <span className="ed-len-sub">Full detail</span>
+                  </button>
                 </div>
               </div>
               <div className="ed-dl-btns">
-                <button className="ed-dl-word" onClick={() => handleDownload('word')} disabled={!!dlLoading}>
+                <button className="ed-dl-word" onClick={() => handleDownload('word')} disabled={dlLoading !== ''}>
                   {dlLoading === 'word' ? <><span className="ed-spin-dark" />Generating…</> : <>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
                     Download Word
                   </>}
                 </button>
-                <button className="ed-dl-pdf" onClick={() => handleDownload('pdf')} disabled={!!dlLoading}>
+                <button className="ed-dl-pdf" onClick={() => handleDownload('pdf')} disabled={dlLoading !== ''}>
                   {dlLoading === 'pdf' ? <><span className="ed-spin" />Generating…</> : <>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
                     Download PDF
@@ -249,11 +240,12 @@ export default function ToolPage() {
         Built with AI · Powered by Claude · <a href="https://github.com/MantriAravind/resume-optimizer" target="_blank" rel="noreferrer">View on GitHub</a>
       </footer>
     </div>
+    </SidebarLayout>
   )
 }
 
 const CSS = `
-.ed-page { font-family: 'Inter', -apple-system, system-ui, sans-serif; background: #fff; color: #111; min-height: 100vh; }
+.ed-page { font-family: 'Inter', -apple-system, system-ui, sans-serif; background: #fff; color: #111; min-height: 100vh; padding-top: 8px; }
 .ed-page * { box-sizing: border-box; }
 .ed-nav { display: flex; justify-content: space-between; align-items: center; padding: 22px 48px; max-width: 1100px; margin: 0 auto; }
 .ed-logo-link { display: flex; align-items: center; gap: 10px; text-decoration: none; }

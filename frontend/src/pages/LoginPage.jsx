@@ -4,7 +4,7 @@ import './AuthPages.css'
 export default function LoginPage() {
   return (
     <div className="auth-page">
-      <SignIn routing="path" path="/login" afterSignInUrl="/app" />
+      <SignIn routing="path" path="/login" afterSignInUrl="/jobs" />
     </div>
   )
 }

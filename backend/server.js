@@ -4,6 +4,7 @@ import dotenv from 'dotenv'
 import Anthropic from '@anthropic-ai/sdk'
 import mongoose from 'mongoose'
 import { Document, Packer, Paragraph, TextRun, AlignmentType, LevelFormat, BorderStyle } from 'docx'
+import { clerkMiddleware, getAuth } from '@clerk/express'
 
 function decodeHtmlEntities(html = '') {
   return html
@@ -22,6 +23,7 @@ app.use(cors({
   origin: ['http://localhost:5173', 'http://localhost:5174', 'https://resume-optimizer-delta-dusky.vercel.app']
 }))
 app.use(express.json({ limit: '10mb' }))
+app.use(clerkMiddleware())
 
 // ── MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI)
@@ -62,8 +64,78 @@ jobSchema.index({ experienceLevel: 1 })
 
 const Job = mongoose.models.Job || mongoose.model('Job', jobSchema)
 
+// ── Auth guard — returns a JSON 401 instead of redirecting
+function requireUser(req, res, next) {
+  const { userId } = getAuth(req)
+  if (!userId) return res.status(401).json({ error: 'You need to be signed in.' })
+  req.userId = userId
+  next()
+}
+
+// ── User Schema
+const userSchema = new mongoose.Schema({
+  clerkUserId:    { type: String, required: true, unique: true, index: true },
+  resumeText:     { type: String, default: '' },
+  resumeFileName: { type: String, default: '' },
+  updatedAt:      { type: Date, default: Date.now },
+})
+
+const User = mongoose.models.User || mongoose.model('User', userSchema)
+
 app.get('/', (req, res) => {
   res.json({ message: 'Resume Optimizer backend is running.' })
+})
+
+// ── ME / RESUME — the logged-in user's saved resume
+app.get('/me/resume', requireUser, async (req, res) => {
+  try {
+    const userId = req.userId
+    const user = await User.findOne({ clerkUserId: userId }).lean()
+    res.json({
+      hasResume:      Boolean(user?.resumeText),
+      resumeText:     user?.resumeText     || '',
+      resumeFileName: user?.resumeFileName || '',
+      updatedAt:      user?.updatedAt      || null,
+    })
+  } catch (error) {
+    console.error('Get resume error:', error)
+    res.status(500).json({ error: 'Failed to load your resume. Please try again.' })
+  }
+})
+
+app.post('/me/resume', requireUser, async (req, res) => {
+  try {
+    const userId = req.userId
+    const { resumeText, resumeFileName } = req.body
+
+    if (!resumeText || !resumeText.trim()) {
+      return res.status(400).json({ error: 'Please provide your resume text.' })
+    }
+    if (resumeText.length > 100000) {
+      return res.status(400).json({ error: 'That resume is too long — please shorten it.' })
+    }
+
+    const user = await User.findOneAndUpdate(
+      { clerkUserId: userId },
+      {
+        clerkUserId:    userId,
+        resumeText:     resumeText.trim(),
+        resumeFileName: resumeFileName || '',
+        updatedAt:      new Date(),
+      },
+      { upsert: true, new: true }
+    ).lean()
+
+    res.json({
+      hasResume:      true,
+      resumeText:     user.resumeText,
+      resumeFileName: user.resumeFileName,
+      updatedAt:      user.updatedAt,
+    })
+  } catch (error) {
+    console.error('Save resume error:', error)
+    res.status(500).json({ error: 'Failed to save your resume. Please try again.' })
+  }
 })
 
 // ── OPTIMIZE
