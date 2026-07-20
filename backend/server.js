@@ -378,6 +378,58 @@ Respond in this exact JSON format with no extra text:
 })
 
 // ── JOB DETAIL — Fetch full description from Greenhouse
+// ── LIST jobs (search + filters + pagination)
+// The board calls this with: page, query, workType, experienceLevel, time_posted, state.
+// It expects back { jobs, total, pages }. Page size is decided here, not by the client.
+app.get('/jobs', async (req, res) => {
+  try {
+    const PAGE_SIZE = 20
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1)
+
+    const filter = {}
+
+    // Search box: partial, case-insensitive match on title OR company.
+    // Escaped so a query like "c++" or "node.js" can't break the regex.
+    const q = (req.query.query || '').trim()
+    if (q) {
+      const safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const rx = new RegExp(safe, 'i')
+      filter.$or = [{ title: rx }, { company: rx }]
+    }
+
+    // Straight pass-through filters — the dropdown values match what fetchJobs stored.
+    if (req.query.workType)        filter.workType = req.query.workType
+    if (req.query.experienceLevel) filter.experienceLevel = req.query.experienceLevel
+    if (req.query.state)           filter.state = req.query.state
+
+    // Time posted: a rolling window on postedAt. Jobs with no postedAt are excluded
+    // from a time filter, which is the right call — an undated job isn't "from this week".
+    const windows = { today: 1, '3days': 3, week: 7, month: 30 }
+    const days = windows[req.query.time_posted]
+    if (days) {
+      filter.postedAt = { $gte: new Date(Date.now() - days * 24 * 60 * 60 * 1000) }
+    }
+
+    const total = await Job.countDocuments(filter)
+    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+
+    // The list cards never read `description` (only the detail view fetches it), and
+    // descriptions are large HTML blobs, so drop it here to keep the payload light.
+    const jobs = await Job.find(filter)
+      .select('-description')
+      .sort({ postedAt: -1 })
+      .skip((page - 1) * PAGE_SIZE)
+      .limit(PAGE_SIZE)
+      .lean()
+
+    res.json({ jobs, total, pages })
+
+  } catch (error) {
+    console.error('Job list error:', error)
+    res.status(500).json({ error: 'Failed to load jobs. Please try again.' })
+  }
+})
+
 app.get('/jobs/:id', async (req, res) => {
   const { id } = req.params
 
