@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useUser } from '@clerk/clerk-react'
 import DOMPurify from 'dompurify'
 import SidebarLayout from '../components/SidebarLayout'
+import OptimizeModal from './OptimizeModal'
 import {
   MapPin, Building2, TrendingUp, DollarSign, Clock,
   CheckCircle2, Search, ChevronDown, X, Sparkles, GraduationCap,
@@ -326,6 +327,7 @@ export default function JobBoard() {
 
   const [selected, setSelected] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [optimizeJob, setOptimizeJob] = useState(null)
 
   const listTop = useRef(null)
 
@@ -400,19 +402,24 @@ export default function JobBoard() {
     document.body.style.overflow = ''
   }
 
-function optimizeFor(job) {
-    try {
-      sessionStorage.setItem('optimize_job', JSON.stringify({
-        title: job.title,
-        company: job.company,
-        description: job.description || '',
-      }))
-    } catch {}
+  function optimizeFor(job) {
     if (!isSignedIn) {
+      // remember the job so login can return here later; for now just gate
+      try {
+        sessionStorage.setItem('optimize_job', JSON.stringify({ id: job.id, title: job.title, company: job.company }))
+      } catch {}
       navigate('/login')
       return
     }
-    navigate('/app')
+    // open the modal in place — no navigation, no lost job
+    if (selected) closeJob()
+    setOptimizeJob(job)
+    document.body.style.overflow = 'hidden'
+  }
+
+  function closeOptimize() {
+    setOptimizeJob(null)
+    document.body.style.overflow = ''
   }
 
   function changePage(next) {
@@ -547,6 +554,10 @@ function optimizeFor(job) {
           </>
         )}
       </aside>
+
+      {optimizeJob && (
+        <OptimizeModal job={optimizeJob} onClose={closeOptimize} />
+      )}
     </div>
   )
 

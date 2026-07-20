@@ -4,7 +4,7 @@ import { Briefcase, User, FileText, Calendar, Settings } from 'lucide-react'
 
 const NAV_ITEMS = [
   { icon: Briefcase, label: 'Job Board',   path: '/jobs', available: true },
-  { icon: User,      label: 'Profile',     path: '/profile', available: false },
+  { icon: User,      label: 'Profile',     path: '/profile', available: true },
   { icon: FileText,  label: 'Resume Tool', path: '/app', available: true },
   { icon: Calendar,  label: 'Tracker',     path: '/tracker', available: false },
   { icon: Settings,  label: 'Settings',    path: '/settings', available: false },

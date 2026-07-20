@@ -13,6 +13,7 @@ import ContactPage from './pages/ContactPage'
 import PrivacyPage from './pages/PrivacyPage'
 import TermsPage from './pages/TermsPage'
 import JobBoard from './pages/JobBoard'
+import ProfilePage from './pages/ProfilePage'
 
 function ProtectedRoute({ children }) {
   return (
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="/app" element={<ProtectedRoute><ToolPage /></ProtectedRoute>} />
         <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
         <Route path="/jobs" element={<JobBoard />} />
+        <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
         <Route path="/about" element={<AboutPage />} />
         <Route path="/how-it-works" element={<HowItWorksPage />} />
         <Route path="/pricing" element={<PricingPage />} />

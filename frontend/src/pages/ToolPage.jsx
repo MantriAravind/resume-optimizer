@@ -1,4 +1,5 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import { useAuth } from '@clerk/clerk-react'
 import SidebarLayout from '../components/SidebarLayout'
 
 const BACKEND = 'https://resume-optimizer-cuii.onrender.com'
@@ -63,8 +64,11 @@ function Thumb({ tpl, selected, onClick }) {
 }
 
 export default function ToolPage() {
+  const { getToken } = useAuth()
   const [resumeText, setResumeText] = useState('')
   const [jobText, setJobText]       = useState('')
+  const [prefilling, setPrefilling] = useState(true)
+  const [prefillNote, setPrefillNote] = useState('')
   const [result, setResult]         = useState(null)
   const [loading, setLoading]       = useState(false)
   const [error, setError]           = useState('')
@@ -72,6 +76,35 @@ export default function ToolPage() {
   const [length, setLength]         = useState('standard')
   const [dlLoading, setDlLoading]   = useState('')
   const resultsRef = useRef(null)
+
+  // On load: pull the saved resume from Profile so the student never re-pastes it.
+  // The job description box stays empty — this tool is for any external job they find.
+  useEffect(() => {
+    let cancelled = false
+
+    async function loadResume() {
+      try {
+        const token = await getToken()
+        const res = await fetch(`${BACKEND}/me/resume`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (res.ok) {
+          const data = await res.json()
+          if (!cancelled && data.resumeText) {
+            setResumeText(data.resumeText)
+            setPrefillNote('Loaded your saved resume.')
+          }
+        }
+      } catch {
+        // No saved resume — the user can paste one.
+      } finally {
+        if (!cancelled) setPrefilling(false)
+      }
+    }
+
+    loadResume()
+    return () => { cancelled = true }
+  }, [getToken])
 
   async function handleOptimize() {
     if (!resumeText.trim() || !jobText.trim()) {
@@ -140,6 +173,11 @@ export default function ToolPage() {
 
       <main className="ed-main">
         <div className="ed-inputs">
+          {prefillNote && !prefilling && (
+            <div className="ed-prefill">
+              <span className="ed-prefill-dot" />{prefillNote}
+            </div>
+          )}
           <div className="ed-field">
             <label className="ed-label">Your Resume</label>
             <textarea className="ed-textarea" placeholder="Paste your resume text here. Include work experience, skills, education, and any other relevant sections." value={resumeText} onChange={e => setResumeText(e.target.value)} />
@@ -166,12 +204,12 @@ export default function ToolPage() {
 
         {result && !loading && (
           <section className="ed-results" ref={resultsRef}>
-            <div className="ed-divider"><span>Your Results</span></div>
+            <div className="ed-divider"><span>Your Optimized Resume</span></div>
 
             <div className="ed-score-card">
               <ScoreRing score={result.score} />
               <div className="ed-score-info">
-                <h3 className="ed-score-h">ATS Match Score</h3>
+                <h2 className="ed-score-h">ATS Match Score</h2>
                 <p className="ed-score-feedback">{result.feedback}</p>
                 <span className={`ed-badge ${badgeClass}`}>{badgeText}</span>
               </div>
@@ -180,14 +218,14 @@ export default function ToolPage() {
             <div className="ed-card">
               <div className="ed-card-head">
                 <div>
-                  <div className="ed-card-title">Choose your template</div>
-                  <div className="ed-card-sub">Each is inspired by a top company's resume style.</div>
+                  <div className="ed-card-title">Choose a template</div>
+                  <div className="ed-card-sub">Each is designed and written in the style that company's recruiters favor.</div>
                 </div>
-                <span className="ed-inspired-badge">{activeTpl.label} · by {activeTpl.inspired}</span>
+                <div className="ed-inspired-badge">✦ Inspired by top companies</div>
               </div>
               <div className="ed-thumbs">
-                {TEMPLATES.map(tpl => (
-                  <Thumb key={tpl.id} tpl={tpl} selected={template === tpl.id} onClick={() => setTemplate(tpl.id)} />
+                {TEMPLATES.map(t => (
+                  <Thumb key={t.id} tpl={t} selected={t.id === template} onClick={() => setTemplate(t.id)} />
                 ))}
               </div>
             </div>
@@ -196,24 +234,22 @@ export default function ToolPage() {
               <div className="ed-len-wrap">
                 <span className="ed-len-label">Length</span>
                 <div className="ed-len-toggle">
-                  <button className={`ed-len-btn ${length === 'concise' ? 'ed-len-active' : ''}`} onClick={() => setLength('concise')}>
-                    <span className="ed-len-main">Concise</span>
-                    <span className="ed-len-sub">1 page</span>
-                  </button>
-                  <button className={`ed-len-btn ${length === 'standard' ? 'ed-len-active' : ''}`} onClick={() => setLength('standard')}>
-                    <span className="ed-len-main">Standard</span>
-                    <span className="ed-len-sub">Full detail</span>
-                  </button>
+                  {[['concise','Concise','Aims for 1 page'],['standard','Standard','Auto · 1–2 pages']].map(([id, lbl, sub]) => (
+                    <button key={id} onClick={() => setLength(id)} className={`ed-len-btn${length === id ? ' ed-len-active' : ''}`}>
+                      <span className="ed-len-main">{lbl}</span>
+                      <span className="ed-len-sub">{sub}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
               <div className="ed-dl-btns">
-                <button className="ed-dl-word" onClick={() => handleDownload('word')} disabled={dlLoading !== ''}>
+                <button className="ed-dl-word" onClick={() => handleDownload('word')} disabled={!!dlLoading}>
                   {dlLoading === 'word' ? <><span className="ed-spin-dark" />Generating…</> : <>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                     Download Word
                   </>}
                 </button>
-                <button className="ed-dl-pdf" onClick={() => handleDownload('pdf')} disabled={dlLoading !== ''}>
+                <button className="ed-dl-pdf" onClick={() => handleDownload('pdf')} disabled={!!dlLoading}>
                   {dlLoading === 'pdf' ? <><span className="ed-spin" />Generating…</> : <>
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
                     Download PDF
@@ -260,6 +296,8 @@ const CSS = `
 .ed-hero-sub { font-size: 16px; color: #6E6E73; max-width: 430px; margin: 0 auto; line-height: 1.5; }
 .ed-main { max-width: 800px; margin: 0 auto; padding: 0 24px 96px; }
 .ed-inputs { display: grid; gap: 28px; }
+.ed-prefill { display: flex; align-items: center; gap: 8px; background: #F0FDF9; border: 1px solid #A7F3D0; color: #047857; border-radius: 10px; padding: 11px 14px; font-size: 13px; font-weight: 600; }
+.ed-prefill-dot { width: 6px; height: 6px; border-radius: 50%; background: #059669; flex-shrink: 0; }
 .ed-field { display: flex; flex-direction: column; }
 .ed-label { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 12px; }
 .ed-textarea { width: 100%; min-height: 150px; border-radius: 16px; background: #F5F5F7; border: 1px solid #F5F5F7; padding: 18px; font-size: 15px; font-family: inherit; color: #111; resize: vertical; line-height: 1.5; transition: border-color 0.15s, background 0.15s; }
