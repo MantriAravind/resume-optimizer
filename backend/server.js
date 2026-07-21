@@ -204,6 +204,65 @@ app.post('/analyze', async (req, res) => {
 
 // ── OPTIMIZE — rewrite around the skills the student confirmed.
 // Takes the keyword lists from /analyze. Does NOT re-extract them.
+// ── OPTIMIZE CODE GATE ─────────────────────────────────────────────
+// Prompt rules are suggestions the model ignores intermittently (an em-dash
+// leaked in 1 of 3 runs, and a fabricated bullet slipped through). So after the
+// model answers, we check the output in code and, on a real violation, send it
+// back naming the exact problem. Retry at most twice.
+
+const GATE_STOPWORDS = new Set('a an and the to of in for with on at by from into as is are was were be been being this that these those it he she they them his her our your my we you i using use used across within over under after before between during through per via or nor not no so than then also both each any all more most other some such only own same up out off down'.split(' ').filter(Boolean))
+
+// Em-dash, en-dash, or double hyphen anywhere in the resume body. A correct
+// certification line uses a plain hyphen "-", which is NOT one of these.
+function findBannedDashes(text) {
+  const hits = []
+  for (const line of String(text).split('\n')) {
+    if (/[\u2014\u2013]|--/.test(line)) hits.push(line.trim())
+  }
+  return hits
+}
+
+// The "- " bullets that live under the EXPERIENCE section only.
+function experienceBullets(resume) {
+  const bullets = []
+  let inExp = false
+  for (const raw of String(resume).split('\n')) {
+    const line = raw.trim()
+    const isHeader = /^[A-Z][A-Z &/]{2,30}$/.test(line) && line.split(' ').length <= 4
+    if (isHeader) { inExp = /EXPERIENCE/.test(line); continue }
+    if (inExp && /^-\s+/.test(line)) bullets.push(line.replace(/^-\s+/, ''))
+  }
+  return bullets
+}
+
+// Content words: lowercase, drop short words, stopwords, and any word that is
+// part of a confirmed skill (a woven-in confirmed skill is EXPECTED to be new,
+// so counting it as fabrication would be a false positive).
+function gateContentWords(str, skills) {
+  const skillWords = new Set(
+    skills.flatMap(s => String(s).toLowerCase().split(/[^a-z0-9+#]+/)).filter(Boolean)
+  )
+  return String(str).toLowerCase().split(/[^a-z0-9+#]+/)
+    .filter(w => w.length > 2 && !GATE_STOPWORDS.has(w) && !skillWords.has(w))
+}
+
+// A bullet is flagged as invented when almost none of its real work-words appear
+// anywhere in the original resume. Comparing against the WHOLE original (not one
+// source bullet) lets reworded and merged bullets pass; only work that simply is
+// not in the resume gets flagged. The threshold is deliberately low to avoid
+// false positives on honest rewrites.
+function inventedBullets(optimized, original, skills) {
+  const origWords = new Set(gateContentWords(original, skills))
+  const flagged = []
+  for (const b of experienceBullets(optimized)) {
+    const words = gateContentWords(b, skills)
+    if (words.length < 4) continue
+    const overlap = words.filter(w => origWords.has(w)).length / words.length
+    if (overlap < 0.40) flagged.push(b)
+  }
+  return flagged
+}
+
 app.post('/optimize', async (req, res) => {
   const { resumeText, jobText, confirmedSkills = [] } = req.body
   if (!resumeText || !jobText) {
@@ -230,13 +289,7 @@ app.post('/optimize', async (req, res) => {
 They told us this directly. Treat it as fact.`
       : `The candidate has not confirmed any additional skills. Do not add any skill that does not already appear somewhere in their resume.`
 
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4000,
-      temperature: 0.3,   // low: consistent structure run-to-run, a little room for natural phrasing
-      messages: [{
-        role: 'user',
-        content: `You are an expert resume editor and ATS specialist. Rewrite the resume below so it is targeted at this specific job.
+    const basePrompt = `You are an expert resume editor and ATS specialist. Rewrite the resume below so it is targeted at this specific job.
 
 ${confirmedBlock}
 
@@ -344,12 +397,41 @@ Respond in this exact JSON format with no extra text:
   "feedback": "<2-3 sentences: what you added, where, and what still isn't covered>",
   "optimizedResume": "<the full rewritten resume>"
 }`
-      }]
-    })
 
-    const cleaned = message.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
-    const parsed = JSON.parse(cleaned)
-    const out = parsed.optimizedResume || ''
+    // ── CODE GATE: verify the draft, and on a real violation send it back
+    // naming the exact problem. Retry at most twice, then ship the best effort.
+    const messages = [{ role: 'user', content: basePrompt }]
+    let parsed, out, gateNote = ''
+    for (let attempt = 0; attempt <= 2; attempt++) {
+      const message = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4000,
+        temperature: 0.3,
+        messages,
+      })
+      const cleaned = message.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+      parsed = JSON.parse(cleaned)
+      out = parsed.optimizedResume || ''
+
+      const invented = inventedBullets(out, resumeText, confirmed)
+      const dashes = findBannedDashes(out)
+      if (!invented.length && !dashes.length) break
+      if (attempt === 2) {
+        if (invented.length) gateNote = ' (Please review the experience section: one or more bullets may describe work not in your original resume.)'
+        console.warn('optimize gate unresolved after retries: invented=' + invented.length + ' dashes=' + dashes.length)
+        break
+      }
+      console.warn('optimize gate retry ' + (attempt + 1) + ': invented=' + invented.length + ' dashes=' + dashes.length)
+      let corrections = 'Your draft breaks the rules below. Fix ONLY these problems and return the same JSON format.\n'
+      if (invented.length) {
+        corrections += '\nINVENTED EXPERIENCE. These bullets describe work that is NOT in the original resume, which is fabrication and is forbidden:\n' + invented.map(b => '  - "' + b + '"').join('\n') + '\nDelete each one. If a bullet exists only to carry a confirmed skill, remove the bullet and place that skill in the skills section instead. Do not write a replacement bullet.\n'
+      }
+      if (dashes.length) {
+        corrections += '\nBANNED DASHES (em-dash, en-dash, or --) on these lines:\n' + dashes.map(l => '  - "' + l + '"').join('\n') + '\nReplace each with a comma, a full stop, or a plain hyphen. Keep a plain hyphen only inside a certification name.\n'
+      }
+      messages.push({ role: 'assistant', content: message.content[0].text })
+      messages.push({ role: 'user', content: corrections })
+    }
 
     // Only count a skill if it actually made it into the text. The score should be
     // checkable against the document, not a promise that the rewrite worked.
@@ -363,7 +445,7 @@ Respond in this exact JSON format with no extra text:
       matchedKeywords,
       missingKeywords,
       addedKeywords: landed,
-      feedback: parsed.feedback || '',
+      feedback: (parsed.feedback || '') + gateNote,
       optimizedResume: out,
       scoreBefore,
       scoreAfter,
