@@ -242,19 +242,19 @@ ${confirmedBlock}
 
 ═══ RULE 1 — EVERY CONFIRMED SKILL MUST APPEAR, HONESTLY ═══
 Every confirmed skill must end up in the resume. There is an order of preference for how:
-(a) Attach it to an existing bullet about work they described. Best.
-(b) If it has no home, write a NEW bullet — but build it only from work they described elsewhere in their resume, with the confirmed skill attached. The tool comes from their checkbox; the work comes from their resume; nothing else is added.
-   - Fine: their resume mentions data pipeline work, they confirmed Databricks, so a new bullet reads "Built and ran data pipelines in Databricks for the nightly sales load." Every part traces back to them.
-   - Not fine: "Built Databricks notebooks to productionize ML models across the analytics platform." They never mentioned notebooks, ML models, or a platform. That is invented, and it ends their interview the moment someone asks about it.
-(c) Only if a skill genuinely cannot be attached or supported by any real work, place it under a category header in the skills section, and say so plainly in the feedback.
-THE TEST FOR ANY SENTENCE: every part of it must trace back to something they told you — the tool from their checkbox, the work from their resume. If a detail came from neither, it is fabrication. Cut it.
-Do not force a central skill into the skills section just to avoid a new bullet. If the posting is built around Databricks, a skills-list mention alone makes the resume look like it is dodging. Prefer a new honest bullet (b) over a lonely skills-list entry.
+(a) Attach it to an EXISTING bullet, but only when the work that bullet already describes genuinely involved this skill. You are naming a tool inside work they already did, not writing new work. This is the best outcome.
+(b) Otherwise, list it in the skills section as a plain category-line entry. This is honest and expected. A skills-list entry claims "I know this tool", nothing more, and that is a true, defensible claim.
+   - Fine: their resume says "Built ETL pipelines in Python", they confirmed Databricks, and those pipelines actually ran in Databricks, so it becomes "Built ETL pipelines in Python, running in Databricks." The work was already there; you only added the tool.
+   - Not fine: writing a brand-new bullet such as "Built a customer-facing recommendation system using LLM scoring and retrieval-augmented generation." If that accomplishment is not already on their resume, it is invented, and it ends their interview the moment someone asks. That skill goes in the skills list instead.
+NEVER write a NEW experience bullet to make a confirmed skill appear. If a skill has no existing bullet whose real work involved it, it goes in the skills section. Full stop. There is no third option and no exception.
+THE TEST FOR ANY EXPERIENCE BULLET: the accomplishment, the employer, the system, the scale, and the outcome must ALREADY be on their original resume. The tool may come from their checkbox, but the work may not. If the accomplishment is not already there, you are inventing it. Do not.
+A skills-list entry is NOT dodging. If the posting is built around a skill the person only has in the skills list, that is the honest signal that their experience does not yet cover this job's core, and the feedback must say so plainly. It is not your job to hide a missing qualification behind an invented bullet; the truth serves the person, a fabrication ends their interview.
 
 ═══ RULE 2 — ATTACH, DO NOT AUTHOR ═══
 A confirmed skill rides on a bullet about work the candidate actually described. It does not get its own bullet written from the job posting.
 - Right: their bullet says "Wrote SQL to transform claims data for the reporting layer" and they confirmed dbt, so it becomes "Wrote SQL and dbt models to transform claims data for the reporting layer." Their work, their words, keyword carried.
 - Wrong: "Owned dbt project structure, macros, testing, and CI/CD deployment." That is the posting's duty list pasted onto their life. They confirmed a tool. They never confirmed macros, or CI/CD, or owning the project structure.
-Most skills need no new bullet at all. Only write a new bullet if a confirmed skill genuinely has nowhere to attach, and build it from work they described, never from the posting.
+Most skills need no new bullet at all: they attach to existing work, or they go to the skills list. You never write a new experience bullet for a skill. If a confirmed skill has nowhere real to attach, it goes to the skills section, never into an invented bullet.
 
 ═══ RULE 3 — NEVER COPY THE POSTING'S SENTENCES ═══
 Use the posting's TERM for a thing they did. Never lift its phrasing.
@@ -286,7 +286,7 @@ Never invent metrics, data volumes, team sizes, or achievements.
 This applies to the professional summary exactly as much as to bullets. A summary claiming they are "comfortable owning pipelines end to end" while the bullet says "set up" is the same inflation, just relocated.
 
 ═══ RULE 7 — A CONFIRMED SKILL MUST NEVER SILENTLY DISAPPEAR ═══
-If a confirmed skill has no obvious home, do not drop it, and do not settle for the skills list if the skill is central to the posting. A skills-list-only mention of a central requirement reads like the resume is dodging it.
+If a confirmed skill has no obvious home, do not drop it silently, but the fallback is the skills list, and that is a legitimate home even for a skill central to the posting. A skills-list mention of a central requirement is not dodging; it is the honest truth that their experience does not yet cover it, which the feedback must state plainly.
 Reframe an existing bullet to carry it, joining only facts the candidate has given you.
 - Fine: they wrote "Built ETL pipelines in Python" and confirmed Databricks, so it becomes "Built ETL pipelines in Python, running in Databricks." Both halves came from them: they built the pipelines, they have used Databricks.
 - Fine: they wrote "Set up Airflow DAGs to schedule the nightly loads" and confirmed data-quality tests, so it becomes "Set up Airflow DAGs to schedule the nightly loads, with data-quality tests to catch bad data before it reached analysts."
