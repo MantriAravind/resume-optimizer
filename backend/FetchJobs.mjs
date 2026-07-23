@@ -315,15 +315,20 @@ function extractYearsExperience(text = '') {
 }
 
 // ── Fetch from Greenhouse ───────────────────────────────────────────────────
+// Returns { ok, jobs }. `ok` means Greenhouse answered authoritatively, so the list
+// it returned is the complete truth for this company right now. A timeout, a 5xx, or
+// a network blip is NOT authoritative: it returns an empty list that looks identical
+// to "this company has no jobs". The stale sweep below deletes anything it didn't see
+// this run, so treating an unreachable company as empty would wipe a live board.
 async function fetchGreenhouseCompany(slug) {
   try {
     const url = `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs?content=true`
     const res = await fetch(url, { signal: AbortSignal.timeout(10000) })
-    if (!res.ok) return []
+    if (!res.ok) return { ok: false, jobs: [] }
     const data = await res.json()
-    return data.jobs || []
+    return { ok: true, jobs: data.jobs || [] }
   } catch {
-    return []
+    return { ok: false, jobs: [] }
   }
 }
 
@@ -338,15 +343,26 @@ async function fetchAllJobs() {
   console.log(`📋 Loaded ${allSlugs.length} Greenhouse slugs`)
 
   let saved = 0, skipped = 0, disqualified = 0, nonUS = 0, contractOrPartTime = 0
+  let failedCompanies = 0, removed = 0
   const BATCH_SIZE = 10
+
+  // Anything whose fetchedAt is older than this by the end of the run was not seen
+  // at the source this time, which means it closed or no longer passes our filters.
+  const runStart = new Date()
+  const okSlugs = []
 
   for (let i = 0; i < allSlugs.length; i += BATCH_SIZE) {
     const batch = allSlugs.slice(i, i + BATCH_SIZE)
     const results = await Promise.all(
-      batch.map(async (slug) => ({ slug, jobs: await fetchGreenhouseCompany(slug) }))
+      batch.map(async (slug) => ({ slug, ...(await fetchGreenhouseCompany(slug)) }))
     )
 
-    for (const { slug, jobs } of results) {
+    for (const { slug, ok, jobs } of results) {
+      // Unreachable company: skip it entirely and, critically, do NOT mark it
+      // sweepable. Its existing jobs stay untouched until we can confirm them.
+      if (!ok) { failedCompanies++; continue }
+      okSlugs.push(slug)
+
       for (const job of jobs) {
         const location  = job.location?.name || ''
         const plainText = stripHtml(job.content || '')
@@ -407,12 +423,60 @@ async function fetchAllJobs() {
     await new Promise(r => setTimeout(r, 200))
   }
 
+  // ── STALE SWEEP ─────────────────────────────────────────────────────────────
+  // Greenhouse has no "this job closed" signal. A closed posting simply stops
+  // appearing in the company's list. Every job we saved above got a fresh
+  // fetchedAt, so anything older than runStart is gone from the source.
+  //
+  // Deleting is irreversible, so two guards:
+  //   1. Only sweep companies that answered successfully this run.
+  //   2. Abort entirely if the sweep would remove an implausible share of the DB.
+  //      A quarter of all jobs do not close in six hours: that would mean something
+  //      broke, and mass-deleting on a bug is far worse than leaving stale rows.
+  console.log('\n🧹 Checking for jobs that no longer exist at the source...')
+
+  if (okSlugs.length === 0) {
+    console.log('   ⚠️  No company answered successfully. Sweep skipped, nothing deleted.')
+  } else {
+    const CHUNK = 400
+    const chunks = []
+    for (let i = 0; i < okSlugs.length; i += CHUNK) chunks.push(okSlugs.slice(i, i + CHUNK))
+
+    const staleFilter = chunk => ({
+      ats: 'greenhouse',
+      companySlug: { $in: chunk },
+      fetchedAt: { $lt: runStart },
+    })
+
+    const totalGreenhouse = await Job.countDocuments({ ats: 'greenhouse' })
+    let staleTotal = 0
+    for (const chunk of chunks) staleTotal += await Job.countDocuments(staleFilter(chunk))
+
+    const share = totalGreenhouse ? staleTotal / totalGreenhouse : 0
+    if (share > 0.25) {
+      console.log(`   🛑 ABORTED: sweep would delete ${staleTotal} of ${totalGreenhouse} jobs (${Math.round(share * 100)}%).`)
+      console.log('      That is too many to be genuine closures. Nothing was deleted.')
+      console.log('      Investigate before the next run.')
+    } else if (staleTotal === 0) {
+      console.log('   ✅ Nothing stale. Every stored job is still live at the source.')
+    } else {
+      for (const chunk of chunks) {
+        const r = await Job.deleteMany(staleFilter(chunk))
+        removed += r.deletedCount || 0
+      }
+      console.log(`   🗑️  Removed ${removed} closed or no-longer-qualifying jobs.`)
+    }
+  }
+
   console.log(`\n✅ Done!`)
   console.log(`   💾 Saved:              ${saved}`)
   console.log(`   🚫 Disqualified:       ${disqualified}`)
   console.log(`   📋 Contract/Part-time: ${contractOrPartTime}`)
   console.log(`   🌍 Non-US:             ${nonUS}`)
   console.log(`   ⚠️  DB errors:          ${skipped}`)
+  console.log(`   🏢 Companies OK:       ${okSlugs.length}`)
+  console.log(`   📡 Companies failed:   ${failedCompanies}  (skipped, not swept)`)
+  console.log(`   🗑️  Removed (stale):    ${removed}`)
 
   await mongoose.disconnect()
   console.log('🔌 Disconnected from MongoDB')
