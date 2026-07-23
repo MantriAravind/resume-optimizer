@@ -350,6 +350,7 @@ async function fetchAllJobs() {
   // at the source this time, which means it closed or no longer passes our filters.
   const runStart = new Date()
   const okSlugs = []
+  const failedSlugs = []
 
   for (let i = 0; i < allSlugs.length; i += BATCH_SIZE) {
     const batch = allSlugs.slice(i, i + BATCH_SIZE)
@@ -360,7 +361,7 @@ async function fetchAllJobs() {
     for (const { slug, ok, jobs } of results) {
       // Unreachable company: skip it entirely and, critically, do NOT mark it
       // sweepable. Its existing jobs stay untouched until we can confirm them.
-      if (!ok) { failedCompanies++; continue }
+      if (!ok) { failedCompanies++; failedSlugs.push(slug); continue }
       okSlugs.push(slug)
 
       for (const job of jobs) {
@@ -382,7 +383,11 @@ async function fetchAllJobs() {
         const years = extractYearsExperience(plainText)
 
         try {
-          await Job.findOneAndUpdate(
+          // updateOne, not findOneAndUpdate: we never used the returned document, and
+          // its deprecated `new: true` option printed a warning per save, which flooded
+          // the CI log with 54k lines and truncated the summary. This also avoids
+          // dragging every saved document back over the wire.
+          await Job.updateOne(
             { id: String(job.id) },
             {
               id:              String(job.id),
@@ -406,7 +411,7 @@ async function fetchAllJobs() {
               yearsMin:        years ? years.min : null,
               yearsMax:        years ? years.max : null,
             },
-            { upsert: true, new: true }
+            { upsert: true }
           )
           saved++
         } catch {
@@ -421,6 +426,86 @@ async function fetchAllJobs() {
     }
 
     await new Promise(r => setTimeout(r, 200))
+  }
+
+  // ── RETRY PASS ──────────────────────────────────────────────────────────────
+  // A company can fail for two very different reasons and they need opposite fixes:
+  // we got rate-limited (the company is alive, we just hit Greenhouse too hard), or
+  // the board is genuinely gone. One retry with a slower pace tells us which.
+  // It also recovers real jobs either way, and lets the sweep clean these companies.
+  if (failedSlugs.length > 0) {
+    console.log(`\n🔁 Retrying ${failedSlugs.length} companies that did not respond...`)
+    const toRetry = [...failedSlugs]
+    let recovered = 0
+
+    for (let i = 0; i < toRetry.length; i += 5) {
+      const batch = toRetry.slice(i, i + 5)
+      const results = await Promise.all(
+        batch.map(async (slug) => ({ slug, ...(await fetchGreenhouseCompany(slug)) }))
+      )
+
+      for (const { slug, ok, jobs } of results) {
+        if (!ok) continue
+        recovered++
+        failedCompanies--
+        okSlugs.push(slug)
+        for (const job of jobs) {
+          const plainText = stripHtml(job.content || '')
+          const location  = job.location?.name || ''
+          if (location !== '' && !isUSLocation(location)) { nonUS++; continue }
+          const fullText = `${job.title || ''} ${plainText}`
+          if (isDisqualified(fullText)) { disqualified++; continue }
+          if (isContractOrPartTime(plainText, job.title || '')) { contractOrPartTime++; continue }
+
+          const companyName = slug.charAt(0).toUpperCase() + slug.slice(1)
+          const salary = extractSalary(plainText)
+          const years  = extractYearsExperience(plainText)
+          try {
+            await Job.updateOne(
+              { id: String(job.id) },
+              {
+                id:              String(job.id),
+                title:           job.title || '',
+                company:         companyName,
+                companySlug:     slug,
+                location:        location || 'United States',
+                isRemote:        location.toLowerCase().includes('remote'),
+                description:     plainText.slice(0, 500),
+                applyUrl:        job.absolute_url || '',
+                postedAt:        job.updated_at ? new Date(job.updated_at) : new Date(),
+                sponsorBadge:    false,
+                ats:             'greenhouse',
+                fetchedAt:       new Date(),
+                experienceLevel: detectExperienceLevel(job.title || ''),
+                workType:        detectWorkType(location, plainText),
+                state:           extractState(location),
+                salaryMin:       salary ? salary.min : null,
+                salaryMax:       salary ? salary.max : null,
+                employmentType:  detectEmploymentType(plainText),
+                yearsMin:        years ? years.min : null,
+                yearsMax:        years ? years.max : null,
+              },
+              { upsert: true }
+            )
+            saved++
+          } catch { skipped++ }
+        }
+      }
+      // Deliberately slower than the main loop. If rate limiting caused the failures,
+      // this pace is what proves it.
+      await new Promise(r => setTimeout(r, 1000))
+    }
+
+    const rate = Math.round((recovered / toRetry.length) * 100)
+    console.log(`   ✅ Recovered ${recovered} of ${toRetry.length} (${rate}%).`)
+    if (rate >= 50) {
+      console.log('   👉 Most recovered on retry: these were RATE LIMITS, not dead boards.')
+      console.log('      The main loop is hitting Greenhouse too fast. Slow it down.')
+    } else if (rate > 0) {
+      console.log('   👉 Mixed. Some rate limiting, but many boards look genuinely gone.')
+    } else {
+      console.log('   👉 None recovered: these boards are DEAD. Prune them from the slug list.')
+    }
   }
 
   // ── STALE SWEEP ─────────────────────────────────────────────────────────────

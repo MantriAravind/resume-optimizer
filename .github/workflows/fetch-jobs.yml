@@ -14,8 +14,8 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     # The pipeline walks every company slug with rate-limit pauses, so give it room.
-    # Without this it would inherit the 6 hour default and could burn minutes on a hang.
-    timeout-minutes: 90
+    # The full run was 1h22m before the retry pass, which adds roughly 30 more minutes.
+    timeout-minutes: 180
 
     steps:
       - name: Check out the repo
@@ -24,7 +24,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
 
       - name: Install backend dependencies
         working-directory: backend
