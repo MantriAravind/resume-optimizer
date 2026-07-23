@@ -661,7 +661,22 @@ const FONT_STACKS = {
   georgia: { word: 'Georgia',          css: 'Georgia, serif' },
   times:   { word: 'Times New Roman',  css: "'Times New Roman', Times, serif" },
 }
-function fontFor(id) { return FONT_STACKS[id] || FONT_STACKS.calibri }
+// The client sends a display name ("Times New Roman"), not the internal key ("times").
+// A plain lookup misses, falls back to Calibri, and every download comes out identical
+// no matter what the user picked. Normalise and alias so that cannot happen silently.
+const FONT_ALIASES = {
+  calibri: 'calibri',
+  arial: 'arial', helvetica: 'arial',
+  georgia: 'georgia',
+  times: 'times', timesnewroman: 'times', timesroman: 'times',
+}
+function fontFor(id) {
+  if (!id) return FONT_STACKS.calibri
+  const key = String(id).toLowerCase().replace(/[^a-z]/g, '')
+  const resolved = FONT_ALIASES[key]
+  if (!resolved) console.warn(`fontFor: unknown font "${id}", using Calibri`)
+  return FONT_STACKS[resolved] || FONT_STACKS.calibri
+}
 
 // ── DOWNLOAD WORD
 app.post('/download-word', async (req, res) => {
