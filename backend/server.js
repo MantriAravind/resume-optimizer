@@ -54,6 +54,10 @@ const jobSchema = new mongoose.Schema({
   employmentType:  String,
   yearsMin:        Number,
   yearsMax:        Number,
+  // Set when Greenhouse tells us the posting is gone (404). The 6-hour sweep deletes
+  // these, but a job can close minutes after a refresh, so the first person to open it
+  // flags it for everyone else in the meantime.
+  closed:          { type: Boolean, default: false },
 })
 
 jobSchema.index({ title: 'text', company: 'text' })
@@ -468,7 +472,8 @@ app.get('/jobs', async (req, res) => {
     const PAGE_SIZE = 20
     const page = Math.max(1, parseInt(req.query.page, 10) || 1)
 
-    const filter = {}
+    // Never list a posting we already know is closed.
+    const filter = { closed: { $ne: true } }
 
     // Search box: partial, case-insensitive match on title OR company.
     // Escaped so a query like "c++" or "node.js" can't break the regex.
@@ -520,20 +525,35 @@ app.get('/jobs/:id', async (req, res) => {
     if (!job) return res.status(404).json({ error: 'Job not found.' })
 
     let fullDescription = job.description || ''
+    let closed = job.closed === true
+
     if (job.ats === 'greenhouse' && job.companySlug) {
       try {
         const url = `https://boards-api.greenhouse.io/v1/boards/${job.companySlug}/jobs/${id}?questions=false`
         const ghRes = await fetch(url, { signal: AbortSignal.timeout(8000) })
+
         if (ghRes.ok) {
           const data = await ghRes.json()
           fullDescription = data.content ? decodeHtmlEntities(data.content) : fullDescription
+          // It answered and the posting is live, so clear any stale closed flag.
+          if (closed) {
+            closed = false
+            await Job.updateOne({ id }, { closed: false })
+          }
+        } else if (ghRes.status === 404) {
+          // ONLY a 404 means the posting is genuinely gone. A 500 or a timeout means
+          // we could not reach Greenhouse, which is not the same thing and must never
+          // mark a live job dead.
+          closed = true
+          if (!job.closed) await Job.updateOne({ id }, { closed: true })
         }
       } catch {
-        // Fall back to stored description
+        // Network failure. Not authoritative: fall back to the stored description
+        // and leave the closed flag exactly as it was.
       }
     }
 
-    res.json({ ...job, description: fullDescription })
+    res.json({ ...job, description: fullDescription, closed })
 
   } catch (error) {
     console.error('Job detail error:', error)

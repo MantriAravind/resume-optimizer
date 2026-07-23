@@ -113,6 +113,16 @@ const CSS = `
 .jb-count { max-width: 900px; margin: 0 auto; padding: 16px 28px 6px; font-size: 13px; color: var(--muted); }
 
 .jb-list { max-width: 900px; margin: 0 auto; padding: 6px 28px 60px; display: flex; flex-direction: column; gap: 12px; }
+.jb-card--closed { background: #FBFBFC; border-color: #ECECEF; cursor: default; }
+.jb-card--closed:hover { transform: none; box-shadow: none; border-color: #ECECEF; }
+.jb-card--closed h3 { color: #8E8E93; }
+.jb-logo--closed { background: linear-gradient(135deg, #9A9AA0, #C0C0C6) !important; opacity: .55; }
+.jb-pill--closed { background: #FDF0F0; color: #B02020; font-weight: 600; }
+.jb-closed-note { margin-top: 12px; font-size: 12.5px; color: #8E8E93; background: #F7F7F8;
+  border-radius: 9px; padding: 10px 12px; line-height: 1.45; }
+.jb-btn-dead { background: #F2F2F4; color: #B0B0B5; border: none; border-radius: 9px;
+  padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: not-allowed; font-family: inherit; }
+
 .jb-card {
   background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 22px;
   cursor: pointer; transition: box-shadow .16s, border-color .16s, transform .16s;
@@ -268,6 +278,43 @@ function JobCard({ job, onOpen, onOptimize }) {
 
   function handleApplyClick(e) {
     e.stopPropagation()
+  }
+
+  // A job the backend has confirmed is gone from the source. These are normally
+  // filtered out of the list, so this only shows for a board loaded before the job
+  // closed. Nothing here should be clickable.
+  if (job.closed) {
+    return (
+      <div className="jb-card jb-card--closed">
+        <div className="jb-card-top">
+          <div className="jb-logo jb-logo--closed">{job.company ? job.company[0] : '?'}</div>
+          <div className="jb-card-head">
+            <div>
+              <h3>{job.title}</h3>
+              <div className="co">{job.company}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="jb-pills">
+          <span className="jb-pill jb-pill--closed">No longer open</span>
+          <span className="jb-pill jb-pill--location"><MapPin />{shortLoc(job.location)}</span>
+          {job.workType && <span className="jb-pill jb-pill--worktype"><Building2 />{job.workType}</span>}
+        </div>
+
+        <div className="jb-closed-note">
+          This posting was closed by the employer. It drops off the board at the next refresh.
+        </div>
+
+        <div className="jb-card-foot">
+          <span className="jb-posted">Posted {timeAgo(job.postedAt)}</span>
+          <div className="jb-actions">
+            <button className="jb-btn-dead" disabled>Optimize</button>
+            <button className="jb-btn-dead" disabled>Apply</button>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 import {
   X, Check, CheckCheck, ArrowRight, ArrowUp, Download, FileText,
-  ExternalLink, Sparkles, BookOpen, AlertCircle, Mail,
+  ExternalLink, Sparkles, BookOpen, AlertCircle, Mail, Ban,
 } from 'lucide-react'
 
 const BACKEND = 'https://resume-optimizer-cuii.onrender.com'
@@ -111,6 +111,14 @@ export default function OptimizeModal({ job, onClose }) {
         const full = jobRes.ok ? await jobRes.json() : {}
 
         if (cancelled) return
+
+        // The posting is gone at the source. There is no job description to optimize
+        // against, so say that plainly instead of failing with a generic error.
+        if (full.closed) {
+          setError('job-closed')
+          setPhase('error')
+          return
+        }
 
         if (!me.resumeText) {
           setError('no-resume')
@@ -232,8 +240,21 @@ export default function OptimizeModal({ job, onClose }) {
 
         {phase === 'error' && (
           <div className="om-load">
-            <AlertCircle size={26} color="#DC2626" />
-            {error === 'no-resume' ? (
+            {/* A closed posting is not a malfunction, so it gets a neutral icon
+                rather than the red alert used for real errors. */}
+            {error === 'job-closed'
+              ? <Ban size={26} color="#8E8E93" />
+              : <AlertCircle size={26} color="#DC2626" />}
+            {error === 'job-closed' ? (
+              <>
+                <div className="om-load-t" style={{ marginTop: 10 }}>This job is no longer open</div>
+                <div className="om-load-s">
+                  {job.company} closed this posting, so there is nothing to optimize against.
+                  Nothing you did caused this. It drops off the board at the next refresh.
+                </div>
+                <button className="om-closed-btn" onClick={onClose}>Back to jobs</button>
+              </>
+            ) : error === 'no-resume' ? (
               <>
                 <div className="om-load-t" style={{ marginTop: 10 }}>No resume on file yet</div>
                 <div className="om-load-s">Add your resume in Profile first, then optimize takes seconds.</div>
@@ -471,6 +492,10 @@ const CSS = `
   padding: 11px 13px; background: #F9FAFB; border-radius: 8px; border: 1px solid #F3F4F6; }
 
 /* ── result screen: tabs + split (preview left, controls right) ── */
+.om-closed-btn { margin-top: 16px; background: #fff; border: 1.5px solid #DCDCE0; border-radius: 10px;
+  padding: 9px 20px; font-size: 13px; font-weight: 600; color: #0A0A0B; cursor: pointer; font-family: inherit; }
+.om-closed-btn:hover { background: #F7F7F8; }
+
 .om-tabbar { display: flex; gap: 3px; padding: 12px 20px; border-bottom: 1px solid #F1EDE7; background: #fff; flex-shrink: 0; }
 .om-tab { display: inline-flex; align-items: center; gap: 6px; border: none; background: transparent; cursor: pointer;
   padding: 8px 15px; border-radius: 9px; font-size: 12.5px; font-weight: 700; color: #6B7280; font-family: inherit; }
