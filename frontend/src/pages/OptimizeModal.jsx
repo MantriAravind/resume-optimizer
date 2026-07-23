@@ -2,17 +2,17 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 import {
   X, Check, CheckCheck, ArrowRight, ArrowUp, Download, FileText,
-  ExternalLink, Sparkles, BookOpen, AlertCircle,
+  ExternalLink, Sparkles, BookOpen, AlertCircle, Mail,
 } from 'lucide-react'
 
 const BACKEND = 'https://resume-optimizer-cuii.onrender.com'
 
-const TEMPLATES = [
-  { id: 'google',   label: 'Search Giant',    accent: '#4285F4' },
-  { id: 'amazon',   label: 'Everything Store', accent: '#FF9900' },
-  { id: 'apple',    label: 'Cupertino',        accent: '#1d1d1f' },
-  { id: 'mckinsey', label: 'The Firm',         accent: '#003A70' },
-  { id: 'netflix',  label: 'Streaming Co',     accent: '#E50914' },
+// Web-safe only. Trendy fonts silently fall back inside PDFShift, so we don't offer them.
+const FONTS = [
+  { id: 'Calibri',         label: 'Calibri', css: "Calibri, Carlito, 'Segoe UI', sans-serif", note: 'Default' },
+  { id: 'Arial',           label: 'Arial',   css: 'Arial, Helvetica, sans-serif' },
+  { id: 'Georgia',         label: 'Georgia', css: "Georgia, 'Times New Roman', serif" },
+  { id: 'Times New Roman', label: 'Times New Roman', css: "'Times New Roman', Times, serif" },
 ]
 
 function ScoreBar({ before, after, animate }) {
@@ -89,7 +89,9 @@ export default function OptimizeModal({ job, onClose }) {
   const [scoreAfter, setScoreAfter] = useState(0)
   const [feedback, setFeedback]     = useState('')
 
-  const [template, setTemplate] = useState('google')
+  const [font, setFont]     = useState('Calibri')
+  const [length, setLength] = useState('standard')
+  const [tab, setTab]       = useState('resume')
   const [dlLoading, setDlLoading] = useState('')
 
   // ── step 1: load resume + full job description, then analyze
@@ -190,7 +192,7 @@ export default function OptimizeModal({ job, onClose }) {
       const res = await fetch(`${BACKEND}/download-${type}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resumeText: optimized, template, length: 'standard' }),
+        body: JSON.stringify({ resumeText: optimized, font, length }),
       })
       if (!res.ok) { alert('Download failed. Please try again.'); return }
       const blob = await res.blob()
@@ -210,7 +212,7 @@ export default function OptimizeModal({ job, onClose }) {
   return (
     <div className="om-overlay" onClick={onClose}>
       <style>{CSS}</style>
-      <div className="om-modal" onClick={e => e.stopPropagation()}>
+      <div className="om-modal" style={{ '--om-w': phase === 'result' ? '860px' : '520px' }} onClick={e => e.stopPropagation()}>
         <div className="om-head">
           <div>
             <div className="om-eyebrow">Optimize for</div>
@@ -306,52 +308,79 @@ export default function OptimizeModal({ job, onClose }) {
 
         {phase === 'result' && (
           <>
-            <div className="om-body">
-              <ScoreBar before={scoreBefore} after={scoreAfter} animate={true} />
-
-              {added.length > 0 && (
-                <div className="om-added">
-                  <Check size={12} color="#047857" />
-                  <span>Added to your resume: <b>{added.join(', ')}</b></span>
-                </div>
-              )}
-
-              <div className="om-lbl" style={{ marginTop: 14 }}>Your rewritten resume</div>
-              <div className="om-resume-wrap">
-                <ResumeView text={optimized} skills={added} />
-              </div>
-
-              {feedback && <div className="om-feedback">{feedback}</div>}
-
-              <div className="om-lbl" style={{ marginTop: 16 }}>Choose a template</div>
-              <div className="om-tpls">
-                {TEMPLATES.map(t => (
-                  <button
-                    key={t.id}
-                    className={`om-tpl ${template === t.id ? 'on' : ''}`}
-                    onClick={() => setTemplate(t.id)}
-                  >
-                    <div className="om-tpl-top" style={{ background: template === t.id ? t.accent : '#F1F5F9' }} />
-                    <div className="om-tpl-in">
-                      <div className="om-tpl-l" style={{ width: '70%' }} />
-                      <div className="om-tpl-l" style={{ width: '90%' }} />
-                      <div className="om-tpl-l" style={{ width: '50%' }} />
-                    </div>
-                    <div className="om-tpl-nm">{t.label}</div>
-                  </button>
-                ))}
-              </div>
+            <div className="om-tabbar">
+              <button className={`om-tab ${tab === 'resume' ? 'on' : ''}`} onClick={() => setTab('resume')}>
+                <FileText size={13} />Resume
+              </button>
+              <button className="om-tab om-tab-soon" disabled title="Cover letters are coming soon">
+                <Mail size={13} />Cover letter<span className="om-soon">Soon</span>
+              </button>
             </div>
-            <div className="om-foot om-foot-result">
-              <button className="om-dl" onClick={() => handleDownload('word')} disabled={!!dlLoading}>
-                <FileText size={13} />{dlLoading === 'word' ? 'Preparing…' : 'Word'}
-              </button>
-              <button className="om-dl" onClick={() => handleDownload('pdf')} disabled={!!dlLoading}>
-                <Download size={13} />{dlLoading === 'pdf' ? 'Preparing…' : 'PDF'}
-              </button>
-              <a className="om-apply" href={job.applyUrl} target="_blank" rel="noreferrer">
-                <ExternalLink size={13} />Apply
-              </a>
+
+            <div className="om-split">
+              <div className="om-pane">
+                <div className="om-paper" style={{ fontFamily: FONTS.find(f => f.id === font)?.css }}>
+                  <ResumeView text={optimized} skills={added} />
+                </div>
+              </div>
+
+              <div className="om-rail">
+                <div className="om-ringrow">
+                  <div className="om-ring" style={{ background: `conic-gradient(#2563EB ${scoreAfter}%, #EEF0F2 0)` }}>
+                    <div>{scoreAfter}</div>
+                  </div>
+                  <div>
+                    <div className="om-ring-l">ATS coverage</div>
+                    {scoreAfter > scoreBefore && (
+                      <div className="om-ring-d">+{scoreAfter - scoreBefore} from {scoreBefore}</div>
+                    )}
+                  </div>
+                </div>
+
+                {added.length > 0 && (
+                  <div className="om-added-line">
+                    {added.length} skill{added.length === 1 ? '' : 's'} woven into your real experience: <b>{added.join(', ')}</b>
+                  </div>
+                )}
+
+                {feedback && <div className="om-feedback">{feedback}</div>}
+
+                <div className="om-sep" />
+
+                <div className="om-rail-lbl">Font</div>
+                <div className="om-fonts">
+                  {FONTS.map(f => (
+                    <button
+                      key={f.id}
+                      className={`om-font ${font === f.id ? 'on' : ''}`}
+                      onClick={() => setFont(f.id)}
+                    >
+                      <span className="om-font-nm" style={{ fontFamily: f.css }}>{f.label}</span>
+                      {font === f.id && <Check size={14} color="#2563EB" />}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="om-rail-lbl" style={{ marginTop: 16 }}>Length</div>
+                <div className="om-seg">
+                  <button className={length === 'concise' ? 'on' : ''} onClick={() => setLength('concise')}>Concise</button>
+                  <button className={length === 'standard' ? 'on' : ''} onClick={() => setLength('standard')}>Standard</button>
+                </div>
+
+                <div className="om-acts">
+                  <a className="om-apply" href={job.applyUrl} target="_blank" rel="noreferrer">
+                    <ExternalLink size={13} />Apply
+                  </a>
+                  <div className="om-dl-row">
+                    <button className="om-dl" onClick={() => handleDownload('word')} disabled={!!dlLoading}>
+                      <FileText size={13} />{dlLoading === 'word' ? '…' : 'Word'}
+                    </button>
+                    <button className="om-dl" onClick={() => handleDownload('pdf')} disabled={!!dlLoading}>
+                      <Download size={13} />{dlLoading === 'pdf' ? '…' : 'PDF'}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </>
         )}
@@ -366,7 +395,7 @@ const CSS = `
   font-family: 'Space Grotesk', -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased; }
 .om-overlay * { box-sizing: border-box; }
-.om-modal { background: #fff; border-radius: 18px; width: 100%; max-width: 520px;
+.om-modal { background: #fff; border-radius: 22px; width: 100%; max-width: var(--om-w, 520px);
   max-height: 90vh; display: flex; flex-direction: column; overflow: hidden;
   box-shadow: 0 24px 68px rgba(0,0,0,.28); }
 
@@ -441,15 +470,54 @@ const CSS = `
 .om-feedback { font-size: 12px; color: #6B7280; line-height: 1.55; margin-top: 12px;
   padding: 11px 13px; background: #F9FAFB; border-radius: 8px; border: 1px solid #F3F4F6; }
 
-.om-tpls { display: flex; gap: 7px; }
-.om-tpl { flex: 1; cursor: pointer; border: none; background: none; padding: 0; font-family: inherit; }
-.om-tpl-top { height: 13px; border-radius: 6px 6px 0 0; transition: background .15s; }
-.om-tpl-in { border: 1.5px solid #E5E7EB; border-top: none; border-radius: 0 0 6px 6px; padding: 5px 6px 6px; transition: border-color .15s; }
-.om-tpl.on .om-tpl-in { border-color: #2563EB; }
-.om-tpl.on .om-tpl-top { box-shadow: 0 0 0 1.5px #2563EB; }
-.om-tpl-l { height: 2.5px; border-radius: 1px; background: #E5E7EB; margin-bottom: 2.5px; }
-.om-tpl-nm { font-size: 8.5px; font-weight: 700; color: #94A3B8; margin-top: 5px; text-align: center; }
-.om-tpl.on .om-tpl-nm { color: #2563EB; }
+/* ── result screen: tabs + split (preview left, controls right) ── */
+.om-tabbar { display: flex; gap: 3px; padding: 12px 20px; border-bottom: 1px solid #F1EDE7; background: #fff; flex-shrink: 0; }
+.om-tab { display: inline-flex; align-items: center; gap: 6px; border: none; background: transparent; cursor: pointer;
+  padding: 8px 15px; border-radius: 9px; font-size: 12.5px; font-weight: 700; color: #6B7280; font-family: inherit; }
+.om-tab.on { background: #F2EEE8; color: #0A0A0B; }
+.om-tab-soon { cursor: not-allowed; opacity: .55; }
+.om-soon { font-size: 8.5px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+  background: #E5E7EB; color: #6B7280; padding: 2px 6px; border-radius: 20px; margin-left: 3px; }
+
+.om-split { display: flex; min-height: 0; flex: 1; }
+.om-pane { flex: 1; min-width: 0; background: #FAF8F5; padding: 18px; overflow-y: auto; }
+.om-paper { background: #fff; border: 1px solid #ECE8E2; border-radius: 11px; padding: 22px 24px;
+  box-shadow: 0 6px 22px rgba(15,23,42,.06); }
+.om-paper .om-resume { font-family: inherit; font-size: 11.5px; line-height: 1.62; color: #3A3A3C;
+  background: none; border: none; padding: 0; white-space: pre-wrap; word-break: break-word; }
+
+.om-rail { width: 252px; flex-shrink: 0; padding: 20px; border-left: 1px solid #F1EDE7; overflow-y: auto; }
+.om-ringrow { display: flex; align-items: center; gap: 13px; }
+.om-ring { width: 68px; height: 68px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.om-ring > div { width: 52px; height: 52px; border-radius: 50%; background: #fff; display: flex; align-items: center;
+  justify-content: center; font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.om-ring-l { font-size: 12px; font-weight: 700; color: #0A0A0B; }
+.om-ring-d { font-size: 11.5px; color: #059669; font-weight: 700; margin-top: 1px; }
+.om-added-line { font-size: 11.5px; color: #6B7280; line-height: 1.5; margin-top: 11px; }
+.om-added-line b { color: #047857; font-weight: 700; }
+.om-sep { height: 1px; background: #F1EDE7; margin: 16px 0; }
+.om-rail-lbl { font-size: 10px; font-weight: 800; color: #A1A1A6; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+
+.om-fonts { display: flex; flex-direction: column; gap: 6px; }
+.om-font { display: flex; align-items: center; justify-content: space-between; cursor: pointer; background: #fff;
+  border: 1.5px solid #ECE8E2; border-radius: 10px; padding: 9px 12px; font-family: inherit; transition: border-color .12s; }
+.om-font:hover { border-color: #D9D3C9; }
+.om-font.on { border-color: #2563EB; background: #FBF6EF; }
+.om-font-nm { font-size: 13px; color: #0A0A0B; }
+
+.om-seg { display: flex; background: #F2EEE8; border-radius: 10px; padding: 4px; gap: 3px; }
+.om-seg button { flex: 1; border: none; background: transparent; cursor: pointer; padding: 7px 4px; border-radius: 7px;
+  font-size: 11.5px; color: #3A3A3C; font-family: inherit; transition: all .14s; }
+.om-seg button.on { background: #fff; color: #0A0A0B; font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+
+.om-acts { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; }
+.om-dl-row { display: flex; gap: 8px; }
+.om-dl-row .om-dl { flex: 1; justify-content: center; }
+
+@media (max-width: 720px) {
+  .om-split { flex-direction: column; }
+  .om-rail { width: 100%; border-left: none; border-top: 1px solid #F1EDE7; }
+}
 
 .om-cta { width: 100%; background: #2563EB; color: #fff; border: none; padding: 12px; border-radius: 10px;
   font-size: 13.5px; font-weight: 700; cursor: pointer; font-family: inherit;
@@ -461,7 +529,7 @@ const CSS = `
   display: inline-flex; align-items: center; gap: 6px; }
 .om-dl:hover:not(:disabled) { border-color: #2563EB; color: #2563EB; }
 .om-dl:disabled { opacity: .6; cursor: default; }
-.om-apply { margin-left: auto; background: #2563EB; color: #fff; text-decoration: none; padding: 10px 18px;
+.om-apply { justify-content: center; background: #2563EB; color: #fff; text-decoration: none; padding: 11px 18px;
   border-radius: 9px; font-size: 12.5px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
 .om-apply:hover { background: #1D4ED8; }
 `
