@@ -623,9 +623,15 @@ function parseResume(text) {
   return { header, bodyLines: body, isSection, isBullet, isRoleLine, isSkillLine, isTitleLine }
 }
 
-// One accent color for everyone. The user picks a FONT, not a fake company theme.
-const ACCENT_HEX = '2563EB'   // Word (docx) wants hex without the #
-const ACCENT_CSS = '#2563EB'  // PDF (HTML) wants the #
+// Monochrome. No accent color at all: text is black, rules are a light gray hairline.
+// Rules get their own value because a full-black horizontal line reads as a heavy bar,
+// not a divider. Word wants hex without the #, the PDF's HTML wants it with.
+const ACCENT_HEX = '000000'   // Word text
+const RULE_HEX   = 'BFBFBF'   // Word borders
+const MUTED_HEX  = '595959'   // Word secondary text (company, dates)
+const ACCENT_CSS = '#000000'  // PDF text
+const RULE_CSS   = '#D4D4D4'  // PDF rules
+const MUTED_CSS  = '#595959'  // PDF secondary text
 
 // Web-safe fonts only — these render identically on the PDF server AND on whatever
 // machine opens the Word file. Trendy fonts (Inter, Roboto) would silently fall back.
@@ -678,7 +684,7 @@ app.post('/download-word', async (req, res) => {
     }
 
     children.push(new Paragraph({
-      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: ACCENT_HEX } },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: RULE_HEX } },
       spacing: { before: 60, after: 120 }
     }))
 
@@ -686,7 +692,7 @@ app.post('/download-word', async (req, res) => {
       if (!line) { children.push(new Paragraph({ spacing: { after: 20 } })); continue }
       if (isSection(line)) {
         children.push(new Paragraph({
-          border: { bottom: { style: BorderStyle.SINGLE, size: 3, color: ACCENT_HEX } },
+          border: { bottom: { style: BorderStyle.SINGLE, size: 3, color: RULE_HEX } },
           spacing: { before: sp.before + 60, after: 80 },
           children: [new TextRun({ text: line.toUpperCase(), bold: true, size: 22, color: ACCENT_HEX, font: FONT })]
         }))
@@ -711,7 +717,7 @@ app.post('/download-word', async (req, res) => {
           children: rest
             ? [
                 new TextRun({ text: company, size: bodySize - 1, color: '333333', font: FONT }),
-                new TextRun({ text: `  |  ${rest}`, size: bodySize - 1, italics: true, color: ACCENT_HEX, font: FONT }),
+                new TextRun({ text: `  |  ${rest}`, size: bodySize - 1, italics: true, color: MUTED_HEX, font: FONT }),
               ]
             : [new TextRun({ text: line, bold: true, size: bodySize, color: ACCENT_HEX, font: FONT })]
         }))
@@ -771,7 +777,7 @@ app.post('/download-word', async (req, res) => {
 
 // ── BUILD HTML for PDF
 function buildResumeHTML(resumeText, font, length) {
-  const cfg       = { accent: ACCENT_CSS, font: fontFor(font).css }
+  const cfg       = { accent: ACCENT_CSS, rule: RULE_CSS, muted: MUTED_CSS, font: fontFor(font).css }
   const isCompact = length === 'concise'
   const fs        = isCompact ? '8.5pt' : '9.5pt'
   const lh        = isCompact ? '1.35'  : '1.5'
@@ -789,7 +795,7 @@ function buildResumeHTML(resumeText, font, length) {
     titleLine = header[1]; contactStart = 2
   }
 
-  body += `<div style="text-align:${align};padding-bottom:10pt;margin-bottom:14pt;border-bottom:2pt solid ${cfg.accent}">`
+  body += `<div style="text-align:${align};padding-bottom:10pt;margin-bottom:14pt;border-bottom:1pt solid ${cfg.rule}">`
   body += `<div style="font-size:${isCompact ? '20pt' : '24pt'};font-weight:900;color:#111;letter-spacing:0.02em;text-transform:uppercase">${esc(name)}</div>`
   if (titleLine) body += `<div style="font-size:${isCompact ? '10pt' : '12pt'};font-weight:600;color:${cfg.accent};margin-top:4pt;letter-spacing:0.01em">${esc(titleLine)}</div>`
   for (let i = contactStart; i < header.length; i++) {
@@ -805,10 +811,10 @@ function buildResumeHTML(resumeText, font, length) {
       body += `
         <div style="margin-top:${sgap};margin-bottom:5pt">
           <div style="font-size:9.5pt;font-weight:800;color:${cfg.accent};letter-spacing:0.08em;text-transform:uppercase;display:flex;align-items:center;gap:8pt">
-            <span style="width:3pt;height:14pt;background:${cfg.accent};display:inline-block;border-radius:1pt;flex-shrink:0"></span>
+            
             ${esc(line)}
           </div>
-          <div style="height:1pt;background:${cfg.accent};opacity:0.25;margin-top:3pt"></div>
+          <div style="height:0.75pt;background:${cfg.rule};margin-top:3pt"></div>
         </div>`
       continue
     }
@@ -829,7 +835,7 @@ function buildResumeHTML(resumeText, font, length) {
         // the title leads, the company supports.
         body += `
           <div style="font-size:${isCompact ? '8.5pt' : '9pt'};color:#333;margin-bottom:2pt">
-            <span style="font-weight:600;color:#222">${esc(company)}</span><span style="color:${cfg.accent};font-style:italic"> | ${esc(rest)}</span>
+            <span style="font-weight:600;color:#222">${esc(company)}</span><span style="color:${cfg.muted};font-style:italic"> | ${esc(rest)}</span>
           </div>`
       } else {
         body += `<div style="font-size:${fs};font-weight:700;color:${cfg.accent};margin-top:${gap};margin-bottom:2pt">${esc(line)}</div>`
