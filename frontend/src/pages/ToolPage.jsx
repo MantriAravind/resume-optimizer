@@ -4,12 +4,13 @@ import SidebarLayout from '../components/SidebarLayout'
 
 const BACKEND = 'https://resume-optimizer-cuii.onrender.com'
 
-const TEMPLATES = [
-  { id: 'google',   label: 'Search Giant',     inspired: 'Google',   accent: '#4285F4' },
-  { id: 'amazon',   label: 'Everything Store',  inspired: 'Amazon',   accent: '#FF9900' },
-  { id: 'apple',    label: 'Cupertino',         inspired: 'Apple',    accent: '#1d1d1f' },
-  { id: 'mckinsey', label: 'The Firm',          inspired: 'McKinsey', accent: '#003A70' },
-  { id: 'netflix',  label: 'Streaming Co',      inspired: 'Netflix',  accent: '#E50914' },
+// Web-safe only. The PDF service silently falls back on anything else, so offering
+// a trendy font would mean showing the user something they will not actually get.
+const FONTS = [
+  { id: 'Calibri',         label: 'Calibri', css: "Calibri, Carlito, 'Segoe UI', sans-serif", note: 'Default' },
+  { id: 'Arial',           label: 'Arial',   css: 'Arial, Helvetica, sans-serif' },
+  { id: 'Georgia',         label: 'Georgia', css: "Georgia, 'Times New Roman', serif" },
+  { id: 'Times New Roman', label: 'Times New Roman', css: "'Times New Roman', Times, serif" },
 ]
 
 function ScoreRing({ score }) {
@@ -33,35 +34,24 @@ function ScoreRing({ score }) {
   )
 }
 
-function Thumb({ tpl, selected, onClick }) {
+function FontCard({ font, selected, onClick }) {
   return (
-    <button onClick={onClick} style={{ flexShrink: 0, width: 110, cursor: 'pointer', border: 'none', background: 'none', padding: 0, textAlign: 'center' }}>
-      <div style={{
-        width: 110, height: 142, borderRadius: 10, background: '#fff', overflow: 'hidden',
-        border: selected ? `2.5px solid ${tpl.accent}` : '1.5px solid #E5E5EA',
-        boxShadow: selected ? `0 4px 16px ${tpl.accent}33` : '0 1px 4px rgba(0,0,0,0.06)',
-        transition: 'all 0.18s', position: 'relative', display: 'flex', flexDirection: 'column'
-      }}>
-        <div style={{ height: 28, background: selected ? tpl.accent : '#F5F5F7', flexShrink: 0 }} />
-        <div style={{ padding: '8px 10px', flex: 1 }}>
-          <div style={{ height: 5, borderRadius: 3, background: selected ? tpl.accent : '#E5E5EA', marginBottom: 5, width: '70%' }} />
-          <div style={{ height: 3, borderRadius: 2, background: '#F0F0F2', marginBottom: 3 }} />
-          <div style={{ height: 3, borderRadius: 2, background: '#F0F0F2', marginBottom: 3, width: '85%' }} />
-          <div style={{ height: 3, borderRadius: 2, background: '#F0F0F2', marginBottom: 7 }} />
-          <div style={{ height: 4, borderRadius: 2, background: selected ? `${tpl.accent}66` : '#E5E5EA', marginBottom: 4, width: '50%' }} />
-          <div style={{ height: 2.5, borderRadius: 2, background: '#F5F5F7', marginBottom: 2.5 }} />
-          <div style={{ height: 2.5, borderRadius: 2, background: '#F5F5F7', marginBottom: 2.5, width: '90%' }} />
-          <div style={{ height: 2.5, borderRadius: 2, background: '#F5F5F7' }} />
-        </div>
-        {selected && (
-          <div style={{ position: 'absolute', top: 6, right: 6, width: 18, height: 18, borderRadius: '50%', background: tpl.accent, color: '#fff', display: 'grid', placeItems: 'center', fontSize: 10, fontWeight: 700 }}>✓</div>
-        )}
+    <button onClick={onClick} style={{
+      flex: 1, minWidth: 0, cursor: 'pointer', textAlign: 'left', padding: '12px 14px',
+      borderRadius: 12, background: selected ? '#F5F9FF' : '#fff',
+      border: selected ? '2px solid #0071E3' : '1.5px solid #E5E5EA',
+      transition: 'all .15s', fontFamily: 'inherit',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: selected ? '#0071E3' : '#86868B' }}>{font.label}</span>
+        {font.note && <span style={{ fontSize: 9, fontWeight: 700, color: '#A1A1A6' }}>{font.note.toUpperCase()}</span>}
       </div>
-      <div style={{ marginTop: 7, fontSize: 11.5, fontWeight: 700, color: selected ? '#111' : '#555' }}>{tpl.label}</div>
-      <div style={{ fontSize: 10, color: '#999', marginTop: 1 }}>by {tpl.inspired}</div>
+      {/* Shown in the actual typeface so the choice means something. */}
+      <div style={{ fontFamily: font.css, fontSize: 17, fontWeight: 700, color: '#111', marginTop: 6 }}>Aa</div>
     </button>
   )
 }
+
 
 export default function ToolPage() {
   const { getToken } = useAuth()
@@ -72,7 +62,7 @@ export default function ToolPage() {
   const [result, setResult]         = useState(null)
   const [loading, setLoading]       = useState(false)
   const [error, setError]           = useState('')
-  const [template, setTemplate]     = useState('google')
+  const [font, setFont]             = useState('Calibri')
   const [length, setLength]         = useState('standard')
   const [dlLoading, setDlLoading]   = useState('')
   const resultsRef = useRef(null)
@@ -136,7 +126,7 @@ export default function ToolPage() {
       const res = await fetch(`${BACKEND}/download-${type}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ resumeText: result.optimizedResume, template, length })
+        body: JSON.stringify({ resumeText: result.optimizedResume, font, length })
       })
       if (!res.ok) { alert('Download failed. Please try again.'); return }
       const blob = await res.blob()
@@ -153,7 +143,7 @@ export default function ToolPage() {
     }
   }
 
-  const activeTpl = TEMPLATES.find(t => t.id === template)
+  const activeFont = FONTS.find(f => f.id === font) || FONTS[0]
   let badgeClass = 'ed-badge-red', badgeText = 'Needs improvement'
   if (result) {
     if (result.score >= 75) { badgeClass = 'ed-badge-green'; badgeText = 'Strong match' }
@@ -218,14 +208,13 @@ export default function ToolPage() {
             <div className="ed-card">
               <div className="ed-card-head">
                 <div>
-                  <div className="ed-card-title">Choose a template</div>
-                  <div className="ed-card-sub">Each is designed and written in the style that company's recruiters favor.</div>
+                  <div className="ed-card-title">Choose a font</div>
+                  <div className="ed-card-sub">Your resume downloads in the font you pick.</div>
                 </div>
-                <div className="ed-inspired-badge">✦ Inspired by top companies</div>
               </div>
-              <div className="ed-thumbs">
-                {TEMPLATES.map(t => (
-                  <Thumb key={t.id} tpl={t} selected={t.id === template} onClick={() => setTemplate(t.id)} />
+              <div style={{ display: 'flex', gap: 10 }}>
+                {FONTS.map(f => (
+                  <FontCard key={f.id} font={f} selected={f.id === font} onClick={() => setFont(f.id)} />
                 ))}
               </div>
             </div>
@@ -262,11 +251,10 @@ export default function ToolPage() {
               <div className="ed-resume-head">
                 <h3 className="ed-resume-title">Preview</h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ width: 10, height: 10, borderRadius: '50%', background: activeTpl.accent }} />
-                  <span style={{ fontSize: 12, color: '#86868B', fontWeight: 600 }}>{activeTpl.label} · {length === 'concise' ? 'Concise' : 'Standard'}</span>
+                  <span style={{ fontSize: 12, color: '#86868B', fontWeight: 600 }}>{activeFont.label} · {length === 'concise' ? 'Concise' : 'Standard'}</span>
                 </div>
               </div>
-              <pre className="ed-resume-body">{result.optimizedResume}</pre>
+              <pre className="ed-resume-body" style={{ fontFamily: activeFont.css }}>{result.optimizedResume}</pre>
             </div>
           </section>
         )}
@@ -336,7 +324,6 @@ const CSS = `
 .ed-card-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; gap: 12px; }
 .ed-card-title { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
 .ed-card-sub { font-size: 12.5px; color: #86868B; }
-.ed-inspired-badge { display: inline-block; padding: 5px 12px; background: #F0F7FF; border: 1px solid #D6E9FF; font-size: 12px; font-weight: 600; color: #0071E3; white-space: nowrap; flex-shrink: 0; border-radius: 100px; }
 .ed-thumbs { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 6px; }
 .ed-dl-bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; background: #fff; border: 1px solid #E5E5EA; border-radius: 20px; padding: 18px 24px; margin-bottom: 18px; flex-wrap: wrap; }
 .ed-len-wrap { display: flex; align-items: center; gap: 14px; }
