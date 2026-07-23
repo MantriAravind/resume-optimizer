@@ -324,11 +324,13 @@ async function fetchGreenhouseCompany(slug) {
   try {
     const url = `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs?content=true`
     const res = await fetch(url, { signal: AbortSignal.timeout(10000) })
-    if (!res.ok) return { ok: false, jobs: [] }
+    if (!res.ok) return { ok: false, jobs: [], status: res.status }
     const data = await res.json()
-    return { ok: true, jobs: data.jobs || [] }
+    return { ok: true, jobs: data.jobs || [], status: 200 }
   } catch {
-    return { ok: false, jobs: [] }
+    // Timeout or network error. Status 0 means "we never got an answer", which is
+    // very different from a 404 and must NOT be treated as proof the board is gone.
+    return { ok: false, jobs: [], status: 0 }
   }
 }
 
@@ -358,10 +360,10 @@ async function fetchAllJobs() {
       batch.map(async (slug) => ({ slug, ...(await fetchGreenhouseCompany(slug)) }))
     )
 
-    for (const { slug, ok, jobs } of results) {
+    for (const { slug, ok, jobs, status } of results) {
       // Unreachable company: skip it entirely and, critically, do NOT mark it
       // sweepable. Its existing jobs stay untouched until we can confirm them.
-      if (!ok) { failedCompanies++; failedSlugs.push(slug); continue }
+      if (!ok) { failedCompanies++; failedSlugs.push({ slug, status }); continue }
       okSlugs.push(slug)
 
       for (const job of jobs) {
@@ -435,8 +437,10 @@ async function fetchAllJobs() {
   // It also recovers real jobs either way, and lets the sweep clean these companies.
   if (failedSlugs.length > 0) {
     console.log(`\n🔁 Retrying ${failedSlugs.length} companies that did not respond...`)
-    const toRetry = [...failedSlugs]
+    const toRetry = failedSlugs.map(f => f.slug)
     let recovered = 0
+    const confirmedDead = []   // answered with 404 twice: the board is genuinely gone
+    const unreachable   = []   // never answered: could be a network problem, keep it
 
     for (let i = 0; i < toRetry.length; i += 5) {
       const batch = toRetry.slice(i, i + 5)
@@ -444,8 +448,12 @@ async function fetchAllJobs() {
         batch.map(async (slug) => ({ slug, ...(await fetchGreenhouseCompany(slug)) }))
       )
 
-      for (const { slug, ok, jobs } of results) {
-        if (!ok) continue
+      for (const { slug, ok, jobs, status } of results) {
+        if (!ok) {
+          if (status === 404) confirmedDead.push(slug)
+          else unreachable.push(slug)
+          continue
+        }
         recovered++
         failedCompanies--
         okSlugs.push(slug)
@@ -498,13 +506,24 @@ async function fetchAllJobs() {
 
     const rate = Math.round((recovered / toRetry.length) * 100)
     console.log(`   ✅ Recovered ${recovered} of ${toRetry.length} (${rate}%).`)
-    if (rate >= 50) {
-      console.log('   👉 Most recovered on retry: these were RATE LIMITS, not dead boards.')
-      console.log('      The main loop is hitting Greenhouse too fast. Slow it down.')
-    } else if (rate > 0) {
-      console.log('   👉 Mixed. Some rate limiting, but many boards look genuinely gone.')
+    console.log(`   💀 Confirmed gone (404 twice): ${confirmedDead.length}`)
+    console.log(`   ❓ Never answered (timeout):    ${unreachable.length}`)
+
+    if (rate >= 30) {
+      console.log('   👉 A lot recovered on retry, so RATE LIMITING is the main problem.')
+      console.log('      Slow the main loop down before pruning anything.')
+    } else if (confirmedDead.length > unreachable.length) {
+      console.log('   👉 Mostly DEAD BOARDS. Safe to prune the confirmed list below.')
     } else {
-      console.log('   👉 None recovered: these boards are DEAD. Prune them from the slug list.')
+      console.log('   👉 Mostly TIMEOUTS, not confirmed deaths. Do NOT prune these:')
+      console.log('      a slow response is not proof a company is gone.')
+    }
+
+    // Printed as one line so it can be copied straight out of the log. Only 404s
+    // appear here: a timeout never proves a board is gone, so those stay on the list.
+    if (confirmedDead.length > 0) {
+      console.log('\n📋 CONFIRMED DEAD SLUGS (safe to remove from greenhouse_companies.json):')
+      console.log(JSON.stringify(confirmedDead))
     }
   }
 
