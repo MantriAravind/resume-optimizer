@@ -1,0 +1,41 @@
+name: Refresh job board
+
+# Runs the Greenhouse pipeline: adds new jobs, updates existing ones, and sweeps
+# jobs that no longer exist at the source.
+on:
+  schedule:
+    # Every 6 hours, on the hour (UTC). GitHub queues scheduled runs on a best-effort
+    # basis, so the exact minute drifts. That is fine for a 6-hour refresh.
+    - cron: '0 */6 * * *'
+  # Lets you trigger it by hand from the Actions tab.
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # The pipeline walks every company slug with rate-limit pauses, so give it room.
+    # Without this it would inherit the 6 hour default and could burn minutes on a hang.
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        # `npm ci` needs a lockfile and fails without one. Fall back to `npm install`
+        # so a missing package-lock.json doesn't silently break every scheduled run.
+        run: npm ci || npm install
+
+      - name: Fetch and sweep jobs
+        working-directory: backend
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        # Filename is case-sensitive on Linux. This must match the file in the repo
+        # exactly: FetchJobs.mjs with a capital F.
+        run: node FetchJobs.mjs
