@@ -2,7 +2,10 @@ import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 import SidebarLayout from '../components/SidebarLayout'
 
-const BACKEND = 'https://resume-optimizer-cuii.onrender.com'
+// Read from the environment so the backend can move without editing four files.
+// The fallback is the current production URL, so a missing variable degrades to
+// today's behaviour instead of silently pointing the app at nothing.
+const BACKEND = import.meta.env.VITE_BACKEND_URL || 'https://resume-optimizer-cuii.onrender.com'
 
 // Web-safe only. The PDF service silently falls back on anything else, so offering
 // a trendy font would mean showing the user something they will not actually get.

@@ -5,7 +5,10 @@ import {
   ExternalLink, Sparkles, BookOpen, AlertCircle, Mail, Ban,
 } from 'lucide-react'
 
-const BACKEND = 'https://resume-optimizer-cuii.onrender.com'
+// Read from the environment so the backend can move without editing four files.
+// The fallback is the current production URL, so a missing variable degrades to
+// today's behaviour instead of silently pointing the app at nothing.
+const BACKEND = import.meta.env.VITE_BACKEND_URL || 'https://resume-optimizer-cuii.onrender.com'
 
 // Web-safe only. Trendy fonts silently fall back inside PDFShift, so we don't offer them.
 const FONTS = [
