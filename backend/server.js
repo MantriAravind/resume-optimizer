@@ -60,13 +60,40 @@ const jobSchema = new mongoose.Schema({
   closed:          { type: Boolean, default: false },
 })
 
-jobSchema.index({ title: 'text', company: 'text' })
-jobSchema.index({ postedAt: -1 })
-jobSchema.index({ sponsorBadge: 1 })
-jobSchema.index({ isRemote: 1 })
-jobSchema.index({ state: 1 })
-jobSchema.index({ workType: 1 })
-jobSchema.index({ experienceLevel: 1 })
+// ── INDEXES
+// Without these, every board load scans all ~55K documents and sorts them in memory.
+// Each index below matches a query the app actually runs; we do not add speculative
+// ones, because every index costs write time on the 6-hour refresh and storage on a
+// 512MB free tier.
+
+// The backbone. Every list query filters on `closed` and sorts by `postedAt`, so this
+// single index serves the default board with no filters applied.
+jobSchema.index({ closed: 1, postedAt: -1 })
+
+// One per dropdown. MongoDB can only use a compound index when the query matches its
+// leading fields, so a filter on workType cannot ride the experienceLevel index. Three
+// separate indexes is the honest cost of three independent filters.
+jobSchema.index({ closed: 1, workType: 1, postedAt: -1 })
+jobSchema.index({ closed: 1, experienceLevel: 1, postedAt: -1 })
+jobSchema.index({ closed: 1, state: 1, postedAt: -1 })
+
+// Used by the pipeline's stale sweep, which asks "which jobs from these companies did
+// I not see this run?" over the whole collection. Unindexed, that is a full scan on
+// every refresh.
+jobSchema.index({ ats: 1, companySlug: 1, fetchedAt: 1 })
+
+// Removed, and why. Every index has to be rewritten on all ~55K upserts each refresh,
+// so an index that serves no query is a pure tax on the pipeline and on storage:
+//   { sponsorBadge: 1 }  the field is never queried, and is hardcoded false on every
+//                        job, so the index has exactly one value in it
+//   { isRemote: 1 }      never queried anywhere; workType covers this in the UI
+//   { postedAt: -1 }     every list query also filters `closed`, so the compound
+//                        index above already serves it
+//   { state / workType / experienceLevel: 1 }  superseded by the compound versions,
+//                        which also cover the sort instead of leaving it in memory
+//   { title: 'text', company: 'text' }  search uses a case-insensitive regex, not
+//                        $text, so this was built and maintained but never read
+
 
 const Job = mongoose.models.Job || mongoose.model('Job', jobSchema)
 
@@ -147,9 +174,17 @@ app.post('/me/resume', requireUser, async (req, res) => {
 // ── Shared keyword extraction. Both routes use this, so they cannot disagree.
 // Previously each route asked Claude independently and got different lists —
 // the modal showed 45, the backend recomputed 60, same resume.
+// Two models, on purpose.
+// Extraction is a mechanical read-and-list task, so the cheap model is enough.
+// The rewrite is the part that has to sound human and never fabricate, so it stays
+// on the stronger model. Both /analyze and /optimize call extractKeywords, so they
+// always agree and the score cannot drift between the two calls.
+const MODEL_EXTRACT = 'claude-haiku-4-5-20251001'
+const MODEL_REWRITE = 'claude-sonnet-4-6'
+
 async function extractKeywords(resumeText, jobText) {
   const message = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
+    model: MODEL_EXTRACT,
     max_tokens: 1000,
     temperature: 0,   // deterministic: same resume + same job = same skills, every time
     messages: [{
@@ -408,7 +443,7 @@ Respond in this exact JSON format with no extra text:
     let parsed, out, gateNote = ''
     for (let attempt = 0; attempt <= 2; attempt++) {
       const message = await anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
+        model: MODEL_REWRITE,
         max_tokens: 4000,
         temperature: 0.3,
         messages,
@@ -915,45 +950,117 @@ function esc(str) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-// ── DOWNLOAD PDF via PDFShift
+// ── PDF RENDERING
+// We run Chrome ourselves instead of paying a service per page. PDFShift's cheapest
+// paid tier is $9 for 500 conversions; a bigger Render instance is about $7 for an
+// unlimited number, so self-hosting is cheaper from the first paid month. It also
+// removes the 50/month free cap that blocked development, and because we control the
+// machine we can install real fonts instead of watching Georgia silently become Arial.
+
+// One browser for the whole process, not one per request. Launching Chrome costs
+// roughly a second and a few hundred MB, so doing it per download would be slow and
+// would eventually exhaust memory. Pages are cheap; the browser is not.
+let browserPromise = null
+
+async function getBrowser() {
+  if (browserPromise) {
+    try {
+      const b = await browserPromise
+      const alive = typeof b.connected === 'boolean' ? b.connected : b.isConnected?.()
+      if (alive) return b
+    } catch { /* fall through and relaunch */ }
+    browserPromise = null
+  }
+
+  // Imported lazily and defensively. If the package or the Chrome binary is missing,
+  // a top-level import would crash the entire server on boot and take the job board
+  // down with it. This way a broken renderer only breaks PDFs, and the fallback covers
+  // even that.
+  const { default: puppeteer } = await import('puppeteer')
+
+  browserPromise = puppeteer.launch({
+    headless: true,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      // Containers hand out a tiny /dev/shm. Without this Chrome runs out of shared
+      // memory partway through rendering and dies with an opaque crash.
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-zygote',
+      '--font-render-hinting=none',
+    ],
+  })
+  return browserPromise
+}
+
+async function renderPdfLocally(html) {
+  const browser = await getBrowser()
+  const page = await browser.newPage()
+  try {
+    await page.setContent(html, { waitUntil: 'load', timeout: 20000 })
+    await page.emulateMediaType('print')
+    return Buffer.from(await page.pdf({
+      format: 'Letter',
+      printBackground: true,
+      margin: { top: '0', right: '0', bottom: '0', left: '0' },
+    }))
+  } finally {
+    // Always close the page, even if the render threw. A leaked page holds memory
+    // for the life of the process, and on a small instance that is fatal.
+    await page.close().catch(() => {})
+  }
+}
+
+// Kept only as a safety net while local rendering proves itself in production.
+// Delete this and the PDFSHIFT_API_KEY once a week of real downloads has passed.
+async function renderPdfViaPdfShift(html) {
+  if (!process.env.PDFSHIFT_API_KEY) throw new Error('no PDFShift key configured')
+  const response = await fetch('https://api.pdfshift.io/v3/convert/pdf', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'Basic ' + Buffer.from(`api:${process.env.PDFSHIFT_API_KEY}`).toString('base64'),
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      source: html,
+      format: 'Letter',
+      margin: { top: '0', right: '0', bottom: '0', left: '0' }
+    })
+  })
+  if (!response.ok) throw new Error(`PDFShift ${response.status}: ${await response.text()}`)
+  return Buffer.from(await response.arrayBuffer())
+}
+
 app.post('/download-pdf', async (req, res) => {
   const { resumeText, font, length } = req.body
   if (!resumeText) return res.status(400).json({ error: 'No resume text provided.' })
 
+  const html = buildResumeHTML(resumeText, font || 'calibri', length || 'standard')
+  let pdfBuffer = null
+
   try {
-    const html = buildResumeHTML(resumeText, font || 'calibri', length || 'standard')
-
-    const response = await fetch('https://api.pdfshift.io/v3/convert/pdf', {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Basic ' + Buffer.from(`api:${process.env.PDFSHIFT_API_KEY}`).toString('base64'),
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        source: html,
-        format: 'Letter',
-        margin: { top: '0', right: '0', bottom: '0', left: '0' }
-      })
-    })
-
-    if (!response.ok) {
-      const err = await response.text()
-      console.error('PDFShift error:', err)
+    pdfBuffer = await renderPdfLocally(html)
+  } catch (localErr) {
+    console.error('Local PDF render failed:', localErr.message)
+    // Force a fresh browser next time: the current one may be wedged or dead.
+    browserPromise = null
+    try {
+      pdfBuffer = await renderPdfViaPdfShift(html)
+      console.warn('Served PDF via PDFShift fallback')
+    } catch (fallbackErr) {
+      console.error('PDFShift fallback also failed:', fallbackErr.message)
       return res.status(500).json({ error: 'Failed to generate PDF. Please try again.' })
     }
-
-    const pdfBuffer = Buffer.from(await response.arrayBuffer())
-    res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': 'attachment; filename="optimized-resume.pdf"',
-      'Content-Length': pdfBuffer.length
-    })
-    res.send(pdfBuffer)
-
-  } catch (error) {
-    console.error('PDF error:', error)
-    res.status(500).json({ error: 'Failed to generate PDF. Please try again.' })
   }
+
+  res.set({
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': 'attachment; filename="optimized-resume.pdf"',
+    'Content-Length': pdfBuffer.length
+  })
+  res.send(pdfBuffer)
 })
 
 app.listen(PORT, () => {
