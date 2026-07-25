@@ -99,6 +99,20 @@ const DISQUALIFIER_PATTERNS = [
   /\b(must\s+not|not|does\s+not|will\s+not|cannot|can not)\s+require\s+(visa\s+)?sponsorship\b/,
   /\bsponsorship\s+(now\s+or\s+in\s+the\s+future|in\s+the\s+future)\b/,
   /\bmust\s+be\s+a?\s*(lawful\s+)?permanent\s+residents?\b/,
+  // ── EXPORT CONTROL / ITAR / 'U.S. Person' ──────────────────────────────────
+  // These jobs never say 'citizen', so the patterns above miss them. ITAR and EAR
+  // legally restrict roles to US persons, which excludes F1/OPT students. Anduril and
+  // most defense/aerospace employers phrase it this way. Tuned to catch the restriction
+  // without flagging data jobs that merely mention 'export' or 'controlled vocabularies'.
+  /\bmust\s+be\s+a?\s*(us|united states)\s+persons?\b/,
+  /\b(us|united states)\s+persons?\s+(status\s+)?(is\s+)?(required|only)\b/,
+  /\b(restricted|limited)\s+to\s+(us|united states)\s+persons?\b/,
+  /\bitar\b/,
+  /\bear\s+controlled\b/,
+  /\bexport\s+administration\s+regulations\b/,
+  /\bexport[\s-]?control(led)?\s+(information|data|technology|technical data|materials?|items?|regulations?|requirements?|laws?|restrictions?|facilit)/,
+  /\baccess\s+to\s+export[\s-]?controlled\b/,
+  /\bsubject\s+to\s+(itar|ear|export[\s-]?control)/,
 ]
 
 function isDisqualified(plainText = '') {
