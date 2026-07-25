@@ -4,6 +4,7 @@ import cors from 'cors'
 import dotenv from 'dotenv'
 import Anthropic from '@anthropic-ai/sdk'
 import mongoose from 'mongoose'
+import crypto from 'crypto'
 import { Document, Packer, Paragraph, TextRun, AlignmentType, LevelFormat, BorderStyle } from 'docx'
 import { clerkMiddleware, getAuth } from '@clerk/express'
 dns.setServers(['8.8.8.8', '8.8.4.4'])
@@ -81,6 +82,34 @@ jobSchema.index({ closed: 1, state: 1, postedAt: -1 })
 // I not see this run?" over the whole collection. Unindexed, that is a full scan on
 // every refresh.
 jobSchema.index({ ats: 1, companySlug: 1, fetchedAt: 1 })
+
+// ── ANALYZE CACHE
+// extractKeywords is deterministic (temperature 0), so the same resume + same job
+// always yields the same skills. Re-running it on a repeat click just burns an API
+// call for an identical answer. We store results keyed by a hash of the two inputs.
+//
+// Why MongoDB and not an in-memory Map: the free Render instance sleeps and restarts
+// constantly, which would wipe an in-memory cache on every cold start. The database
+// survives restarts, so the cache actually pays off.
+//
+// The `expireAfterSeconds` TTL lets Mongo delete old entries on its own. 30 days is a
+// balance: long enough that a user revisiting a job days later still hits cache, short
+// enough that the collection cannot grow without bound on a 512MB tier.
+const analyzeCacheSchema = new mongoose.Schema({
+  key:       { type: String, unique: true },
+  matched:   [String],
+  missing:   [String],
+  createdAt: { type: Date, default: Date.now, expires: '30d' },
+})
+const AnalyzeCache = mongoose.model('AnalyzeCache', analyzeCacheSchema)
+
+// The key is a hash of both inputs, so any change to either produces a different key
+// and a cache miss. A user editing their resume in Profile therefore does NOT get a
+// stale result: the new resume text hashes differently and re-runs the model. This is
+// the whole reason we hash the inputs rather than keying on something like a job id.
+function analyzeCacheKey(resumeText, jobText) {
+  return crypto.createHash('sha256').update(resumeText + '\u0000' + jobText).digest('hex')
+}
 
 // Removed, and why. Every index has to be rewritten on all ~55K upserts each refresh,
 // so an index that serves no query is a pure tax on the pipeline and on storage:
@@ -183,6 +212,17 @@ const MODEL_EXTRACT = 'claude-haiku-4-5-20251001'
 const MODEL_REWRITE = 'claude-sonnet-4-6'
 
 async function extractKeywords(resumeText, jobText) {
+  const cacheKey = analyzeCacheKey(resumeText, jobText)
+
+  // Cache read is best-effort. If Mongo hiccups we must NOT fail the whole analyze,
+  // so a lookup error just falls through to calling the model as normal.
+  try {
+    const hit = await AnalyzeCache.findOne({ key: cacheKey }).lean()
+    if (hit) return { matchedKeywords: hit.matched, missingKeywords: hit.missing }
+  } catch (e) {
+    console.warn('analyze cache read failed:', e.message)
+  }
+
   const message = await anthropic.messages.create({
     model: MODEL_EXTRACT,
     max_tokens: 1000,
@@ -212,10 +252,25 @@ Respond in this exact JSON format with no extra text:
   })
   const cleaned = message.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
   const parsed = JSON.parse(cleaned)
-  return {
+  const result = {
     matchedKeywords: Array.isArray(parsed.matchedKeywords) ? parsed.matchedKeywords : [],
     missingKeywords: Array.isArray(parsed.missingKeywords) ? parsed.missingKeywords : [],
   }
+
+  // Store for next time. upsert so a race between two identical requests cannot throw
+  // a duplicate-key error. Best-effort again: a write failure must not fail the call
+  // the user is waiting on, it just means the next identical click pays for the model.
+  try {
+    await AnalyzeCache.updateOne(
+      { key: cacheKey },
+      { key: cacheKey, matched: result.matchedKeywords, missing: result.missingKeywords, createdAt: new Date() },
+      { upsert: true }
+    )
+  } catch (e) {
+    console.warn('analyze cache write failed:', e.message)
+  }
+
+  return result
 }
 
 // ── ANALYZE — what this job screens for, and what the resume already has.
