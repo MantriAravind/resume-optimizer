@@ -1,7 +1,7 @@
 import mongoose from 'mongoose'
 import fs from 'fs'
 import path from 'path'
-import { fileURLToPath } from 'url'
+import { fileURLToPath, pathToFileURL } from 'url'
 import dotenv from 'dotenv'
 dotenv.config()
 
@@ -195,6 +195,10 @@ function isUSLocation(location = '') {
   const hasUSMarker = US_MARKERS.some(m => lower.includes(m))
   if (hasUSState || hasUSMarker) return true
   if (hasForeign) return false
+  // "City, VA" style: a bare 2-letter US state code. extractState() already knows
+  // how to read these (with word boundaries). Checked AFTER the foreign markers so an
+  // explicit foreign name (e.g. "Berlin, DE") still wins over the ambiguous 2-letter code.
+  if (extractState(location)) return true
   if (lower.includes('remote')) return true
   return false
 }
@@ -600,7 +604,25 @@ async function fetchAllJobs() {
   console.log('🔌 Disconnected from MongoDB')
 }
 
-fetchAllJobs().catch(err => {
-  console.error('❌ Fatal error:', err)
-  process.exit(1)
-})
+// ── Exports for reuse ────────────────────────────────────────
+// filterCheck.mjs imports these to run the EXACT same filter as production, so
+// the audit can never test a different filter than the one that actually ships.
+export {
+  stripHtml,
+  normalize,
+  isUSLocation,
+  isDisqualified,
+  isContractOrPartTime,
+  fetchGreenhouseCompany,
+  DISQUALIFIER_PATTERNS,
+}
+
+// Only auto-run the full pipeline when this file is executed directly
+// (node FetchJobs.mjs). When another script imports it — e.g. filterCheck.mjs —
+// this stays quiet instead of kicking off a 55k-job fetch.
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  fetchAllJobs().catch(err => {
+    console.error('❌ Fatal error:', err)
+    process.exit(1)
+  })
+}
