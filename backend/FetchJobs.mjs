@@ -158,6 +158,13 @@ function isContractOrPartTime(plainText = '', title = '') {
     if (!isBlanketPolicy) return true
   }
 
+  // Explicit contract-type signals (field-format — high precision, e.g. YLD's
+  // "Employment Type: Contract (B2B)" + "Contract Length: 6 months"). Placed BEFORE the
+  // false-positive list so a definitive contract field still wins even if the body also
+  // mentions something like "smart contract".
+  if (/\b(employment|job|position)\s+type\s*:\s*[^.\n]{0,25}\b(contract|b2b|freelance|fixed[\s-]?term|temporary|temp)\b/.test(t)) return true
+  if (/\bcontract\s+(length|duration|term)\s*:/.test(t)) return true
+  if (/\bcontract\s*\(\s*b2b\s*\)/.test(t)) return true
   const hasFalsePositive = CONTRACT_FALSE_POSITIVES.some(re => re.test(t))
   if (hasFalsePositive) return false
 
@@ -206,6 +213,10 @@ function isUSLocation(location = '') {
   // how to read these (with word boundaries). Checked AFTER the foreign markers so an
   // explicit foreign name (e.g. "Berlin, DE") still wins over the ambiguous 2-letter code.
   if (extractState(location)) return true
+  // "Remote EU" / "(Remote EU)" / "Remote UK" etc. — remote but an explicitly FOREIGN
+  // region. The bare-remote fallback below assumes remote = US, which wrongly kept these.
+  // (EMEA/APAC/Brazil are already caught above; this adds the region words that were not.)
+  if (/\bremote\b[\s\-–—,()\/|]*\b(eu|uk|apac|emea|latam|anz|europe|asia|africa|india|brazil|canada|mexico|ireland|germany|france|spain|italy|poland|ukraine|australia|singapore|japan|china|philippines|latin\s+america|middle\s+east|united\s+kingdom)\b/.test(lower)) return false
   if (lower.includes('remote')) return true
   return false
 }
