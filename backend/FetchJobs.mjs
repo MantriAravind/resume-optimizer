@@ -99,6 +99,13 @@ const DISQUALIFIER_PATTERNS = [
   /\b(must\s+not|not|does\s+not|will\s+not|cannot|can not)\s+require\s+(visa\s+)?sponsorship\b/,
   /\bsponsorship\s+(now\s+or\s+in\s+the\s+future|in\s+the\s+future)\b/,
   /\bmust\s+be\s+a?\s*(lawful\s+)?permanent\s+residents?\b/,
+  // ---- Hedged / softened non-sponsorship wording (found via a live Roblox posting) ----
+  // Catches "may not be able to ... support future H-1B sponsorship" and the coordinated
+  // "work authorization related to certain U.S. visa categories" phrasing the tighter
+  // patterns above miss. Tuned NOT to fire on positives ("we support sponsorship",
+  // "does not support Internet Explorer").
+  /\bwork\s+authorization\s+related\s+to\s+(certain\s+)?(us|u s|united states)?\s*visa\s+categor/,
+  /\b(will\s+not|cannot|can\s?not|unable\s+to|not\s+able\s+to|does\s+not|do\s+not|won'?t|are\s+not\s+able\s+to|is\s+not\s+able\s+to|not\s+be\s+able\s+to|may\s+not\s+be\s+able\s+to)\s+support\s+(work\s+|visa\s+|h-?1b\s+|immigration\s+|future\s+)*sponsorship\b/,
   // ── EXPORT CONTROL / ITAR / 'U.S. Person' ──────────────────────────────────
   // These jobs never say 'citizen', so the patterns above miss them. ITAR and EAR
   // legally restrict roles to US persons, which excludes F1/OPT students. Anduril and
