@@ -316,6 +316,27 @@ function findBannedDashes(text) {
   return hits
 }
 
+
+// Certification names legitimately contain a dash (e.g. "AWS Certified Data
+// Engineer - Associate"). The model sometimes writes them with an em/en-dash,
+// which the dash gate would then flag, triggering a retry that GARBLES the name
+// (e.g. turning it into a comma). So we fix cert dashes in CODE (deterministic)
+// instead of trusting the model: inside the CERTIFICATIONS section, or on any line
+// that clearly names a credential with a level, collapse em/en/-- to a plain " - ".
+function normalizeCertDashes(text) {
+  const CERT_WORD  = /\b(certified|certificate|certification|credential|aws|azure|gcp|google\s+cloud|databricks|comptia|cissp|pmp|scrum|snowflake|kubernetes|terraform|oracle|salesforce|tableau)\b/i
+  const CERT_LEVEL = /\b(associate|professional|expert|specialty|foundational|practitioner|fundamentals|advanced|architect|master)\b/i
+  let inCerts = false
+  return String(text).split('\n').map(raw => {
+    const line = raw.trim()
+    const isHeader = /^[A-Z][A-Z &/]{2,40}$/.test(line) && line.split(' ').length <= 4
+    if (isHeader) { inCerts = /CERTIF/.test(line); return raw }
+    const hasDash  = /[\u2014\u2013]|--/.test(raw)
+    const looksCert = hasDash && (inCerts || (CERT_WORD.test(raw) && CERT_LEVEL.test(raw)))
+    return looksCert ? raw.replace(/\s*(?:[\u2014\u2013]|--)\s*/g, ' - ') : raw
+  }).join('\n')
+}
+
 // The "- " bullets that live under the EXPERIENCE section only.
 function experienceBullets(resume) {
   const bullets = []
@@ -506,6 +527,7 @@ Respond in this exact JSON format with no extra text:
       const cleaned = message.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
       parsed = JSON.parse(cleaned)
       out = parsed.optimizedResume || ''
+      out = normalizeCertDashes(out)
 
       const invented = inventedBullets(out, resumeText, confirmed)
       const dashes = findBannedDashes(out)
