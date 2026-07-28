@@ -85,7 +85,7 @@ const DISQUALIFIER_PATTERNS = [
   /\bsponsorship\s+not\s+available\b/,
   /\b(visa\s+)?sponsorship\s+(is\s+)?(not\s+available|unavailable)\b/,
   /\bwithout\s+(employer\s+)?sponsorship\b/,
-  /\bmust\s+be\s+authorized\s+to\s+work\s+(in\s+the\s+us\s+)?without\b/,
+  /\bmust\s+be\s+(legally\s+|lawfully\s+)?authorized\s+to\s+work\b[^.]{0,40}\bwithout\b/,
   /\bnot\s+eligible\s+for\s+(\w+\s+){0,3}sponsorship\b/,
   /\bineligible\s+for\s+(\w+\s+){0,3}sponsorship\b/,
   /\bno\s+h-?1b\s+or\s+opt\s+(visa\s+)?sponsorship\b/,
@@ -106,6 +106,11 @@ const DISQUALIFIER_PATTERNS = [
   // "does not support Internet Explorer").
   /\bwork\s+authorization\s+related\s+to\s+(certain\s+)?(us|u s|united states)?\s*visa\s+categor/,
   /\b(will\s+not|cannot|can\s?not|unable\s+to|not\s+able\s+to|does\s+not|do\s+not|won'?t|are\s+not\s+able\s+to|is\s+not\s+able\s+to|not\s+be\s+able\s+to|may\s+not\s+be\s+able\s+to)\s+support\s+(work\s+|visa\s+|h-?1b\s+|immigration\s+|future\s+)*sponsorship\b/,
+  // "without ... visa sponsorship" with an intervening qualifier (Alumni Ventures:
+  // "without current or future employer-sponsored visa sponsorship"). Requires a
+  // visa/employer qualifier before "sponsorship", so positives like "relocation without
+  // cost, plus visa sponsorship" do NOT match.
+  /\bwithout\s+(the\s+need\s+(for\s+)?|requiring\s+|current\s+or\s+future\s+|any\s+)*(employer[\s-]?sponsored\s+|employer\s+|company\s+|visa\s+|immigration\s+|work\s+)+sponsorship\b/,
   // ── EXPORT CONTROL / ITAR / 'U.S. Person' ──────────────────────────────────
   // These jobs never say 'citizen', so the patterns above miss them. ITAR and EAR
   // legally restrict roles to US persons, which excludes F1/OPT students. Anduril and
