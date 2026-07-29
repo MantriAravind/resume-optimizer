@@ -67,12 +67,12 @@ const CSS = `
 .jb-nav-links a { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500; }
 .jb-nav-links a:hover { color: var(--ink); }
 
-.jb-hero-wrap { max-width: 900px; margin: 0 auto; padding: 24px 28px 0; }
+.jb-hero-wrap { max-width: 900px; margin: 0 auto; padding: 16px 28px 0; }
 .jb-hero {
   background: linear-gradient(135deg, #EFF6FF 0%, #F5F3FF 100%);
-  border-radius: 22px; padding: 40px 36px;
+  border-radius: 20px; padding: 22px 28px;
 }
-.jb-badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
+.jb-badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .jb-badge {
   display: inline-flex; align-items: center; gap: 6px;
   font-size: 12.5px; font-weight: 600; letter-spacing: .01em;
@@ -82,10 +82,10 @@ const CSS = `
 .jb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); animation: jbPulse 1.8s ease-in-out infinite; }
 @keyframes jbPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.8); } }
 @media (prefers-reduced-motion: reduce) { .jb-dot { animation: none; } }
-.jb-hero h1 { font-size: clamp(26px, 4.2vw, 38px); font-weight: 700; letter-spacing: -.03em; line-height: 1.1; margin-bottom: 12px; }
-.jb-hero p { font-size: 14.5px; color: var(--muted); max-width: 56ch; line-height: 1.55; }
+.jb-hero h1 { font-size: clamp(22px, 3vw, 28px); font-weight: 700; letter-spacing: -.03em; line-height: 1.15; margin-bottom: 8px; }
+.jb-hero p { font-size: 13.5px; color: var(--muted); max-width: 78ch; line-height: 1.5; }
 
-.jb-filters { max-width: 900px; margin: 20px auto 0; padding: 0 28px; }
+.jb-filters { max-width: 900px; margin: 14px auto 0; padding: 0 28px; }
 .jb-search { display: flex; gap: 10px; margin-bottom: 12px; }
 .jb-search input {
   flex: 1; padding: 13px 17px; border: 1px solid var(--border); border-radius: 11px;
@@ -113,7 +113,7 @@ const CSS = `
 }
 .jb-clear-filters:hover { text-decoration: underline; }
 
-.jb-count { max-width: 900px; margin: 0 auto; padding: 16px 28px 6px; font-size: 13px; color: var(--muted); }
+.jb-count { max-width: 900px; margin: 0 auto; padding: 12px 28px 4px; font-size: 13px; color: var(--muted); }
 
 .jb-list { max-width: 900px; margin: 0 auto; padding: 6px 28px 60px; display: flex; flex-direction: column; gap: 12px; }
 .jb-card--closed { background: #FBFBFC; border-color: #ECECEF; cursor: default; }

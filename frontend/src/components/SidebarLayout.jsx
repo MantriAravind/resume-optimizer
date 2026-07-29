@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { UserButton, useUser } from '@clerk/clerk-react'
 import { Briefcase, User, FileText, Calendar, Settings, ChevronsLeft, ChevronsRight } from 'lucide-react'
@@ -25,9 +25,13 @@ const CSS = `
 
 .sl-sidebar {
   width: 232px; flex-shrink: 0; border-right: 1px solid var(--border);
-  display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh;
+  display: flex; flex-direction: column;
+  position: fixed; top: 0; left: 0; bottom: 0; z-index: 30; background: #fff;
   transition: width .18s ease;
 }
+/* The sidebar is fixed, so the page content is pushed over by the same width. */
+.sl-content { margin-left: 232px; transition: margin-left .18s ease; }
+.sl-collapsed .sl-content { margin-left: 74px; }
 
 .sl-header {
   display: flex; align-items: center; justify-content: space-between;
@@ -121,6 +125,9 @@ export default function SidebarLayout({ children }) {
   // Starts COLLAPSED by default — the sidebar only opens when the user asks for it.
   // The choice is remembered so it does not snap shut every time you change page
   // (this component remounts on navigation, which would otherwise reset it).
+  // Every page should open at the top, not wherever the previous page was scrolled to.
+  useEffect(() => { window.scrollTo(0, 0) }, [location.pathname])
+
   const [collapsed, setCollapsed] = useState(() => {
     try { return localStorage.getItem('sl-collapsed') !== 'false' } catch { return true }
   })
