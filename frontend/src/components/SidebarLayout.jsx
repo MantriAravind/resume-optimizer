@@ -114,7 +114,20 @@ export default function SidebarLayout({ children }) {
   const navigate = useNavigate()
   const location = useLocation()
   const { user } = useUser()
-  const [collapsed, setCollapsed] = useState(false)
+  // Starts COLLAPSED by default — the sidebar only opens when the user asks for it.
+  // The choice is remembered so it does not snap shut every time you change page
+  // (this component remounts on navigation, which would otherwise reset it).
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem('sl-collapsed') !== 'false' } catch { return true }
+  })
+
+  function toggleCollapsed() {
+    setCollapsed(prev => {
+      const next = !prev
+      try { localStorage.setItem('sl-collapsed', String(next)) } catch {}
+      return next
+    })
+  }
 
   const firstName = user?.firstName || user?.username || 'there'
 
@@ -130,7 +143,7 @@ export default function SidebarLayout({ children }) {
           </div>
           <button
             className="sl-toggle"
-            onClick={() => setCollapsed(c => !c)}
+            onClick={toggleCollapsed}
             aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             title={collapsed ? 'Expand' : 'Collapse'}
           >
