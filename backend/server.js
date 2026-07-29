@@ -337,6 +337,37 @@ function normalizeCertDashes(text) {
   }).join('\n')
 }
 
+// Tense backstop: the prompt (Rule 9) already tells the model current-role bullets
+// stay present tense, but it occasionally slips. Here we find bullets in the CURRENT
+// role (its date line ends in "Present") that OPEN with a past-tense verb and bounce
+// them back. Detection is deliberately generous (regular -ed + common irregulars); the
+// retry note tells the model to leave anything that is actually an adjective or already
+// present tense, so correct lines are never broken.
+const PAST_IDENTICAL = new Set(['set','cut','put','read','cost','hit','let','bet','spread','split','shut','burst','forecast','broadcast'])
+const IRREGULAR_PAST = new Set(['led','built','ran','drove','oversaw','wrote','made','chose','began','brought','bought','taught','sought','held','kept','left','met','sent','spent','won','stood','understood','grew','drew','flew','knew','threw','gave','took','saw','went','came','found','got','spoke','broke','rose','rebuilt','upheld','overcame','undertook'])
+function bulletOpensPast(bulletText) {
+  const first = String(bulletText).trim().replace(/^[•\-–]\s*/, '').split(/\s+/)[0] || ''
+  const w = first.toLowerCase().replace(/[^a-z]/g, '')
+  if (!w || PAST_IDENTICAL.has(w)) return false
+  if (IRREGULAR_PAST.has(w)) return true
+  return /ed$/.test(w)
+}
+function findCurrentRolePastTense(text) {
+  const isRole   = l => /\s\|\s[^|]*\|\s/.test(l)
+  const isBullet = l => /^\s*[•\-–]\s+/.test(l)
+  const isHeader = l => { const t = l.trim(); return /^[A-Z][A-Z &/]{2,40}$/.test(t) && t.split(' ').length <= 4 }
+  const hits = []
+  let inExp = false, inCurrent = false
+  for (const raw of String(text).split('\n')) {
+    const t = raw.trim()
+    if (isHeader(t)) { inExp = /EXPERIENCE/.test(t); inCurrent = false; continue }
+    if (!inExp) continue
+    if (isRole(t)) { inCurrent = /\bpresent\b/i.test(t); continue }
+    if (inCurrent && isBullet(t) && bulletOpensPast(t)) hits.push(t)
+  }
+  return hits
+}
+
 // The "- " bullets that live under the EXPERIENCE section only.
 function experienceBullets(resume) {
   const bullets = []
@@ -487,7 +518,7 @@ It must read like the candidate wrote it. Recruiters screen hundreds of resumes 
 - Banned punctuation: em-dashes, en-dashes, and double hyphens. Use commas, full stops, or semicolons. There is ONE exception: the official name of a certification or credential. These names often contain a dash, for example "AWS Certified Data Engineer - Associate" or "Databricks Certified Data Engineer - Professional". Keep that dash as a plain hyphen with a space on each side. Never replace it with a comma, because "Data Engineer, Associate, Amazon Web Services" reads as three separate things instead of one credential.
 - Never address the reader. No "you", "your", "we". A resume is not a sales page.
 - Bullets must vary in length and shape. Real resumes are uneven. Uniform ones read as generated.
-- Keep verb tense consistent within each role. A current role (its dates end in "Present") uses present tense throughout its ongoing work: do not mix "Design and deploy" with "Built" and "Optimized" in the same role. Past roles use past tense throughout. Flipping tense inside one role is the clearest sign the resume was never proofread.
+- TENSE IS A HARD RULE, NOT A PREFERENCE. Every bullet in a CURRENT role (its dates end in "Present") MUST be present tense: "Design", "Build", "Operate", "Optimize", "Lead". Never past tense in a current role: not "Designed", "Built", "Led", "Optimized". Past roles are entirely past tense. Do not mix tenses inside one role. Before returning, re-read every current-role bullet and confirm its opening verb is present tense. This is checked automatically, and a mismatch is sent back to you.
 - Keep every number exactly as written. Never round, never invent.
 - Fix clear grammatical errors, but do not homogenize their voice into generic corporate English. Many of these candidates are non-native English speakers. Their phrasing is theirs, and it is part of why the resume reads as real.
 
@@ -531,19 +562,23 @@ Respond in this exact JSON format with no extra text:
 
       const invented = inventedBullets(out, resumeText, confirmed)
       const dashes = findBannedDashes(out)
-      if (!invented.length && !dashes.length) break
+      const pastT = findCurrentRolePastTense(out)
+      if (!invented.length && !dashes.length && !pastT.length) break
       if (attempt === 2) {
         if (invented.length) gateNote = ' (Please review the experience section: one or more bullets may describe work not in your original resume.)'
-        console.warn('optimize gate unresolved after retries: invented=' + invented.length + ' dashes=' + dashes.length)
+        console.warn('optimize gate unresolved after retries: invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length)
         break
       }
-      console.warn('optimize gate retry ' + (attempt + 1) + ': invented=' + invented.length + ' dashes=' + dashes.length)
+      console.warn('optimize gate retry ' + (attempt + 1) + ': invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length)
       let corrections = 'Your draft breaks the rules below. Fix ONLY these problems and return the same JSON format.\n'
       if (invented.length) {
         corrections += '\nINVENTED EXPERIENCE. These bullets describe work that is NOT in the original resume, which is fabrication and is forbidden:\n' + invented.map(b => '  - "' + b + '"').join('\n') + '\nDelete each one. If a bullet exists only to carry a confirmed skill, remove the bullet and place that skill in the skills section instead. Do not write a replacement bullet.\n'
       }
       if (dashes.length) {
         corrections += '\nBANNED DASHES (em-dash, en-dash, or --) on these lines:\n' + dashes.map(l => '  - "' + l + '"').join('\n') + '\nReplace each with a comma, a full stop, or a plain hyphen. Keep a plain hyphen only inside a certification name.\n'
+      }
+      if (pastT.length) {
+        corrections += '\nTENSE. Your CURRENT role (its dates end in "Present") must be present tense throughout. These bullets open in PAST tense:\n' + pastT.map(l => '  - "' + l + '"').join('\n') + '\nRewrite each opening verb to present tense (Managed to Manage, Led to Lead, Built to Build, Optimized to Optimize). If a flagged word is actually an adjective or already present tense, leave it unchanged.\n'
       }
       messages.push({ role: 'assistant', content: message.content[0].text })
       messages.push({ role: 'user', content: corrections })
@@ -884,7 +919,7 @@ app.post('/download-word', async (req, res) => {
       // A job TITLE (line above a company/date line) → bold, prominent, more than company.
       if (isTitleLine(line)) {
         children.push(new Paragraph({
-          spacing: { before: sp.before, after: 20 },
+          spacing: { before: sp.before, after: 20 }, keepNext: true,
           children: [new TextRun({ text: line, bold: true, size: bodySize + 3, color: '111827', font: FONT })]
         }))
         continue
@@ -1000,7 +1035,7 @@ function buildResumeHTML(resumeText, font, length) {
     // A job TITLE (line sitting right above a company/date line) → bold and prominent,
     // more weight than the company below it. This is the thing a recruiter scans for.
     if (isTitleLine(line)) {
-      body += `<div style="font-size:${isCompact ? '10.5pt' : '11.5pt'};font-weight:800;color:#111;margin-top:${gap};margin-bottom:1pt">${esc(line)}</div>`
+      body += `<div style="font-size:${isCompact ? '10.5pt' : '11.5pt'};font-weight:800;color:#111;break-after:avoid;page-break-after:avoid;break-inside:avoid;margin-top:${gap};margin-bottom:1pt">${esc(line)}</div>`
       continue
     }
 
