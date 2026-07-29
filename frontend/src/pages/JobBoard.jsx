@@ -229,29 +229,41 @@ const CSS = `
 }
 
 /* ── Two-pane layout (desktop): job list left, description right ────────────
-   Below 980px this all switches off and the original slide-in drawer is used,
-   because two panes do not fit on a phone. */
+   The page becomes a fixed-height app region: header/filters on top, then the two
+   panes fill the rest of the screen and scroll INDEPENDENTLY. The hero is compacted
+   so jobs are visible without scrolling. Below 981px this all switches off and the
+   original slide-in drawer is used, because two panes do not fit on a phone. */
 .jb-detail-col { display: none; }
 .jb-detail-empty { display: flex; align-items: center; justify-content: center;
   height: 100%; padding: 40px; text-align: center; color: #9CA3AF; font-size: 14px; }
 
 @media (min-width: 981px) {
-  .jb-panes { display: flex; gap: 20px; align-items: flex-start;
-    max-width: 1400px; margin: 0 auto; padding: 0 28px; }
-  .jb-list-col { flex: 0 0 38%; min-width: 0; }
-  .jb-list { max-width: none; margin: 0; padding: 6px 0 24px; }
+  .jb-root { height: 100vh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+  .jb-hero-wrap { max-width: 1400px; padding: 14px 28px 0; }
+  .jb-hero { padding: 18px 24px; }
+  .jb-hero h1 { font-size: 27px; }
+  .jb-hero p { font-size: 13px; max-width: none; margin-top: 6px; }
+  .jb-filters { max-width: 1400px; margin: 12px auto 0; }
+  .jb-count { max-width: 1400px; padding: 10px 28px 2px; }
+
+  .jb-panes { flex: 1; min-height: 0; display: flex; gap: 20px;
+    width: 100%; max-width: 1400px; margin: 0 auto; padding: 4px 28px 0; }
+
+  .jb-list-col { flex: 0 0 38%; min-width: 0; overflow-y: auto; padding-right: 4px; }
+  .jb-list { max-width: none; margin: 0; padding: 6px 0 14px; }
   .jb-card { padding: 16px 17px; }
   .jb-card h3 { font-size: 15.5px; }
   .jb-card.sel { border-color: var(--blue); background: #F8FBFF;
     box-shadow: 0 4px 16px rgba(37,99,235,.10); }
   .jb-card.sel:hover { transform: none; }
-  .jb-pager { padding-bottom: 48px; }
+  .jb-pager { padding: 0 0 24px; }
 
-  .jb-detail-col { display: block; flex: 1; min-width: 0;
-    position: sticky; top: 16px; height: calc(100vh - 32px); overflow-y: auto;
-    background: #fff; border: 1px solid var(--border); border-radius: 14px; }
+  .jb-detail-col { display: block; flex: 1; min-width: 0; overflow-y: auto;
+    background: #fff; border: 1px solid var(--border); border-radius: 14px;
+    margin-bottom: 16px; }
   .jb-detail-col .jb-close { display: none; }
-  .jb-detail-col .jb-desc { padding-bottom: 40px; }
+  .jb-detail-col .jb-desc { padding-bottom: 32px; }
 
   /* the mobile drawer never appears on desktop */
   .jb-drawer, .jb-overlay { display: none !important; }
