@@ -1,6 +1,7 @@
+import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { UserButton, useUser } from '@clerk/clerk-react'
-import { Briefcase, User, FileText, Calendar, Settings } from 'lucide-react'
+import { Briefcase, User, FileText, Calendar, Settings, ChevronsLeft, ChevronsRight } from 'lucide-react'
 
 const NAV_ITEMS = [
   { icon: Briefcase, label: 'Job Board',   path: '/jobs', available: true },
@@ -25,12 +26,28 @@ const CSS = `
 .sl-sidebar {
   width: 232px; flex-shrink: 0; border-right: 1px solid var(--border);
   display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh;
+  transition: width .18s ease;
+}
+
+.sl-header {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 20px 14px 20px;
 }
 .sl-brand {
-  display: flex; align-items: center; gap: 9px; padding: 20px 18px 22px;
+  display: flex; align-items: center; gap: 9px; min-width: 0;
   font-weight: 700; font-size: 18px; letter-spacing: -.02em; cursor: pointer;
 }
+.sl-brand span { white-space: nowrap; overflow: hidden; }
 .sl-brand-mark { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg,#2563EB,#7C3AED); flex-shrink: 0; }
+
+.sl-toggle {
+  display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; flex-shrink: 0; padding: 0;
+  border: none; background: none; border-radius: 8px;
+  color: var(--muted); cursor: pointer; font-family: inherit;
+}
+.sl-toggle svg { width: 18px; height: 18px; }
+.sl-toggle:hover { background: #F8FAFC; color: var(--ink); }
 
 .sl-nav { flex: 1; padding: 0 12px; overflow-y: auto; }
 .sl-item {
@@ -69,12 +86,27 @@ const CSS = `
 
 .sl-content { flex: 1; min-width: 0; overflow-x: hidden; }
 
+/* ---- Manually collapsed (toggle button) ---- */
+.sl-collapsed .sl-sidebar { width: 68px; }
+.sl-collapsed .sl-header { flex-direction: column; justify-content: center; padding: 18px 0 20px; gap: 12px; }
+.sl-collapsed .sl-brand { justify-content: center; }
+.sl-collapsed .sl-brand span { display: none; }
+.sl-collapsed .sl-item { justify-content: center; }
+.sl-collapsed .sl-item span { display: none; }
+.sl-collapsed .sl-soon { display: none; }
+.sl-collapsed .sl-plan { display: none; }
+.sl-collapsed .sl-user { justify-content: center; }
+.sl-collapsed .sl-user-info { display: none; }
+
+/* ---- Auto-collapse on small screens (always icon-only; hide the manual toggle) ---- */
 @media (max-width: 820px) {
   .sl-sidebar { width: 68px; }
-  .sl-brand span, .sl-item span, .sl-plan, .sl-user-info { display: none; }
-  .sl-brand { justify-content: center; padding: 20px 0 22px; }
+  .sl-header { flex-direction: column; justify-content: center; padding: 18px 0 20px; gap: 12px; }
+  .sl-brand span, .sl-item span, .sl-soon, .sl-plan, .sl-user-info { display: none; }
+  .sl-brand { justify-content: center; }
   .sl-item { justify-content: center; }
   .sl-user { justify-content: center; }
+  .sl-toggle { display: none; }
 }
 `
 
@@ -82,17 +114,28 @@ export default function SidebarLayout({ children }) {
   const navigate = useNavigate()
   const location = useLocation()
   const { user } = useUser()
+  const [collapsed, setCollapsed] = useState(false)
 
   const firstName = user?.firstName || user?.username || 'there'
 
   return (
-    <div className="sl-root">
+    <div className={`sl-root ${collapsed ? 'sl-collapsed' : ''}`}>
       <style>{CSS}</style>
 
       <aside className="sl-sidebar">
-        <div className="sl-brand" onClick={() => navigate('/')}>
-          <div className="sl-brand-mark" />
-          <span>ResumeAI</span>
+        <div className="sl-header">
+          <div className="sl-brand" onClick={() => navigate('/')}>
+            <div className="sl-brand-mark" />
+            <span>ResumeAI</span>
+          </div>
+          <button
+            className="sl-toggle"
+            onClick={() => setCollapsed(c => !c)}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={collapsed ? 'Expand' : 'Collapse'}
+          >
+            {collapsed ? <ChevronsRight /> : <ChevronsLeft />}
+          </button>
         </div>
 
         <nav className="sl-nav">
@@ -104,6 +147,7 @@ export default function SidebarLayout({ children }) {
                 className={`sl-item ${isActive ? 'active' : ''} ${!item.available ? 'disabled' : ''}`}
                 onClick={() => item.available && navigate(item.path)}
                 disabled={!item.available}
+                title={item.label}
               >
                 <item.icon />
                 <span>{item.label}</span>
