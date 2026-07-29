@@ -87,9 +87,13 @@ const CSS = `
 .sl-content { flex: 1; min-width: 0; overflow-x: hidden; }
 
 /* ---- Manually collapsed (toggle button) ---- */
-.sl-collapsed .sl-sidebar { width: 68px; }
-.sl-collapsed .sl-header { flex-direction: column; justify-content: center; padding: 18px 0 20px; gap: 12px; }
+.sl-collapsed .sl-sidebar { width: 74px; }
+/* Keep the logo and the toggle side by side on one row, even when collapsed. */
+.sl-collapsed .sl-header { justify-content: center; padding: 18px 4px 20px; gap: 5px; }
 .sl-collapsed .sl-brand { justify-content: center; }
+.sl-collapsed .sl-brand-mark { width: 27px; height: 27px; }
+.sl-collapsed .sl-toggle { width: 27px; height: 27px; }
+.sl-collapsed .sl-toggle svg { width: 16px; height: 16px; }
 .sl-collapsed .sl-brand span { display: none; }
 .sl-collapsed .sl-item { justify-content: center; }
 .sl-collapsed .sl-item span { display: none; }
