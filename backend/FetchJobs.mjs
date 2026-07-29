@@ -222,6 +222,9 @@ function isUSLocation(location = '') {
   // region. The bare-remote fallback below assumes remote = US, which wrongly kept these.
   // (EMEA/APAC/Brazil are already caught above; this adds the region words that were not.)
   if (/\bremote\b[\s\-–—,()\/|]*\b(eu|uk|apac|emea|latam|anz|europe|asia|africa|india|brazil|canada|mexico|ireland|germany|france|spain|italy|poland|ukraine|australia|singapore|japan|china|philippines|latin\s+america|middle\s+east|united\s+kingdom)\b/.test(lower)) return false
+  // Reversed order: region BEFORE "remote" — "UK (Remote)", "EU (Remote)", "India Remote".
+  // (The line above catches "Remote UK"; this catches the same regions written the other way.)
+  if (/\b(uk|eu|emea|apac|latam|anz|europe|asia|africa|india|brazil|canada|mexico|ireland|germany|france|spain|italy|poland|ukraine|australia|singapore|japan|china|philippines|united\s+kingdom)\b[\s,\/|()-]*remote\b/.test(lower)) return false
   if (lower.includes('remote')) return true
   return false
 }
