@@ -227,47 +227,6 @@ const CSS = `
   .jb-pills, .jb-card-foot { padding-left: 0; }
   .jb-card-top { flex-direction: column; }
 }
-
-/* ── Two-pane layout (desktop): job list left, description right ────────────
-   The page becomes a fixed-height app region: header/filters on top, then the two
-   panes fill the rest of the screen and scroll INDEPENDENTLY. The hero is compacted
-   so jobs are visible without scrolling. Below 981px this all switches off and the
-   original slide-in drawer is used, because two panes do not fit on a phone. */
-.jb-detail-col { display: none; }
-.jb-detail-empty { display: flex; align-items: center; justify-content: center;
-  height: 100%; padding: 40px; text-align: center; color: #9CA3AF; font-size: 14px; }
-
-@media (min-width: 981px) {
-  .jb-root { height: 100vh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-
-  .jb-hero-wrap { max-width: 1400px; padding: 14px 28px 0; }
-  .jb-hero { padding: 18px 24px; }
-  .jb-hero h1 { font-size: 27px; }
-  .jb-hero p { font-size: 13px; max-width: none; margin-top: 6px; }
-  .jb-filters { max-width: 1400px; margin: 12px auto 0; }
-  .jb-count { max-width: 1400px; padding: 10px 28px 2px; }
-
-  .jb-panes { flex: 1; min-height: 0; display: flex; gap: 20px;
-    width: 100%; max-width: 1400px; margin: 0 auto; padding: 4px 28px 0; }
-
-  .jb-list-col { flex: 0 0 38%; min-width: 0; overflow-y: auto; padding-right: 4px; }
-  .jb-list { max-width: none; margin: 0; padding: 6px 0 14px; }
-  .jb-card { padding: 16px 17px; }
-  .jb-card h3 { font-size: 15.5px; }
-  .jb-card.sel { border-color: var(--blue); background: #F8FBFF;
-    box-shadow: 0 4px 16px rgba(37,99,235,.10); }
-  .jb-card.sel:hover { transform: none; }
-  .jb-pager { padding: 0 0 24px; }
-
-  .jb-detail-col { display: block; flex: 1; min-width: 0; overflow-y: auto;
-    background: #fff; border: 1px solid var(--border); border-radius: 14px;
-    margin-bottom: 16px; }
-  .jb-detail-col .jb-close { display: none; }
-  .jb-detail-col .jb-desc { padding-bottom: 32px; }
-
-  /* the mobile drawer never appears on desktop */
-  .jb-drawer, .jb-overlay { display: none !important; }
-}
 `
 
 function gradientFor(name = '') {
@@ -311,7 +270,7 @@ function shortLoc(loc) {
   return `${parts[0]} +${parts.length - 1} more`
 }
 
-function JobCard({ job, onOpen, onOptimize, selected }) {
+function JobCard({ job, onOpen, onOptimize }) {
   const salary = formatSalary(job.salaryMin, job.salaryMax)
   const years = formatYears(job.yearsMin, job.yearsMax)
 
@@ -362,7 +321,7 @@ function JobCard({ job, onOpen, onOptimize, selected }) {
   }
 
   return (
-    <div className={`jb-card ${selected ? 'sel' : ''}`} onClick={() => onOpen(job)}>
+    <div className="jb-card" onClick={() => onOpen(job)}>
       <div className="jb-card-top">
         <div className="jb-logo" style={{ background: gradientFor(job.company) }}>
           {job.company ? job.company[0] : '?'}
@@ -471,28 +430,10 @@ export default function JobBoard() {
 
   const hasActiveFilters = query || workType || experienceLevel || timePosted || stateFilter
 
-  // Two panes do not fit on a phone, so below this width we fall back to the drawer.
-  function isNarrow() {
-    return typeof window !== 'undefined' && window.matchMedia('(max-width: 980px)').matches
-  }
-
-  // Desktop: keep the right pane filled. When a new page of results loads (or the
-  // current selection is no longer in the list), select the first open job so the
-  // pane is never blank. On narrow screens we do nothing — the drawer stays closed
-  // until the user taps a card.
-  useEffect(() => {
-    if (isNarrow() || !jobs.length) return
-    const stillListed = selected && jobs.some(j => j.id === selected.id)
-    if (!stillListed) openJob(jobs.find(j => !j.closed) || jobs[0])
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobs])
-
   async function openJob(job) {
     setSelected(job)
     setDetailLoading(true)
-    // Only lock the page behind the slide-in drawer (narrow screens). In the
-    // desktop two-pane layout nothing is covered, so the page must stay scrollable.
-    if (isNarrow()) document.body.style.overflow = 'hidden'
+    document.body.style.overflow = 'hidden'
     try {
       const res = await fetch(`${BACKEND}/jobs/${job.id}`)
       if (res.ok) {
@@ -539,28 +480,6 @@ export default function JobBoard() {
   const safeDescription = selected?.description
     ? DOMPurify.sanitize(selected.description)
     : ''
-
-  const detailBody = selected && (
-    <>
-      <div className="jb-drawer-head">
-        <button className="jb-close" onClick={closeJob}>×</button>
-        <h2>{selected.title}</h2>
-        <div className="co">{selected.company}</div>
-        <div className="loc">{shortLoc(selected.location)} · {timeAgo(selected.postedAt)}</div>
-      </div>
-      <div className="jb-drawer-actions">
-        <button className="jb-btn-opt" onClick={() => optimizeFor(selected)}>
-          <Sparkles size={14} /> Optimize my resume
-        </button>
-        <a className="jb-btn-apply" href={selected.applyUrl} target="_blank" rel="noreferrer">Apply →</a>
-      </div>
-      {detailLoading ? (
-        <div className="jb-desc-loading">Loading full description…</div>
-      ) : (
-        <div className="jb-desc" dangerouslySetInnerHTML={{ __html: safeDescription || 'No description available.' }} />
-      )}
-    </>
-  )
 
   const pageContent = (
     <div className="jb-root">
@@ -646,38 +565,44 @@ export default function JobBoard() {
           <p>Try a different keyword or clear your filters.</p>
         </div>
       ) : (
-        <div className="jb-panes">
-          <div className="jb-list-col">
-            <div className="jb-list">
-              {jobs.map(job => (
-                <JobCard
-                  key={job.id}
-                  job={job}
-                  onOpen={openJob}
-                  onOptimize={optimizeFor}
-                  selected={selected?.id === job.id}
-                />
-              ))}
-            </div>
-
-            <div className="jb-pager">
-              <button disabled={page <= 1} onClick={() => changePage(page - 1)}>← Prev</button>
-              <span className="pg">Page {page} of {pages}</span>
-              <button disabled={page >= pages} onClick={() => changePage(page + 1)}>Next →</button>
-            </div>
+        <>
+          <div className="jb-list">
+            {jobs.map(job => (
+              <JobCard key={job.id} job={job} onOpen={openJob} onOptimize={optimizeFor} />
+            ))}
           </div>
 
-          <aside className="jb-detail-col">
-            {selected ? detailBody : (
-              <div className="jb-detail-empty">Select a job to read the full description.</div>
-            )}
-          </aside>
-        </div>
+          <div className="jb-pager">
+            <button disabled={page <= 1} onClick={() => changePage(page - 1)}>← Prev</button>
+            <span className="pg">Page {page} of {pages}</span>
+            <button disabled={page >= pages} onClick={() => changePage(page + 1)}>Next →</button>
+          </div>
+        </>
       )}
 
       <div className={`jb-overlay ${selected ? 'open' : ''}`} onClick={closeJob} />
       <aside className={`jb-drawer ${selected ? 'open' : ''}`}>
-        {detailBody}
+        {selected && (
+          <>
+            <div className="jb-drawer-head">
+              <button className="jb-close" onClick={closeJob}>×</button>
+              <h2>{selected.title}</h2>
+              <div className="co">{selected.company}</div>
+              <div className="loc">{shortLoc(selected.location)} · {timeAgo(selected.postedAt)}</div>
+            </div>
+            <div className="jb-drawer-actions">
+              <button className="jb-btn-opt" onClick={() => optimizeFor(selected)}>
+                <Sparkles size={14} /> Optimize my resume
+              </button>
+              <a className="jb-btn-apply" href={selected.applyUrl} target="_blank" rel="noreferrer">Apply →</a>
+            </div>
+            {detailLoading ? (
+              <div className="jb-desc-loading">Loading full description…</div>
+            ) : (
+              <div className="jb-desc" dangerouslySetInnerHTML={{ __html: safeDescription || 'No description available.' }} />
+            )}
+          </>
+        )}
       </aside>
 
       {optimizeJob && (
