@@ -219,8 +219,18 @@ const CSS = `
 .jb-desc ul { padding-left: 19px; margin-bottom: 6px; }
 .jb-desc li { margin-bottom: 6px; }
 .jb-desc strong { color: var(--ink); font-weight: 700; }
-.jb-desc h3, .jb-desc p > strong:only-child { display: block; font-size: 12.5px; color: var(--blue); text-transform: uppercase; letter-spacing: .05em; margin: 20px 0 4px; font-weight: 700; }
-.jb-desc h3:first-child, .jb-desc p:first-child > strong:only-child { margin-top: 0; }
+/* Companies mark section headings every which way — <h1>..<h6>, or a paragraph whose
+   whole content is bold (<strong> or <b>). Style them all identically, otherwise the
+   same posting shows some headings blue and others plain black. */
+/* Every heading renders the same: plain bold dark text. Companies write headings a
+   dozen different ways (<h2>, fully-bold paragraph, bold text with the colon OUTSIDE
+   the bold tag...), and each attempt to style "real" headings blue left some blue and
+   some black in the same posting. One uniform style can't be inconsistent. */
+.jb-desc .jb-h, .jb-desc .jb-h > strong, .jb-desc .jb-h > b {
+  display: block; color: var(--ink); font-weight: 700; margin: 16px 0 4px; line-height: 1.4;
+}
+.jb-desc .jb-h:first-child { margin-top: 0; }
+.jb-desc .jb-h > strong, .jb-desc .jb-h > b { margin: 0; display: inline; }
   .jb-desc-loading { padding: 40px 28px; text-align: center; color: var(--muted); }
 .jb-locpick { padding: 12px 28px 0; }
 .jb-locpick-label { font-size: 11.5px; color: var(--muted); margin-bottom: 7px; }
@@ -305,8 +315,7 @@ const CSS = `
   .jb-detail-col .jb-desc p { margin-bottom: 6px; }
   .jb-detail-col .jb-desc li { margin-bottom: 4px; }
   .jb-detail-col .jb-desc ul { padding-left: 16px; margin-bottom: 5px; }
-  .jb-detail-col .jb-desc h3,
-  .jb-detail-col .jb-desc p > strong:only-child { font-size: 11px; margin: 13px 0 3px; }
+  .jb-detail-col .jb-desc .jb-h { margin: 13px 0 3px; }
 
   /* the mobile drawer never appears in two-pane mode */
   .jb-drawer, .jb-overlay { display: none !important; }
@@ -608,8 +617,39 @@ export default function JobBoard() {
     if (page < pages && !loadingMore) setPage(page + 1)
   }
 
+  // Companies mark section headings inconsistently — <h2>, <h4>, a fully-bold
+  // paragraph, sometimes with a stray <br> or &nbsp; inside. CSS selectors can't cover
+  // every shape (":only-child" breaks the moment a <br> sneaks in), which left some
+  // headings blue and others plain black in the same posting. So we detect them in
+  // code: any short block whose visible text is ENTIRELY bold is a heading, and gets
+  // one class the CSS can style. Also strips leftover ATS tracking tags like "#LI-JCS".
+  function markHeadings(html) {
+    try {
+      const doc = new DOMParser().parseFromString(html, 'text/html')
+      doc.querySelectorAll('h1,h2,h3,h4,h5,h6').forEach(el => el.classList.add('jb-h'))
+      doc.querySelectorAll('p,div').forEach(el => {
+        if (el.querySelector('p,div,ul,ol,li,table')) return          // container, not a heading
+        const text = (el.textContent || '').replace(/\u00a0/g, ' ').trim()
+        if (!text || text.length > 120) return
+        const bold = Array.from(el.querySelectorAll('strong,b'))
+          .map(b => (b.textContent || '').replace(/\u00a0/g, ' ').trim())
+          .join(' ')
+          .trim()
+        // every visible character is inside a <strong>/<b> → it's a heading
+        if (bold && bold.replace(/\s+/g, '') === text.replace(/\s+/g, '')) el.classList.add('jb-h')
+      })
+      // ATS tracking tags ("#LI-JCS") are noise for a student reading the posting
+      doc.querySelectorAll('p,div,span').forEach(el => {
+        if (/^#LI-[A-Za-z0-9-]+$/.test((el.textContent || '').trim())) el.remove()
+      })
+      return doc.body.innerHTML
+    } catch {
+      return html
+    }
+  }
+
   const safeDescription = selected?.description
-    ? DOMPurify.sanitize(selected.description)
+    ? markHeadings(DOMPurify.sanitize(selected.description))
     : ''
 
   // A grouped job carries every location it was posted in. The student picks one and
