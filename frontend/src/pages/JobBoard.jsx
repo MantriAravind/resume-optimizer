@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useUser } from '@clerk/clerk-react'
 import DOMPurify from 'dompurify'
 import SidebarLayout from '../components/SidebarLayout'
@@ -67,23 +67,23 @@ const CSS = `
 .jb-nav-links a { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 500; }
 .jb-nav-links a:hover { color: var(--ink); }
 
-.jb-hero-wrap { max-width: 900px; margin: 0 auto; padding: 16px 28px 0; }
+.jb-hero-wrap { max-width: 900px; margin: 0 auto; padding: 10px 28px 0; }
 .jb-hero {
   background: linear-gradient(135deg, #EFF6FF 0%, #F5F3FF 100%);
-  border-radius: 20px; padding: 22px 28px;
+  border-radius: 12px; padding: 10px 15px;
 }
-.jb-badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.jb-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
 .jb-badge {
   display: inline-flex; align-items: center; gap: 6px;
-  font-size: 12.5px; font-weight: 600; letter-spacing: .01em;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .01em;
   background: #fff; color: var(--blue); border: 1px solid #DBEAFE;
-  padding: 7px 14px; border-radius: 100px; box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  padding: 4px 10px; border-radius: 100px; box-shadow: 0 1px 3px rgba(0,0,0,.05);
 }
 .jb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); animation: jbPulse 1.8s ease-in-out infinite; }
 @keyframes jbPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.8); } }
 @media (prefers-reduced-motion: reduce) { .jb-dot { animation: none; } }
 .jb-hero h1 { font-size: clamp(22px, 3vw, 28px); font-weight: 700; letter-spacing: -.03em; line-height: 1.15; margin-bottom: 8px; }
-.jb-hero p { font-size: 13.5px; color: var(--muted); max-width: 78ch; line-height: 1.5; }
+.jb-hero p { font-size: 11.5px; color: var(--muted); max-width: none; line-height: 1.4; }
 
 .jb-filters { max-width: 900px; margin: 14px auto 0; padding: 0 28px; }
 .jb-search { display: flex; gap: 10px; margin-bottom: 12px; }
@@ -113,7 +113,7 @@ const CSS = `
 }
 .jb-clear-filters:hover { text-decoration: underline; }
 
-.jb-count { max-width: 900px; margin: 0 auto; padding: 12px 28px 4px; font-size: 13px; color: var(--muted); }
+.jb-count { display: none; }
 
 .jb-list { max-width: 900px; margin: 0 auto; padding: 6px 28px 60px; display: flex; flex-direction: column; gap: 12px; }
 .jb-card--closed { background: #FBFBFC; border-color: #ECECEF; cursor: default; }
@@ -188,7 +188,9 @@ const CSS = `
 .jb-pager { max-width: 900px; margin: 0 auto; padding: 0 28px 80px; display: flex; justify-content: center; align-items: center; gap: 14px; }
 .jb-pager button { padding: 10px 20px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); font-family: inherit; font-weight: 500; font-size: 14px; cursor: pointer; color: var(--ink); }
 .jb-pager button:disabled { opacity: .4; cursor: not-allowed; }
-.jb-pager button:not(:disabled):hover { border-color: var(--ink); }
+  .jb-pager button:not(:disabled):hover { border-color: var(--ink); }
+.jb-more { width: 100%; max-width: 320px; padding: 11px 20px !important; font-weight: 600 !important; color: var(--blue) !important; border-color: #DBEAFE !important; background: var(--blue-soft) !important; }
+.jb-more:not(:disabled):hover { border-color: var(--blue) !important; }
 .jb-pager .pg { font-size: 14px; color: var(--muted); }
 
 .jb-overlay { position: fixed; inset: 0; background: rgba(10,10,11,.35); z-index: 40; opacity: 0; pointer-events: none; transition: opacity .2s; }
@@ -226,6 +228,78 @@ const CSS = `
   .jb-search { flex-direction: column; }
   .jb-pills, .jb-card-foot { padding-left: 0; }
   .jb-card-top { flex-direction: column; }
+}
+
+/* ── Two-pane layout (desktop ≥1100px) ──────────────────────────────────────
+   The page becomes a fixed-height app region: hero + filters on top, then the job
+   list (left) and the full description (right) fill the rest of the screen and
+   scroll INDEPENDENTLY. Below 1100px this all switches off and the original
+   slide-in drawer is used, because two panes do not fit on a narrow screen. */
+.jb-detail-col { display: none; }
+.jb-detail-empty { display: flex; align-items: center; justify-content: center;
+  height: 100%; padding: 40px; text-align: center; color: #9CA3AF; font-size: 14px; }
+
+@media (min-width: 1100px) {
+  .jb-root { height: 100vh; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+  .jb-hero-wrap, .jb-filters, .jb-count { max-width: 1500px; width: 100%; }
+  .jb-hero-wrap { padding: 14px 26px 0; }
+  .jb-hero { padding: 10px 15px; }
+  .jb-filters { margin: 12px auto 0; padding: 0 26px; }
+  .jb-count { padding: 10px 26px 2px; }
+
+  .jb-panes { flex: 1; min-height: 0; display: flex; gap: 18px;
+    width: 100%; max-width: 1500px; margin: 0 auto; padding: 4px 26px 0; }
+
+  .jb-list-col { flex: 0 0 37%; min-width: 0; overflow-y: auto; padding-right: 6px; }
+  .jb-list { max-width: none; margin: 0; padding: 4px 0 12px; }
+  /* compact job cards so more fit on screen */
+  .jb-card { padding: 11px 13px; border-radius: 11px; margin-bottom: 8px; }
+  .jb-card h3 { font-size: 13.5px; line-height: 1.3; }
+  .jb-card .co { font-size: 11.5px; }
+  .jb-logo { width: 34px; height: 34px; font-size: 14px; border-radius: 9px; }
+  .jb-card-top { gap: 10px; }
+  .jb-pills { gap: 5px; margin: 8px 0 0; padding-left: 44px; }
+  .jb-pill { font-size: 10.5px; padding: 3px 8px; }
+  .jb-card-foot { margin-top: 9px; padding-top: 9px; padding-left: 44px; }
+  .jb-posted { font-size: 10.5px; }
+  .jb-btn-opt, .jb-btn-apply { font-size: 11.5px; padding: 6px 11px; }
+
+  /* tighter filters + count */
+  .jb-search { gap: 8px; margin-bottom: 8px; }
+  .jb-search input { padding: 8px 12px; font-size: 12.5px; border-radius: 9px; }
+  .jb-search button { padding: 8px 18px; font-size: 12.5px; border-radius: 9px; box-shadow: 0 2px 8px rgba(37,99,235,.22); }
+  .jb-dropdowns { gap: 7px; }
+  .jb-dropdowns select { padding: 8px 12px; font-size: 12.5px; }
+
+  .jb-filters { margin: 9px auto 0; }
+  .jb-card.sel { border-color: var(--blue); background: #F8FBFF;
+    box-shadow: 0 3px 14px rgba(37,99,235,.10); }
+  .jb-card.sel:hover { transform: none; }
+  .jb-pager { max-width: none; margin: 0; padding: 0 0 20px; }
+
+  .jb-detail-col { display: block; flex: 1; min-width: 0; overflow-y: auto;
+    background: #fff; border: 1px solid var(--border); border-radius: 14px;
+    margin-bottom: 14px; }
+  .jb-detail-col .jb-close { display: none; }
+  .jb-detail-col .jb-drawer-head { padding: 14px 20px 10px; }
+  .jb-detail-col .jb-drawer-head h2 { margin-right: 0; font-size: 16.5px; margin-bottom: 3px; }
+  .jb-detail-col .jb-drawer-head .co { font-size: 12px; }
+  .jb-detail-col .jb-drawer-head .loc { font-size: 11px; margin-top: 4px; }
+  .jb-detail-col .jb-drawer-actions { padding: 10px 20px; gap: 8px; top: 66px; }
+  .jb-detail-col .jb-drawer-actions .jb-btn-opt,
+  .jb-detail-col .jb-drawer-actions .jb-btn-apply { padding: 9px; font-size: 12.5px; }
+
+  /* smaller, tighter description so much more of the job fits on screen */
+  .jb-detail-col .jb-desc { padding: 14px 20px 24px; font-size: 12px; line-height: 1.55; }
+  .jb-detail-col .jb-desc p { margin-bottom: 6px; }
+  .jb-detail-col .jb-desc li { margin-bottom: 4px; }
+  .jb-detail-col .jb-desc ul { padding-left: 16px; margin-bottom: 5px; }
+  .jb-detail-col .jb-desc h3,
+  .jb-detail-col .jb-desc p > strong:only-child { font-size: 11px; margin: 13px 0 3px; }
+
+  /* the mobile drawer never appears in two-pane mode */
+  .jb-drawer, .jb-overlay { display: none !important; }
 }
 `
 
@@ -270,7 +344,7 @@ function shortLoc(loc) {
   return `${parts[0]} +${parts.length - 1} more`
 }
 
-function JobCard({ job, onOpen, onOptimize }) {
+function JobCard({ job, onOpen, onOptimize, selected }) {
   const salary = formatSalary(job.salaryMin, job.salaryMax)
   const years = formatYears(job.yearsMin, job.yearsMax)
 
@@ -321,7 +395,7 @@ function JobCard({ job, onOpen, onOptimize }) {
   }
 
   return (
-    <div className="jb-card" onClick={() => onOpen(job)}>
+    <div className={`jb-card ${selected ? 'sel' : ''}`} onClick={() => onOpen(job)}>
       <div className="jb-card-top">
         <div className="jb-logo" style={{ background: gradientFor(job.company) }}>
           {job.company ? job.company[0] : '?'}
@@ -368,21 +442,37 @@ export default function JobBoard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  const [searchInput, setSearchInput] = useState('')
-  const [query, setQuery] = useState('')
-  const [workType, setWorkType] = useState('')
-  const [experienceLevel, setExperienceLevel] = useState('')
-  const [timePosted, setTimePosted] = useState('')
-  const [stateFilter, setStateFilter] = useState('')
+  // Search and filters live in the URL, so refreshing the page (to check for new
+  // openings) keeps what you were looking at, and the link can be shared/bookmarked.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [searchInput, setSearchInput] = useState(searchParams.get('query') || '')
+  const [query, setQuery] = useState(searchParams.get('query') || '')
+  const [workType, setWorkType] = useState(searchParams.get('workType') || '')
+  const [experienceLevel, setExperienceLevel] = useState(searchParams.get('experienceLevel') || '')
+  const [timePosted, setTimePosted] = useState(searchParams.get('timePosted') || '')
+  const [stateFilter, setStateFilter] = useState(searchParams.get('state') || '')
 
   const [selected, setSelected] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [optimizeJob, setOptimizeJob] = useState(null)
 
+  const [loadingMore, setLoadingMore] = useState(false)
+
+  useEffect(() => {
+    const next = {}
+    if (query) next.query = query
+    if (workType) next.workType = workType
+    if (experienceLevel) next.experienceLevel = experienceLevel
+    if (timePosted) next.timePosted = timePosted
+    if (stateFilter) next.state = stateFilter
+    setSearchParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, workType, experienceLevel, timePosted, stateFilter])
   const listTop = useRef(null)
 
   const fetchJobs = useCallback(async () => {
-    setLoading(true)
+    if (page === 1) setLoading(true)
+    else setLoadingMore(true)
     setError('')
     try {
       const params = new URLSearchParams({ page: String(page) })
@@ -395,14 +485,17 @@ export default function JobBoard() {
       const res = await fetch(`${BACKEND}/jobs?${params.toString()}`)
       if (!res.ok) throw new Error('bad response')
       const data = await res.json()
-      setJobs(data.jobs || [])
+      // Page 1 replaces the list (new search/filter); later pages APPEND, so
+      // "Load more" genuinely adds to what is already on screen.
+      setJobs(prev => (page === 1 ? (data.jobs || []) : [...prev, ...(data.jobs || [])]))
       setTotal(data.total || 0)
       setPages(data.pages || 1)
     } catch {
       setError("Couldn't load jobs. The server may be waking up — try again in a few seconds.")
-      setJobs([])
+      if (page === 1) setJobs([])
     } finally {
       setLoading(false)
+      setLoadingMore(false)
     }
   }, [page, query, workType, experienceLevel, timePosted, stateFilter])
 
@@ -430,10 +523,26 @@ export default function JobBoard() {
 
   const hasActiveFilters = query || workType || experienceLevel || timePosted || stateFilter
 
+  // Two panes only exist on wide screens; below that we use the slide-in drawer.
+  function isTwoPane() {
+    return typeof window !== 'undefined' && window.matchMedia('(min-width: 1100px)').matches
+  }
+
+  // Keep the right pane filled on desktop: when a new page of results loads, or the
+  // current selection is no longer in the list, select the first open job.
+  useEffect(() => {
+    if (!isTwoPane() || !jobs.length) return
+    const stillListed = selected && jobs.some(j => j.id === selected.id)
+    if (!stillListed) openJob(jobs.find(j => !j.closed) || jobs[0])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs])
+
   async function openJob(job) {
     setSelected(job)
     setDetailLoading(true)
-    document.body.style.overflow = 'hidden'
+    // Only lock the page behind the slide-in drawer. In two-pane mode nothing is
+    // covered, so the page must stay usable.
+    if (!isTwoPane()) document.body.style.overflow = 'hidden'
     try {
       const res = await fetch(`${BACKEND}/jobs/${job.id}`)
       if (res.ok) {
@@ -472,14 +581,36 @@ export default function JobBoard() {
     document.body.style.overflow = ''
   }
 
-  function changePage(next) {
-    setPage(next)
-    if (listTop.current) listTop.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // "Load more" appends the next page; the list keeps its scroll position.
+  function loadMore() {
+    if (page < pages && !loadingMore) setPage(page + 1)
   }
 
   const safeDescription = selected?.description
     ? DOMPurify.sanitize(selected.description)
     : ''
+
+  const detailBody = selected && (
+    <>
+      <div className="jb-drawer-head">
+        <button className="jb-close" onClick={closeJob}>×</button>
+        <h2>{selected.title}</h2>
+        <div className="co">{selected.company}</div>
+        <div className="loc">{shortLoc(selected.location)} · {timeAgo(selected.postedAt)}</div>
+      </div>
+      <div className="jb-drawer-actions">
+        <button className="jb-btn-opt" onClick={() => optimizeFor(selected)}>
+          <Sparkles size={14} /> Optimize my resume
+        </button>
+        <a className="jb-btn-apply" href={selected.applyUrl} target="_blank" rel="noreferrer">Apply →</a>
+      </div>
+      {detailLoading ? (
+        <div className="jb-desc-loading">Loading full description…</div>
+      ) : (
+        <div className="jb-desc" dangerouslySetInnerHTML={{ __html: safeDescription || 'No description available.' }} />
+      )}
+    </>
+  )
 
   const pageContent = (
     <div className="jb-root">
@@ -503,8 +634,7 @@ export default function JobBoard() {
             <span className="jb-badge"><GraduationCap size={13} />F1 · CPT · OPT · STEM OPT</span>
             <span className="jb-badge"><CheckCircle2 size={13} />Full-time roles only</span>
           </div>
-          <h1>Jobs that <span style={{ color: 'var(--blue)' }}>won't waste your time.</span></h1>
-          <p>We hide roles that require US citizenship, security clearances, or that explicitly refuse visa sponsorship. Everything here is fair game — always confirm sponsorship with the employer.</p>
+          <p>We hide roles requiring US citizenship, security clearances, or that refuse visa sponsorship — always confirm sponsorship with the employer.</p>
         </header>
       </div>
 
@@ -565,44 +695,42 @@ export default function JobBoard() {
           <p>Try a different keyword or clear your filters.</p>
         </div>
       ) : (
-        <>
-          <div className="jb-list">
-            {jobs.map(job => (
-              <JobCard key={job.id} job={job} onOpen={openJob} onOptimize={optimizeFor} />
-            ))}
+        <div className="jb-panes">
+          <div className="jb-list-col">
+            <div className="jb-list">
+              {jobs.map(job => (
+                <JobCard
+                  key={job.id}
+                  job={job}
+                  onOpen={openJob}
+                  onOptimize={optimizeFor}
+                  selected={selected?.id === job.id}
+                />
+              ))}
+            </div>
+
+            <div className="jb-pager">
+              {page < pages ? (
+                <button className="jb-more" onClick={loadMore} disabled={loadingMore}>
+                  {loadingMore ? 'Loading…' : 'Load more jobs'}
+                </button>
+              ) : (
+                <span className="pg">That's all {total.toLocaleString()} jobs</span>
+              )}
+            </div>
           </div>
 
-          <div className="jb-pager">
-            <button disabled={page <= 1} onClick={() => changePage(page - 1)}>← Prev</button>
-            <span className="pg">Page {page} of {pages}</span>
-            <button disabled={page >= pages} onClick={() => changePage(page + 1)}>Next →</button>
-          </div>
-        </>
+          <aside className="jb-detail-col">
+            {selected ? detailBody : (
+              <div className="jb-detail-empty">Select a job to read the full description.</div>
+            )}
+          </aside>
+        </div>
       )}
 
       <div className={`jb-overlay ${selected ? 'open' : ''}`} onClick={closeJob} />
       <aside className={`jb-drawer ${selected ? 'open' : ''}`}>
-        {selected && (
-          <>
-            <div className="jb-drawer-head">
-              <button className="jb-close" onClick={closeJob}>×</button>
-              <h2>{selected.title}</h2>
-              <div className="co">{selected.company}</div>
-              <div className="loc">{shortLoc(selected.location)} · {timeAgo(selected.postedAt)}</div>
-            </div>
-            <div className="jb-drawer-actions">
-              <button className="jb-btn-opt" onClick={() => optimizeFor(selected)}>
-                <Sparkles size={14} /> Optimize my resume
-              </button>
-              <a className="jb-btn-apply" href={selected.applyUrl} target="_blank" rel="noreferrer">Apply →</a>
-            </div>
-            {detailLoading ? (
-              <div className="jb-desc-loading">Loading full description…</div>
-            ) : (
-              <div className="jb-desc" dangerouslySetInnerHTML={{ __html: safeDescription || 'No description available.' }} />
-            )}
-          </>
-        )}
+        {detailBody}
       </aside>
 
       {optimizeJob && (

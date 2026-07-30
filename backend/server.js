@@ -622,13 +622,21 @@ app.get('/jobs', async (req, res) => {
     // Never list a posting we already know is closed.
     const filter = { closed: { $ne: true } }
 
-    // Search box: partial, case-insensitive match on title OR company.
+    // Search box: every WORD typed must appear somewhere in the title or company —
+    // "data engineer" therefore also finds "Data Platform Engineer", not just the exact
+    // phrase. Results are then ranked (see the aggregation below) so the closest title
+    // matches come first, newest first within each tier.
     // Escaped so a query like "c++" or "node.js" can't break the regex.
+    const esc = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const q = (req.query.query || '').trim()
-    if (q) {
-      const safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-      const rx = new RegExp(safe, 'i')
-      filter.$or = [{ title: rx }, { company: rx }]
+    const words = q ? q.split(/\s+/).filter(Boolean).slice(0, 6) : []
+    if (words.length) {
+      // ANY word is enough to be included — partial matches ("Analytics Engineer" for
+      // "data engineer") still appear, but the scoring below pushes them to the bottom.
+      filter.$or = words.flatMap(w => {
+        const rx = new RegExp(esc(w), 'i')
+        return [{ title: rx }, { company: rx }]
+      })
     }
 
     // Straight pass-through filters — the dropdown values match what fetchJobs stored.
@@ -649,12 +657,73 @@ app.get('/jobs', async (req, res) => {
 
     // The list cards never read `description` (only the detail view fetches it), and
     // descriptions are large HTML blobs, so drop it here to keep the payload light.
-    const jobs = await Job.find(filter)
-      .select('-description')
-      .sort({ postedAt: -1 })
-      .skip((page - 1) * PAGE_SIZE)
-      .limit(PAGE_SIZE)
-      .lean()
+    let jobs
+    if (words.length) {
+      // Ranked search. Score is title-focused, because a student scanning results cares
+      // about the ROLE matching, not the company name happening to contain a word:
+      //   +100  title contains the whole phrase ("Data Engineer")
+      //   +60   title STARTS with the phrase (the most on-the-nose match)
+      //   +10   per individual word found in the title
+      // Everything that merely matched on company scores 0 and sinks to the bottom.
+      // Ties break on postedAt, so within equally-relevant jobs the newest come first.
+      const phrase = esc(q)
+      const titleHas = w => ({ $regexMatch: { input: '$title', regex: esc(w), options: 'i' } })
+      // Whole-word match: "engineer" should count for "Data Engineer" but NOT for
+      // "Data Engineering Manager", which is a different job. \\b would also fire on
+      // "engineering", so we require the word to end at a non-letter (or end of title).
+      const anyHas = w => ({
+        $or: [
+          { $regexMatch: { input: '$title', regex: esc(w), options: 'i' } },
+          { $regexMatch: { input: { $ifNull: ['$company', ''] }, regex: esc(w), options: 'i' } },
+        ]
+      })
+      const titleHasWord = w => ({
+        $regexMatch: { input: '$title', regex: '(^|[^a-z])' + esc(w) + '([^a-z]|$)', options: 'i' }
+      })
+      const score = [
+        // Exact title, nothing else: "Data Engineer" for "data engineer".
+        { $cond: [{ $regexMatch: { input: '$title', regex: '^' + phrase + '$', options: 'i' } }, 400, 0] },
+        // Every word present as a WHOLE word — separates "Data Engineer II" from
+        // "Data Engineering Manager".
+        { $cond: [{ $and: words.map(titleHasWord) }, 250, 0] },
+        // Every word present at all (partial forms still count here).
+        { $cond: [{ $and: words.map(titleHas) }, 200, 0] },
+        { $cond: [{ $regexMatch: { input: '$title', regex: phrase, options: 'i' } }, 100, 0] },
+        { $cond: [{ $regexMatch: { input: '$title', regex: '^' + phrase, options: 'i' } }, 60, 0] },
+        ...words.map(w => ({ $cond: [titleHas(w), 10, 0] })),
+      ]
+      // Order: DAY first, relevance second. Today's postings come before yesterday's,
+      // and within a single day the closest title matches lead. This suits a student on
+      // an OPT clock — fresh listings first, best match at the top of each day — rather
+      // than a month-old exact match camping above everything posted today.
+      // Jobs with no postedAt sort last (null is lowest in a descending sort).
+      jobs = await Job.aggregate([
+        { $match: filter },
+        { $addFields: {
+            _score: { $add: score },
+            _day: { $dateToString: { format: '%Y-%m-%d', date: '$postedAt' } },
+            // Relevance TIER comes before date. Without this, today's "Embedded Software
+            // Engineer" would outrank yesterday's "Data Engineer" — the list fills with
+            // jobs that don't fit. Tier 2 = every search word is in the title, tier 1 =
+            // every word appears somewhere (title or company), tier 0 = only some words.
+            _tier: { $cond: [{ $and: words.map(titleHas) }, 2,
+                     { $cond: [{ $and: words.map(anyHas) }, 1, 0] }] },
+        } },
+        // Fit first, then freshness inside each tier, then closeness of the title.
+        { $sort: { _tier: -1, _day: -1, _score: -1, postedAt: -1 } },
+        { $skip: (page - 1) * PAGE_SIZE },
+        { $limit: PAGE_SIZE },
+        { $project: { description: 0, _score: 0, _day: 0, _tier: 0 } },
+      ])
+    } else {
+      // No search term: plain newest-first, which the postedAt index serves directly.
+      jobs = await Job.find(filter)
+        .select('-description')
+        .sort({ postedAt: -1 })
+        .skip((page - 1) * PAGE_SIZE)
+        .limit(PAGE_SIZE)
+        .lean()
+    }
 
     res.json({ jobs, total, pages })
 
