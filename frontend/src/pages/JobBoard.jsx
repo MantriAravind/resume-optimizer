@@ -221,7 +221,16 @@ const CSS = `
 .jb-desc strong { color: var(--ink); font-weight: 700; }
 .jb-desc h3, .jb-desc p > strong:only-child { display: block; font-size: 12.5px; color: var(--blue); text-transform: uppercase; letter-spacing: .05em; margin: 20px 0 4px; font-weight: 700; }
 .jb-desc h3:first-child, .jb-desc p:first-child > strong:only-child { margin-top: 0; }
-.jb-desc-loading { padding: 40px 28px; text-align: center; color: var(--muted); }
+  .jb-desc-loading { padding: 40px 28px; text-align: center; color: var(--muted); }
+.jb-locpick { padding: 12px 28px 0; }
+.jb-locpick-label { font-size: 11.5px; color: var(--muted); margin-bottom: 7px; }
+.jb-locpick-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.jb-locpick-btn {
+  font-size: 11.5px; padding: 5px 11px; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--border); background: #fff; color: var(--body); font-family: inherit;
+}
+.jb-locpick-btn:hover { border-color: #C7D2E0; }
+.jb-locpick-btn.on { background: var(--blue-soft); border-color: #DBEAFE; color: var(--blue); font-weight: 600; }
 
 @media (max-width: 560px) {
   .jb-nav-links a:not(.jb-nav-jobs) { display: none; }
@@ -287,6 +296,7 @@ const CSS = `
   .jb-detail-col .jb-drawer-head .co { font-size: 12px; }
   .jb-detail-col .jb-drawer-head .loc { font-size: 11px; margin-top: 4px; }
   .jb-detail-col .jb-drawer-actions { padding: 10px 20px; gap: 8px; top: 66px; }
+  .jb-detail-col .jb-locpick { padding: 10px 20px 0; }
   .jb-detail-col .jb-drawer-actions .jb-btn-opt,
   .jb-detail-col .jb-drawer-actions .jb-btn-apply { padding: 9px; font-size: 12.5px; }
 
@@ -344,6 +354,13 @@ function shortLoc(loc) {
   return `${parts[0]} +${parts.length - 1} more`
 }
 
+// Same role posted in several cities is folded into one card, so the pill reads
+// "New York, NY +2 more" instead of the list repeating the job three times.
+function locLabel(job) {
+  const extra = (job.locationCount || 1) - 1
+  return extra > 0 ? `${shortLoc(job.location)} +${extra} more` : shortLoc(job.location)
+}
+
 function JobCard({ job, onOpen, onOptimize, selected }) {
   const salary = formatSalary(job.salaryMin, job.salaryMax)
   const years = formatYears(job.yearsMin, job.yearsMax)
@@ -375,7 +392,7 @@ function JobCard({ job, onOpen, onOptimize, selected }) {
 
         <div className="jb-pills">
           <span className="jb-pill jb-pill--closed">No longer open</span>
-          <span className="jb-pill jb-pill--location"><MapPin />{shortLoc(job.location)}</span>
+          <span className="jb-pill jb-pill--location"><MapPin />{locLabel(job)}</span>
           {job.workType && <span className="jb-pill jb-pill--worktype"><Building2 />{job.workType}</span>}
         </div>
 
@@ -412,7 +429,7 @@ function JobCard({ job, onOpen, onOptimize, selected }) {
       </div>
 
       <div className="jb-pills">
-        <span className="jb-pill jb-pill--location"><MapPin />{shortLoc(job.location)}</span>
+        <span className="jb-pill jb-pill--location"><MapPin />{locLabel(job)}</span>
         {job.workType && <span className="jb-pill jb-pill--worktype"><Building2 />{job.workType}</span>}
         {job.experienceLevel && <span className="jb-pill jb-pill--experience"><TrendingUp />{job.experienceLevel}</span>}
         {salary && <span className="jb-pill jb-pill--salary"><DollarSign />{salary}</span>}
@@ -457,6 +474,7 @@ export default function JobBoard() {
   const [optimizeJob, setOptimizeJob] = useState(null)
 
   const [loadingMore, setLoadingMore] = useState(false)
+  const [locIndex, setLocIndex] = useState(0)
 
   useEffect(() => {
     const next = {}
@@ -539,6 +557,7 @@ export default function JobBoard() {
 
   async function openJob(job) {
     setSelected(job)
+    setLocIndex(0)
     setDetailLoading(true)
     // Only lock the page behind the slide-in drawer. In two-pane mode nothing is
     // covered, so the page must stay usable.
@@ -547,7 +566,10 @@ export default function JobBoard() {
       const res = await fetch(`${BACKEND}/jobs/${job.id}`)
       if (res.ok) {
         const full = await res.json()
-        setSelected(full)
+        // MERGE, don't replace: /jobs/:id returns one posting and knows nothing about
+        // the grouped `locations` the list built, so replacing here would wipe the
+        // location picker the instant the description finished loading.
+        setSelected(prev => ({ ...prev, ...full, locations: prev?.locations, locationCount: prev?.locationCount }))
       }
     } catch {
       // keep the preview we already have
@@ -590,19 +612,43 @@ export default function JobBoard() {
     ? DOMPurify.sanitize(selected.description)
     : ''
 
+  // A grouped job carries every location it was posted in. The student picks one and
+  // the Apply link switches to THAT posting — applying to the wrong city would be a
+  // silent failure, so the choice has to drive the link, not just the label.
+  const variants = selected?.locations?.length ? selected.locations : null
+  const chosen = variants ? (variants[locIndex] || variants[0]) : null
+  const applyUrl = chosen?.applyUrl || selected?.applyUrl
+  const shownLocation = chosen?.location || selected?.location
+
   const detailBody = selected && (
     <>
       <div className="jb-drawer-head">
         <button className="jb-close" onClick={closeJob}>×</button>
         <h2>{selected.title}</h2>
         <div className="co">{selected.company}</div>
-        <div className="loc">{shortLoc(selected.location)} · {timeAgo(selected.postedAt)}</div>
+        <div className="loc">{shortLoc(shownLocation)} · {timeAgo(selected.postedAt)}</div>
       </div>
+      {variants && variants.length > 1 && (
+        <div className="jb-locpick">
+          <div className="jb-locpick-label">Posted in {variants.length} locations — pick one to apply</div>
+          <div className="jb-locpick-row">
+            {variants.map((v, i) => (
+              <button
+                key={v.id || i}
+                className={`jb-locpick-btn ${i === locIndex ? 'on' : ''}`}
+                onClick={() => setLocIndex(i)}
+              >
+                {shortLoc(v.location)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="jb-drawer-actions">
         <button className="jb-btn-opt" onClick={() => optimizeFor(selected)}>
           <Sparkles size={14} /> Optimize my resume
         </button>
-        <a className="jb-btn-apply" href={selected.applyUrl} target="_blank" rel="noreferrer">Apply →</a>
+        <a className="jb-btn-apply" href={applyUrl} target="_blank" rel="noreferrer">Apply →</a>
       </div>
       {detailLoading ? (
         <div className="jb-desc-loading">Loading full description…</div>

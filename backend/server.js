@@ -661,12 +661,54 @@ app.get('/jobs', async (req, res) => {
       filter.postedAt = { $gte: new Date(Date.now() - days * 24 * 60 * 60 * 1000) }
     }
 
-    const total = await Job.countDocuments(filter)
-    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+    // Companies post the SAME role once per location (Roku "Senior Data Engineer" in
+    // San Jose and Austin are two Greenhouse rows). For a student scanning the board
+    // that is noise, so identical title+company rows are folded into ONE card that
+    // carries every location. Nothing is lost: each location keeps its own id and
+    // applyUrl, and the detail pane lets the student pick which one to apply to.
+    // NOTE: this means `total` counts GROUPS, not raw postings.
+    // Only the fields the list cards and detail header actually use. Sorting or grouping
+    // whole documents blows MongoDB's memory caps (32MB for $sort, 100MB for $group) at
+    // this collection size, and an inclusion projection is far smaller than merely
+    // dropping `description`. The full description is fetched separately by /jobs/:id.
+    const CARD_FIELDS = {
+      id: 1, title: 1, company: 1, companySlug: 1, location: 1, applyUrl: 1,
+      postedAt: 1, workType: 1, experienceLevel: 1, state: 1, isRemote: 1,
+      salaryMin: 1, salaryMax: 1, yearsMin: 1, yearsMax: 1, closed: 1,
+    }
+
+    // Grouping is done in Node (see groupDuplicates below) rather than with a $group
+    // stage: this collection is large enough that a full-collection $group/$sort blows
+    // MongoDB's in-memory aggregation caps on this Atlas tier. Duplicate postings sort
+    // next to each other (same company, same title, same timestamp), so folding them
+    // within the fetched page catches effectively all of them at a fraction of the cost.
+    // Trade-off: a job whose locations straddle a page boundary can still appear twice.
+    function groupDuplicates(rows) {
+      const out = []
+      const byKey = new Map()
+      for (const j of rows) {
+        const key = `${(j.title || '').toLowerCase()}|||${(j.company || '').toLowerCase()}`
+        const variant = {
+          id: j.id, location: j.location, applyUrl: j.applyUrl,
+          state: j.state, workType: j.workType, closed: j.closed,
+        }
+        const existing = byKey.get(key)
+        if (existing) {
+          existing.locations.push(variant)
+          existing.locationCount = existing.locations.length
+        } else {
+          const card = { ...j, locations: [variant], locationCount: 1 }
+          byKey.set(key, card)
+          out.push(card)
+        }
+      }
+      return out
+    }
 
     // The list cards never read `description` (only the detail view fetches it), and
     // descriptions are large HTML blobs, so drop it here to keep the payload light.
     let jobs
+    let sortStage
     if (words.length) {
       // Ranked search. Score is title-focused, because a student scanning results cares
       // about the ROLE matching, not the company name happening to contain a word:
@@ -706,8 +748,10 @@ app.get('/jobs', async (req, res) => {
       // an OPT clock — fresh listings first, best match at the top of each day — rather
       // than a month-old exact match camping above everything posted today.
       // Jobs with no postedAt sort last (null is lowest in a descending sort).
+      sortStage = { _tier: -1, _day: -1, _score: -1, postedAt: -1 }
       jobs = await Job.aggregate([
         { $match: filter },
+        { $project: CARD_FIELDS },
         { $addFields: {
             _score: { $add: score },
             _day: { $dateToString: { format: '%Y-%m-%d', date: '$postedAt' } },
@@ -719,14 +763,14 @@ app.get('/jobs', async (req, res) => {
             // "Software Engineer" and buried.
             _tier: { $add: tierWords.map(w => ({ $cond: [titleHas(w), 1, 0] })) },
         } },
-        // Fit first, then freshness inside each tier, then closeness of the title.
-        { $sort: { _tier: -1, _day: -1, _score: -1, postedAt: -1 } },
+        { $sort: sortStage },
         { $skip: (page - 1) * PAGE_SIZE },
         { $limit: PAGE_SIZE },
-        { $project: { description: 0, _score: 0, _day: 0, _tier: 0 } },
+        { $project: { _score: 0, _day: 0, _tier: 0 } },
       ])
     } else {
-      // No search term: plain newest-first, which the postedAt index serves directly.
+      // No search term: newest first.
+      sortStage = { postedAt: -1 }
       jobs = await Job.find(filter)
         .select('-description')
         .sort({ postedAt: -1 })
@@ -734,6 +778,14 @@ app.get('/jobs', async (req, res) => {
         .limit(PAGE_SIZE)
         .lean()
     }
+
+    jobs = groupDuplicates(jobs)
+
+    // Counts raw postings, not folded cards — an exact group count would need the same
+    // full-collection aggregation we just avoided. Only used for pagination, and the
+    // jobs-found number is not shown in the UI.
+    const total = await Job.countDocuments(filter)
+    const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
     res.json({ jobs, total, pages })
 
