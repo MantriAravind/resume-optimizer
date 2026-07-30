@@ -187,46 +187,223 @@ function isContractOrPartTime(plainText = '', title = '') {
 }
 
 // ── US LOCATION ──────────────────────────────────────────────────────────
-function isUSLocation(location = '') {
-  if (!location) return false
-  const lower = location.toLowerCase()
-  const FOREIGN_MARKERS = [
-    'emea','apac','latam','anz','international','united kingdom','canada',
-    'india','singapore','ireland','germany','australia','france','netherlands',
-    'spain','japan','china','brazil','mexico','poland','romania','ukraine',
-    'london','toronto','bangalore','dublin','berlin','sydney','paris',
-    'amsterdam','tokyo','mumbai','manila','warsaw','tel aviv',
-    'europe','asia','africa','oceania','remote international',
-    'remote - eu','remote-eu','remote – eu','vienna','austria'
-  ]
-  const hasForeign = FOREIGN_MARKERS.some(m => lower.includes(m))
-  const US_MARKERS = ['united states', ', us', 'usa', 'u.s.', 'remote - us', 'remote, us', 'us remote', 'remote (us', 'remote us']
-  const usStates = [
-    'alabama','alaska','arizona','arkansas','california','colorado','connecticut','delaware','florida','georgia',
-    'hawaii','idaho','illinois','indiana','iowa','kansas','kentucky','louisiana','maine','maryland','massachusetts',
-    'michigan','minnesota','mississippi','missouri','montana','nebraska','nevada','new hampshire','new jersey',
-    'new mexico','new york','north carolina','north dakota','ohio','oklahoma','oregon','pennsylvania','rhode island',
-    'south carolina','south dakota','tennessee','texas','utah','vermont','virginia','washington','west virginia',
-    'wisconsin','wyoming','district of columbia','san francisco','los angeles','chicago','seattle','boston',
-    'austin','denver','atlanta','miami'
-  ]
-  const hasUSState = usStates.some(s => lower.includes(s))
-  const hasUSMarker = US_MARKERS.some(m => lower.includes(m))
-  if (hasUSState || hasUSMarker) return true
-  if (hasForeign) return false
-  // "City, VA" style: a bare 2-letter US state code. extractState() already knows
-  // how to read these (with word boundaries). Checked AFTER the foreign markers so an
-  // explicit foreign name (e.g. "Berlin, DE") still wins over the ambiguous 2-letter code.
-  if (extractState(location)) return true
-  // "Remote EU" / "(Remote EU)" / "Remote UK" etc. — remote but an explicitly FOREIGN
-  // region. The bare-remote fallback below assumes remote = US, which wrongly kept these.
-  // (EMEA/APAC/Brazil are already caught above; this adds the region words that were not.)
-  if (/\bremote\b[\s\-–—,()\/|]*\b(eu|uk|apac|emea|latam|anz|europe|asia|africa|india|brazil|canada|mexico|ireland|germany|france|spain|italy|poland|ukraine|australia|singapore|japan|china|philippines|latin\s+america|middle\s+east|united\s+kingdom)\b/.test(lower)) return false
-  // Reversed order: region BEFORE "remote" — "UK (Remote)", "EU (Remote)", "India Remote".
-  // (The line above catches "Remote UK"; this catches the same regions written the other way.)
-  if (/\b(uk|eu|emea|apac|latam|anz|europe|asia|africa|india|brazil|canada|mexico|ireland|germany|france|spain|italy|poland|ukraine|australia|singapore|japan|china|philippines|united\s+kingdom)\b[\s,\/|()-]*remote\b/.test(lower)) return false
-  if (lower.includes('remote')) return true
+// ── LOCATION: allow-list ─────────────────────────────────────────────────────
+// This used to be a blocklist: keep everything unless it *looked* foreign. That leaked
+// five separate times ("Remote EU", "UK (Remote)", "Remote - EMEA", ...) because there
+// are endless ways to write a foreign location, and each new phrasing meant another
+// patch. So the question is flipped: a job is US only if it SHOWS a US signal.
+// Unrecognised phrasings now drop by default instead of leaking through.
+//
+// The order matters:
+//   1. STRONG US signal wins outright — a dual-location job like "London; New York"
+//      is genuinely open to a US applicant, so it stays.
+//   2. Explicit foreign, with no strong US signal → dropped.
+//   3. WEAK US signal (a bare 2-letter state code) → kept. Checked after foreign
+//      because codes collide with countries ("Munich, DE" is Germany, not Delaware).
+//   4. Only vague words ("Remote", "Hybrid", "Multiple locations") → kept, because
+//      silently deleting real US jobs is worse than showing an occasional foreign one.
+//      classifyLocation() reports these so the checker can surface the pile.
+//   5. Anything else → dropped. This is the whole point of the allow-list.
+
+const US_STRONG = [
+  'united states','u.s.a','usa','u.s.','us only','remote - us','remote, us','remote (us',
+  'remote us','us remote','anywhere in the us','nationwide','puerto rico',
+  'alabama','alaska','arizona','arkansas','california','colorado','connecticut','delaware',
+  'florida','georgia','hawaii','idaho','illinois','indiana','iowa','kansas','kentucky',
+  'louisiana','maine','maryland','massachusetts','michigan','minnesota','mississippi',
+  'missouri','montana','nebraska','nevada','new hampshire','new jersey','new mexico',
+  'new york','north carolina','north dakota','ohio','oklahoma','oregon','pennsylvania',
+  'rhode island','south carolina','south dakota','tennessee','texas','utah','vermont',
+  'virginia','washington','west virginia','wisconsin','wyoming','district of columbia',
+  'washington dc','washington d.c','san francisco','los angeles','san diego','san jose',
+  'chicago','seattle','boston','austin','denver','atlanta','miami','houston','dallas',
+  'phoenix','philadelphia','detroit','minneapolis','portland','charlotte','nashville',
+  'pittsburgh','baltimore','st. louis','salt lake city','kansas city','las vegas',
+  'san antonio','columbus','indianapolis','raleigh','orlando','tampa','sacramento',
+  'cincinnati','cleveland','milwaukee','new orleans','oklahoma city','albuquerque',
+  'tucson','omaha','boulder','palo alto','mountain view','sunnyvale','santa clara',
+  'menlo park','cupertino','redmond','bellevue','brooklyn','manhattan','arlington va',
+  // common US shorthand seen instead of a full city name
+  'nyc','new york city','sf bay','dc metro','d.c.','bronx','queens ny','staten island',
+  // more US cities/campuses surfaced by live samples
+  'el segundo','greensboro','midland','odessa','san angelo','fayetteville','temple tx',
+  'waco','abilene','amarillo','lubbock','wichita falls','tyler tx','beaumont','killeen',
+  'cornell university','nyu','new york university','harvard','stanford','mit ','yale',
+  'princeton university','columbia university','duke university','ucla','usc ','berkeley',
+
+  // "Parish" is a Louisiana-only administrative term — a reliable US signal.
+  'parish',
+  // US regional shorthand that appears instead of a city
+  'bay area','silicon valley','socal','norcal','tri-state','midwest','new england',
+  'east coast','west coast','pacific northwest','south florida','southern california',
+  'northern california','greater boston','greater seattle','dmv area','bay-area',
+  // more US cities seen in live samples
+  'fort lauderdale','boca raton','san luis obispo','delray beach','peabody','roslyn',
+  'new canaan','darien','greenwich','ardmore','cambridge','modesto','merced','flushing',
+  'jersey city','newark','hoboken','stamford','hartford','providence','albany','buffalo',
+  'rochester','syracuse','richmond','norfolk','virginia beach','charleston','savannah',
+  'jacksonville','st. petersburg','fort myers','naples fl','sarasota','gainesville',
+  'birmingham','montgomery','huntsville','memphis','knoxville','chattanooga','louisville',
+  'lexington','columbia','greenville','asheville','durham','chapel hill','wilmington',
+  'des moines','madison','green bay','ann arbor','grand rapids','lansing','toledo','akron',
+  'dayton','fort wayne','south bend','peoria','springfield','wichita','tulsa','little rock',
+  'shreveport','baton rouge','mobile','jackson ms','boise','spokane','tacoma','eugene',
+  'reno','fresno','bakersfield','stockton','irvine','pasadena','santa monica','long beach',
+  'anaheim','riverside','oakland','berkeley','santa barbara','ventura','carlsbad',
+  'scottsdale','mesa','chandler','colorado springs','fort collins','provo','ogden',
+  'anchorage','honolulu','el paso','laredo','corpus christi','arlington tx','plano',
+  'frisco','irving','fort worth','round rock','allen tx','mclean','reston','herndon',
+  'bethesda','rockville','annapolis','wilmington de','princeton','trenton','allentown',
+  'harrisburg','scranton','white plains','yonkers','stamford ct','norwalk',
+]
+
+// Country/region level. These OUTRANK a US city match, because plenty of US city names
+// also exist abroad — "Cambridge, UK" must not be kept just because Cambridge, MA exists.
+const FOREIGN_COUNTRIES = [
+  'emea','apac','latam','anz','international','united kingdom','uk','england','scotland',
+  'wales','ireland','canada','india','singapore','germany','australia','france','netherlands',
+  'spain','italy','portugal','sweden','norway','denmark','finland','switzerland','belgium',
+  'austria','poland','romania','ukraine','czech','hungary','greece','turkey','israel',
+  'japan','china','korea','taiwan','hong kong','thailand','vietnam','malaysia','indonesia',
+  'philippines','pakistan','bangladesh','sri lanka','new zealand','south africa','nigeria',
+  'kenya','egypt','brazil','brasil','mexico','argentina','chile','colombia','peru','uruguay',
+  'united arab emirates','saudi arabia','qatar','morocco','bulgaria','serbia','croatia',
+  'slovakia','slovenia','lithuania','latvia','estonia','iceland','luxembourg','malta',
+  'europe','asia','africa','oceania','latin america','middle east','worldwide',
+]
+
+const FOREIGN_MARKERS = [
+  'emea','apac','latam','anz','international','united kingdom','england','scotland','wales',
+  'canada','india','singapore','ireland','germany','australia','france','netherlands',
+  'spain','italy','portugal','sweden','norway','denmark','finland','switzerland','belgium',
+  'austria','poland','romania','ukraine','czech','hungary','greece','turkey','israel',
+  'japan','china','korea','taiwan','hong kong','thailand','vietnam','malaysia','indonesia',
+  'philippines','pakistan','bangladesh','sri lanka','new zealand','south africa','nigeria',
+  'kenya','egypt','brazil','mexico','argentina','chile','colombia','peru','uruguay',
+  'united arab emirates','saudi arabia','qatar','morocco',
+  'london','manchester','edinburgh','glasgow','dublin','belfast','toronto','vancouver',
+  'montreal','calgary','ottawa','bangalore','bengaluru','hyderabad','chennai','mumbai',
+  'pune','gurgaon','gurugram','noida','kolkata','ahmedabad','new delhi','berlin','munich',
+  'frankfurt','hamburg','cologne','stuttgart','sydney','melbourne','brisbane','perth',
+  'amsterdam','rotterdam','madrid','barcelona','lisbon','porto','stockholm','copenhagen',
+  'oslo','helsinki','zurich','geneva','brussels','prague','warsaw','krakow','budapest',
+  'bucharest','istanbul','dubai','abu dhabi','riyadh','doha','cairo','lagos','nairobi',
+  'tel aviv','tokyo','osaka','shanghai','beijing','shenzhen','seoul','taipei','bangkok',
+  'jakarta','manila','kuala lumpur','sao paulo','buenos aires','santiago','bogota',
+  'auckland','wellington','vienna','europe','asia','africa','oceania','latin america',
+  // added after a live sample showed these landing in `unknown` instead of `foreign`
+  'paris','milan','rome','naples','turin','florence','venice','sofia','bulgaria','serbia',
+  'belgrade','croatia','zagreb','slovakia','slovenia','lithuania','latvia','estonia',
+  'monterrey','guadalajara','fortaleza','curitiba','brasilia','recife','porto alegre',
+  'belo horizonte','medellin','lima','quito','caracas','panama','costa rica','guatemala',
+  'montevideo','asuncion','la paz','santo domingo','san salvador','tegucigalpa',
+  'remoto','hibrido','teletrabajo','anywhere in europe','anywhere in the world','worldwide',
+  'global remote','remote global','marseille','lyon','nice, france','bordeaux','toulouse',
+  'valencia','seville','malaga','bilbao','antwerp','ghent','utrecht','eindhoven','the hague',
+  'gothenburg','malmo','aarhus','bergen','tampere','basel','bern','lausanne','graz','salzburg',
+  'katowice','wroclaw','gdansk','poznan','brno','ostrava','cluj','timisoara','iasi',
+  'thessaloniki','ankara','izmir','jerusalem','haifa','beirut','amman','kuwait','bahrain',
+  'muscat','karachi','lahore','islamabad','dhaka','colombo','kathmandu','hanoi','ho chi minh',
+  'da nang','cebu','davao','surabaya','bandung','penang','johor','christchurch','hamilton',
+  'accra','kampala','dar es salaam','addis ababa','casablanca','tunis','algiers','durban',
+  'cape town','johannesburg','pretoria',
+  'middle east','remote international',
+]
+
+// Vague-but-plausibly-US phrasings. Kept (never silently deleted) and reported as
+// 'ambiguous' so the checker can show exactly what is landing here.
+const VAGUE_WORDS = /^(?:\s|remote|hybrid|on-?site|in-?office|flexible|anywhere|various|multiple|locations?|office|offices|home|based|work|from|field|travel|tbd|n\/?a|other|and|or|the|any|all|several|different|\d+|[-–—,;:.()\/|+&])+$/i
+
+// "São Paulo" must match "sao paulo", "Zürich" must match "zurich" — without this the
+// accented spelling falls through to `unknown` and looks like a lost US job.
+function deaccent(t) {
+  return t.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+}
+// Whole-word containment. Plain .includes() matched "Paris" inside Louisiana's
+// "Caddo Parish" and dropped real US jobs as French — every marker must sit on word
+// boundaries. Markers with their own punctuation (u.s., n/a) are matched loosely.
+function hasWord(haystack, needle) {
+  if (/[^a-z0-9 ]/.test(needle)) return haystack.includes(needle)
+  const i = haystack.indexOf(needle)
+  if (i === -1) return false
+  const before = i === 0 ? '' : haystack[i - 1]
+  const after = haystack[i + needle.length] || ''
+  return !/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(after)
+}
+
+// US at country/state level — the strongest signal, so a genuine dual-location job
+// ("San Francisco (USA), Freiburg (Germany)") is still kept.
+const US_COUNTRY_STATE = [
+  'united states','u.s.a','usa','u.s.','us only','remote - us','remote, us','remote (us',
+  'remote us','us remote','anywhere in the us','nationwide','puerto rico','parish',
+  'alabama','alaska','arizona','arkansas','california','colorado','connecticut','delaware',
+  'florida','georgia','hawaii','idaho','illinois','indiana','iowa','kansas','kentucky',
+  'louisiana','maine','maryland','massachusetts','michigan','minnesota','mississippi',
+  'missouri','montana','nebraska','nevada','new hampshire','new jersey','new mexico',
+  'new york','north carolina','north dakota','ohio','oklahoma','oregon','pennsylvania',
+  'rhode island','south carolina','south dakota','tennessee','texas','utah','vermont',
+  'virginia','washington','west virginia','wisconsin','wyoming','district of columbia',
+]
+
+function hasUSCountryOrState(lower) {
+  // US broadcast call signs start with K or W ("KWES-TV Midland-Odessa", "WFMY-TV").
+  // That prefix is a US-only convention, so it is a reliable signal for station jobs.
+  if (/\b[kw][a-z]{2,3}[-\s]?(tv|am|fm|dt)\b/.test(lower)) return true
+  if (US_COUNTRY_STATE.some(m => hasWord(lower, m))) return true
+  if (/(^|[^a-z])(u\.?s\.?a?)([^a-z]|$)/i.test(lower)) return true
+  if (/(^|[^\d])\d{5}(-\d{4})?([^\d]|$)/.test(lower) && /[a-z]/.test(lower)) return true
   return false
+}
+function hasForeignCountry(lower) {
+  return FOREIGN_COUNTRIES.some(m => hasWord(lower, m))
+}
+
+function hasStrongUS(lower) {
+  if (US_STRONG.some(m => hasWord(lower, m))) return true
+  // A US ZIP code is unambiguous. Street addresses ("210 Andover St, Peabody, MA 01960")
+  // are common on Greenhouse and were falling through to `unknown` — real US jobs lost.
+  if (/(^|[^\d])\d{5}(-\d{4})?([^\d]|$)/.test(lower) && /[a-z]/.test(lower)) return true
+  // Bare "US"/"U.S." as a whole word: "Work from Home - US (Central)", "Field - US".
+  // Word-boundaried so it can't fire inside words like "Aarhus" or "campus".
+  if (/(^|[^a-z])(u\.?s\.?a?)([^a-z]|$)/i.test(lower)) return true
+  // US-only timezone shorthand used on remote listings.
+  if (/\b(est|edt|cst|cdt|mst|mdt|pst|pdt|eastern|central|mountain|pacific)\s*(time|timezone|tz)?\b/.test(lower)
+      && /\b(remote|home|anywhere|wfh)\b/.test(lower)) return true
+  return false
+}
+function hasForeign(lower) {
+  // Louisiana is full of "... Parish", which must not read as Paris.
+  if (/\bparish\b/.test(lower)) return false
+  // "Remote EU" / "UK (Remote)" style, either word order
+  if (/\bremote\b[\s\-–—,()\/|]*\b(eu|uk|apac|emea|latam|anz|europe|asia|africa|india|brazil|canada|mexico|ireland|germany|france|spain|italy|poland|ukraine|australia|singapore|japan|china|philippines|latin\s+america|middle\s+east|united\s+kingdom)\b/.test(lower)) return true
+  if (/\b(uk|eu|emea|apac|latam|anz|europe|asia|africa|india|brazil|canada|mexico|ireland|germany|france|spain|italy|poland|ukraine|australia|singapore|japan|china|philippines|united\s+kingdom)\b[\s,\/|()-]*remote\b/.test(lower)) return true
+  return FOREIGN_MARKERS.some(m => hasWord(lower, m))
+}
+
+// Returns 'us' | 'weak-us' | 'foreign' | 'ambiguous' | 'unknown'.
+// Exported so filterCheck.mjs can report what the allow-list is actually dropping —
+// the whole risk of this approach is silently losing good US jobs, so it must be visible.
+function classifyLocation(location = '') {
+  if (!location) return 'unknown'
+  const lower = deaccent(location.toLowerCase())
+  // Precedence: US country/state  >  foreign country  >  US city  >  foreign city.
+  // Keeps dual-location US jobs while dropping "Cambridge, UK" and "Birmingham, UK".
+  if (hasUSCountryOrState(lower)) return 'us'
+  if (hasForeignCountry(lower)) return 'foreign'
+  if (hasStrongUS(lower)) return 'us'
+  if (hasForeign(lower)) return 'foreign'
+  if (extractState(location)) return 'weak-us'
+  // "…, MA 01960" / "Allen, TX; Remote" — a 2-letter state code that extractState's
+  // pattern misses because of what follows it.
+  if (/(^|[\s,])(a[klrz]|c[aot]|d[ce]|fl|ga|hi|i[adln]|k[sy]|la|m[adeinost]|n[cdehjmvy]|o[hkr]|pa|ri|s[cd]|t[nx]|ut|v[at]|w[aivy])([\s,;|]|$)/i.test(deaccent(location))) return 'weak-us'
+  const stripped = lower.replace(/\b(remote|hybrid|onsite|on-site)\b/g, ' ').trim()
+  if (!stripped || VAGUE_WORDS.test(lower)) return 'ambiguous'
+  return 'unknown'
+}
+
+function isUSLocation(location = '') {
+  const kind = classifyLocation(location)
+  return kind === 'us' || kind === 'weak-us' || kind === 'ambiguous'
 }
 
 // ── EXPERIENCE LEVEL (from title) ───────────────────────────────────────────
@@ -637,6 +814,7 @@ export {
   stripHtml,
   normalize,
   isUSLocation,
+  classifyLocation,
   isDisqualified,
   isContractOrPartTime,
   fetchGreenhouseCompany,

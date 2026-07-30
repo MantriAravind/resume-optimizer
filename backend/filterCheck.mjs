@@ -31,6 +31,7 @@ import {
   stripHtml,
   normalize,
   isUSLocation,
+  classifyLocation,
   isDisqualified,
   isContractOrPartTime,
   fetchGreenhouseCompany,
@@ -50,11 +51,11 @@ const RED_FLAGS = [
   { label: 'citizen',            re: /\bcitizen(ship)?\b/ },
   { label: 'clearance',          re: /\bclearance\b/ },
   { label: 'secret / ts-sci',    re: /\b(top\s+secret|secret\s+clearance|ts\/sci|ts-sci)\b/ },
-  { label: 'sponsor',            re: /\bsponsor(ship|ing|ed)?\b/ },
+  { label: 'visa sponsorship',   re: /\b(visa|h-?1b|opt|cpt|stem\s+opt|immigration|work\s+authoriz\w*|green\s+card|employment\s+authoriz\w*)\b[^.]{0,40}\bsponsor|\bsponsor(ship|ing|ed)?\b[^.]{0,40}\b(visa|h-?1b|opt|cpt|stem\s+opt|immigration|work\s+authoriz\w*|green\s+card|employment\s+authoriz\w*)\b/ },
   { label: 'green card',         re: /\bgreen\s+card\b/ },
   { label: 'permanent resident', re: /\bpermanent\s+resident/ },
   { label: 'ITAR / export-ctrl', re: /\b(itar|export[\s-]?control|ear\s+controlled|export\s+administration)/ },
-  { label: 'export (generic)',   re: /\bexport(s|ed|ing)?\b/ },   // noisy — delete this line if it floods
+  // (generic 'export' flag removed — pure noise; the ITAR / export-ctrl flag above still catches the real ones)
   { label: 'u.s. person',        re: /\b(u\.?\s?s\.?|united\s+states)\s+persons?\b/ },
   { label: 'polygraph',          re: /\bpolygraph\b/ },
   { label: 'public trust',       re: /\bpublic\s+trust\b/ },
@@ -109,6 +110,7 @@ const FOREIGN_CITY_HINTS = [
 ]
 function looksForeign(location = '') {
   const lower = location.toLowerCase()
+  if (/\bremote\b[\s\-–—,()\/|]*\b(eu|uk|apac|emea|latam|anz|europe|asia|africa|india|brazil|canada|mexico|ireland|germany|france|spain|italy|poland|ukraine|australia|singapore|japan|china|philippines|latin\s+america|middle\s+east|united\s+kingdom)\b/.test(lower)) return 'remote-foreign'
   for (const hint of FOREIGN_CITY_HINTS) {
     if (new RegExp('\\b' + hint + '\\b').test(lower)) return hint
   }
@@ -170,7 +172,7 @@ export function classifyJob(job) {
   const fullText  = `${job.title || ''} ${plainText}`
   const base = { title: job.title || '', location, plainText, applyUrl: job.absolute_url || '' }
 
-  if (location !== '' && !isUSLocation(location)) return { ...base, verdict: 'nonUS' }
+  if (location !== '' && !isUSLocation(location)) return { ...base, verdict: 'nonUS', locKind: classifyLocation(location) }
   if (isDisqualified(fullText))                   return { ...base, verdict: 'disqualified', hit: whichDisqualifier(fullText) }
   if (isContractOrPartTime(plainText, job.title || '')) return { ...base, verdict: 'contract' }
   return { ...base, verdict: 'passed', flags: scanRedFlags(plainText) }
@@ -250,6 +252,25 @@ export function buildReport(classified, meta = {}) {
       L.push('')
     })
   }
+
+  // The allow-list drops anything it does not recognise, so the risk is losing real US
+  // jobs silently. Show exactly what was dropped and why.
+  const dropped = nonUS
+  const byKind = {}
+  for (const j of dropped) { const k = j.locKind || '?'; (byKind[k] ||= []).push(j) }
+  L.push('---')
+  L.push('')
+  L.push(`## 🧭 Location allow-list — what got dropped (${dropped.length})`)
+  L.push('')
+  L.push('`foreign` = matched a known foreign name. `unknown` = no US signal recognised —')
+  L.push('THIS is the bucket to read: any real US job in here is being silently lost.')
+  L.push('')
+  Object.entries(byKind).sort((a, b) => b[1].length - a[1].length).forEach(([k, arr]) => {
+    L.push(`**${k}: ${arr.length}**`)
+    const sample = pick(arr, 25).map(j => j.location).filter(Boolean)
+    sample.forEach(loc => L.push(`- \`${loc}\``))
+    L.push('')
+  })
 
   L.push('---')
   L.push('')
@@ -363,7 +384,9 @@ async function main() {
   console.log(`✅ Done. ${classified.length} jobs from ${reached} companies.`)
   const foreignSlips = passed.filter(j => looksForeign(j.location))
   console.log(`   Passed ${passed.length} · Passed-but-flagged ${suspicious.length} · Passed-but-foreign ${foreignSlips.length}`)
+  const unknownDrops = nonUS.filter(j => j.locKind === 'unknown')
   console.log(`   Non-US ${nonUS.length} — of those, ${nonUSLooksUS.length} look US (maybe wrongly dropped)`)
+  console.log(`   Allow-list: ${unknownDrops.length} dropped as UNKNOWN (read these in the report)`)
   const bySlug = {}
   for (const j of nonUSLooksUS) { const k = j.slug || '(unknown)'; bySlug[k] = (bySlug[k] || 0) + 1 }
   const top = Object.entries(bySlug).sort((a, b) => b[1] - a[1]).slice(0, 5)
