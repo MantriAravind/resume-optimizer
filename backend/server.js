@@ -630,6 +630,15 @@ app.get('/jobs', async (req, res) => {
     const esc = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const q = (req.query.query || '').trim()
     const words = q ? q.split(/\s+/).filter(Boolean).slice(0, 6) : []
+    // Seniority/filler words are weak signals — "Senior Software Engineer" should NOT
+    // rank alongside "Data Engineer" for the search "senior data engineer" just because
+    // both matched two words. Only the real role words decide relevance; seniority still
+    // adds to the score, so "Senior Data Engineer" beats "Data Engineer" on an exact ask.
+    const GENERIC = new Set(['senior','sr','junior','jr','staff','lead','principal','entry',
+      'mid','level','i','ii','iii','iv','associate','head','chief','director','manager',
+      'intern','internship','of','the','and','a','an','in','for','at'])
+    const coreWords = words.filter(w => !GENERIC.has(w.toLowerCase()))
+    const tierWords = coreWords.length ? coreWords : words
     if (words.length) {
       // ANY word is enough to be included — partial matches ("Analytics Engineer" for
       // "data engineer") still appear, but the scoring below pushes them to the bottom.
@@ -702,12 +711,13 @@ app.get('/jobs', async (req, res) => {
         { $addFields: {
             _score: { $add: score },
             _day: { $dateToString: { format: '%Y-%m-%d', date: '$postedAt' } },
-            // Relevance TIER comes before date. Without this, today's "Embedded Software
-            // Engineer" would outrank yesterday's "Data Engineer" — the list fills with
-            // jobs that don't fit. Tier 2 = every search word is in the title, tier 1 =
-            // every word appears somewhere (title or company), tier 0 = only some words.
-            _tier: { $cond: [{ $and: words.map(titleHas) }, 2,
-                     { $cond: [{ $and: words.map(anyHas) }, 1, 0] }] },
+            // Relevance TIER comes before date, so today's "Embedded Software Engineer"
+            // can't outrank yesterday's "Data Engineer". The tier is HOW MANY of the
+            // search words are in the title, not all-or-nothing: searching "senior data
+            // engineer" puts 3/3 matches first, then "Data Engineer" (2/3), then 1/3
+            // stragglers. Without this, "Data Engineer" would be lumped in with
+            // "Software Engineer" and buried.
+            _tier: { $add: tierWords.map(w => ({ $cond: [titleHas(w), 1, 0] })) },
         } },
         // Fit first, then freshness inside each tier, then closeness of the title.
         { $sort: { _tier: -1, _day: -1, _score: -1, postedAt: -1 } },
