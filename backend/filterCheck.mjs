@@ -139,13 +139,59 @@ function snippet(original, index, matchLen = 0, pad = 55) {
 }
 
 // Which red flags a passed job contains, with context for each (distinct labels).
+// Equal-opportunity boilerplate ("we do not discriminate on the basis of race, religion,
+// alienage or citizenship status...") is the OPPOSITE of a restriction, but it contains
+// the same words. One company's standard footer used to fill 39 of 50 slots in the
+// suspicious list and buried a real leak underneath. These phrases mark that context.
+const EEO_CONTEXT = [
+  'without regard to', 'regardless of', 'equal opportunity', 'equal employment',
+  'does not discriminate', 'do not discriminate', 'discriminat', 'protected veteran',
+  'affirmative action', 'genetic information', 'gender identity', 'sexual orientation',
+  'marital status', 'alienage', 'protected characteristic', 'protected by federal',
+  'protected class', 'eeo', 'diversity, equity',
+]
+
+// Is the match sitting inside an anti-discrimination sentence? Looks at a window either
+// side, since the list of protected classes can be long.
+function inEEOContext(lower, index, matchLen) {
+  // Sentence-bounded, not a fixed window: a real requirement often sits right after the
+  // EEO paragraph ("...we do not discriminate. This role requires U.S. citizenship."),
+  // and a wide window would swallow both and hide the real one.
+  const before = lower.slice(Math.max(0, index - 400), index)
+  const startRel = Math.max(before.lastIndexOf('.'), before.lastIndexOf('\n'),
+                            before.lastIndexOf(';'), before.lastIndexOf('•'))
+  const from = startRel === -1 ? Math.max(0, index - 400) : index - (before.length - startRel) + 1
+  const rest = lower.slice(index + matchLen, index + matchLen + 400)
+  const endRel = rest.search(/[.\n;•]/)
+  const to = endRel === -1 ? Math.min(lower.length, index + matchLen + 400) : index + matchLen + endRel
+  const sentence = lower.slice(Math.max(0, from), to)
+  return EEO_CONTEXT.some(p => sentence.includes(p))
+}
+
+// Flags where boilerplate is the usual false positive. A real requirement elsewhere in
+// the posting still fires — we skip the flag only if EVERY mention is boilerplate.
+const EEO_PRONE = new Set(['citizen', 'federal (agency)'])
+
 export function scanRedFlags(plainText = '') {
   const lower = plainText.toLowerCase()
   const hits = []
   const seen = new Set()
   for (const { label, re } of RED_FLAGS) {
-    const m = lower.match(re)
-    if (!m || seen.has(label)) continue
+    if (seen.has(label)) continue
+    let m
+    if (EEO_PRONE.has(label)) {
+      // walk every occurrence and keep the first that is NOT boilerplate
+      const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g')
+      let found = null, x
+      while ((x = g.exec(lower)) !== null) {
+        if (!inEEOContext(lower, x.index, x[0].length)) { found = x; break }
+        if (x.index === g.lastIndex) g.lastIndex++
+      }
+      m = found
+    } else {
+      m = lower.match(re)
+    }
+    if (!m) continue
     seen.add(label)
     hits.push({ label, context: snippet(plainText, m.index, m[0].length) })
     if (hits.length >= MAX_FLAGS_PER_JOB) break

@@ -99,13 +99,71 @@ const DISQUALIFIER_PATTERNS = [
   /\b(must\s+not|not|does\s+not|will\s+not|cannot|can not)\s+require\s+(visa\s+)?sponsorship\b/,
   /\bsponsorship\s+(now\s+or\s+in\s+the\s+future|in\s+the\s+future)\b/,
   /\bmust\s+be\s+a?\s*(lawful\s+)?permanent\s+residents?\b/,
+  // "work authorization that does not now or in the future require sponsorship of a visa"
+  // — a no-sponsorship demand written as a property of the candidate. Found on 53 jobs.
+  /\bdoes\s+not\s+(now\s+(and|or)\s+in\s+the\s+future\s+)?require\s+(the\s+)?sponsorship\b/,
+  /\bwill\s+not\s+require\s+(visa\s+|immigration\s+|employer\s+)?sponsorship\b/,
+  // Bare "U.S. Citizen" in an eligibility list ("Eligibility Requirements: US Citizen",
+  // "U.S. Citizen (no dual citizenship)"). Excludes "citizenship status", which is EEO
+  // boilerplate rather than a requirement.
+  /\b(u\.?\s?s\.?|united\s+states|american)\s+citizens?\b(?!\s*(status|hip))/,
+  // Clearance levels named without the word "security": "Active Secret or higher
+  // clearance", "TS clearance with SCI eligibility".
+  /\b(top\s+secret|ts\/?sci|ts|sci|secret|confidential)\b[^.]{0,25}\bclearance\b/,
+  /\bclearance\b[^.]{0,25}\b(sci|ts\/?sci|top\s+secret|polygraph)\b/,
+  // "can not take over, transfer, or sponsor any visa type" — the negation attaches to a
+  // LIST of verbs, so the verb-adjacent patterns above miss it. Anchored on "or sponsor"
+  // so a positive sentence ("we cannot guarantee timelines, we support sponsorship")
+  // cannot match.
+  /\b(can\s?not|cannot|will\s+not|unable\s+to|do(es)?\s+not)\b[^.]{0,60}\bor\s+sponsor\b/,
+  // "must be able to fully access information and technology subject to US export
+  // controls" — an export-control gate. Access is limited to U.S. Persons, which an F-1
+  // student is not, so this excludes the student even though no visa word appears.
+  /\bsubject\s+to\s+(u\.?\s?s\.?\s+|united\s+states\s+|american\s+)?export\s+control/,
+  /\baccess\b[^.]{0,60}\bexport\s+control/,
+  // Bare "U.S. Person status" listed as a requirement (ITAR). A U.S. Person is a citizen,
+  // green-card holder or asylee — never an F-1 student — so this is a hard exclusion.
+  /\bu\.?\s?s\.?\s+person(s)?\s+(status|requirement|only|eligibility)\b/,
+  // "required that this candidate be a US citizen" — a citizenship demand without the
+  // "must be" wording the patterns above look for.
+  /\b(be|being|is)\s+an?\s+(u\.?\s?s\.?|united\s+states|american)\s+citizens?\b/,
+  // "US citizens and green card holders" — phrased as who may apply, not as a "must be".
+  /\b(u\.?\s?s\.?|united\s+states|american)\s+citizens?\s+(and|or|\/)\s*(lawful\s+)?(permanent\s+residents?|green\s+card\s+holders?)\b/,
+  // "authorized to work in the United States WITHOUT the need for work visa or residency
+  // sponsorship" — the qualifier list varies too much to enumerate, so anchor on the work-
+  // authorisation wording. Requiring that anchor keeps positives like "relocation without
+  // cost, plus visa sponsorship" from matching.
+  /\b(authoriz\w+|eligible|legally\s+entitled|permitted)\b[^.]{0,100}\bwithout\b[^.]{0,60}\bsponsorship\b/,
+  // "is not CURRENTLY able to offer sponsorship" — an adverb between "not" and "able to"
+  // broke the tighter pattern above. Allow a couple of filler words.
+  /\bnot\s+(\w+\s+){0,3}able\s+to\s+(offer|provide|sponsor|support|extend|assist\s+with)\b/,
+  // Work authorisation for a FOREIGN country as the requirement ("Eligible to work in
+  // Germany") — a US-based student cannot meet it. US wording is excluded.
+  /\b(eligible|authoriz\w+|permitted|right)\s+to\s+work\s+in\s+(?!the\s+us|the\s+united\s+states|us\b|usa\b)(the\s+)?(uk|eu|united\s+kingdom|germany|france|spain|italy|netherlands|ireland|poland|portugal|sweden|canada|india|australia|singapore|japan|brazil|mexico|switzerland|belgium|austria|denmark|norway|finland|romania|ukraine|israel|turkey|czech)\b/,
+  // "No H-1B, OPT, or visa sponsorship will be provided or accepted." — a flat refusal
+  // phrased as a noun, which none of the verb-based patterns above catch.
+  /\bno\s+(h-?1b|opt|cpt|f-?1|tn|e-?3|visa|immigration|employment|work)\b[^.]{0,60}\bsponsorship\b/,
+  // DoD SkillBridge places transitioning US service members — active-duty US military
+  // service is a hard prerequisite no international student can meet.
+  /\bskillbridge\b/,
+  /\b(currently\s+)?serving\s+on\s+active\s+duty\b/,
+  // Bare "US citizenship" as a listed requirement. Greenhouse flattens bullet lists, so
+  // these arrive as "...up to 20% of the time US citizenship Bachelor's degree...", with
+  // none of the "must be a" wording the patterns above expect. Found live on 10 Esri
+  // jobs. "citizenship status" is excluded — that is EEO boilerplate, not a requirement.
+  /\b(u\s?s|u\.s\.|united states|american)\s+citizenship\b(?!\s+status)/,
+  // Public Trust / suitability determinations are US-government-only, and a polygraph
+  // requirement is likewise unavailable to a visa holder.
+  /\bpublic\s+trust\b[^.]{0,60}\b(position|clearance|eligib|determination|investigation|background|suitability|required)/,
+  /\b(obtain|maintain|hold|eligible\s+for|able\s+to\s+obtain)\b[^.]{0,40}\bpublic\s+trust\b/,
+  /\bpolygraph\b/,
   // ---- Hedged / softened non-sponsorship wording (found via a live Roblox posting) ----
   // Catches "may not be able to ... support future H-1B sponsorship" and the coordinated
   // "work authorization related to certain U.S. visa categories" phrasing the tighter
   // patterns above miss. Tuned NOT to fire on positives ("we support sponsorship",
   // "does not support Internet Explorer").
   /\bwork\s+authorization\s+related\s+to\s+(certain\s+)?(us|u s|united states)?\s*visa\s+categor/,
-  /\b(will\s+not|cannot|can\s?not|unable\s+to|not\s+able\s+to|does\s+not|do\s+not|won'?t|are\s+not\s+able\s+to|is\s+not\s+able\s+to|not\s+be\s+able\s+to|may\s+not\s+be\s+able\s+to)\s+support\s+(work\s+|visa\s+|h-?1b\s+|immigration\s+|future\s+)*sponsorship\b/,
+  /\b(will\s+not|cannot|can\s?not|unable\s+to|not\s+able\s+to|does\s+not|do\s+not|won'?t|are\s+not\s+able\s+to|is\s+not\s+able\s+to|not\s+be\s+able\s+to|may\s+not\s+be\s+able\s+to)\s+support\s+(work\s+|visa\s+|h-?1b\s+|immigration\s+|future\s+)*sponsorships?\b/,
   // "without ... visa sponsorship" with an intervening qualifier (Alumni Ventures:
   // "without current or future employer-sponsored visa sponsorship"). Requires a
   // visa/employer qualifier before "sponsorship", so positives like "relocation without
@@ -358,6 +416,21 @@ function hasUSCountryOrState(lower) {
 function hasUSZip(lower) {
   return /(^|[^\d])\d{5}(-\d{4})?([^\d]|$)/.test(lower) && /[a-z]/.test(lower)
 }
+// City names that exist BOTH abroad and in the US. For these, a US state code wins
+// ("Brisbane, CA" is California, "Venice, CA" is Los Angeles). Every other foreign city
+// beats a state code, because "Munich, DE" is Germany, not Delaware — some companies
+// write every European office that way.
+const ALSO_US_CITY_NAMES = new Set([
+  'brisbane','venice','cambridge','birmingham','athens','paris','berlin','moscow','dublin',
+  'naples','rome','vienna','milan','toledo','manchester','lima','hamburg','odessa','york',
+  'glasgow','oxford','windsor','richmond','florence','madrid','lebanon','versailles',
+  'st. petersburg','london','bristol','dover','plymouth','belfast','geneva','warsaw',
+])
+// Returns the matched foreign city name, or null.
+function foreignCityMatch(lower) {
+  for (const m of FOREIGN_MARKERS) if (hasWord(lower, m)) return m
+  return null
+}
 function hasForeignCountry(lower) {
   return FOREIGN_COUNTRIES.some(m => hasWord(lower, m))
 }
@@ -397,10 +470,16 @@ function classifyLocation(location = '') {
   // Foreign COUNTRIES were already handled above, so "Brisbane, Australia" still drops.
   // Accepted residual: a foreign city with a country code that collides with a state
   // ("Munich, DE") reads as US. Rare in practice; the checker's foreign-slip list shows it.
+  // An unambiguous foreign city outranks a bare state code.
+  const fc = foreignCityMatch(lower)
+  if (fc && !ALSO_US_CITY_NAMES.has(fc)) return 'foreign'
   if (extractState(location)) return 'weak-us'
   // "…, MA 01960" / "Allen, TX; Remote" — a 2-letter state code that extractState's
   // pattern misses because of what follows it.
-  if (/(^|[\s,])(a[klrz]|c[aot]|d[ce]|fl|ga|hi|i[adln]|k[sy]|la|m[adeinost]|n[cdehjmvy]|o[hkr]|pa|ri|s[cd]|t[nx]|ut|v[at]|w[aivy])([\s,;|]|$)/i.test(deaccent(location))) return 'weak-us'
+  // The code must FOLLOW A COMMA ("Reston, VA"). Allowing a bare space matched the
+  // English words in "Sydney Or Melbourne" and "Dublin OR London" as Oregon, and
+  // "IN - Bengaluru" as Indiana — real foreign jobs kept as US.
+  if (/,\s*(a[klrz]|c[aot]|d[ce]|fl|ga|hi|i[adln]|k[sy]|la|m[adeinost]|n[cdehjmvy]|o[hkr]|pa|ri|s[cd]|t[nx]|ut|v[at]|w[aivy])([\s,;|]|$)/i.test(deaccent(location))) return 'weak-us'
   if (hasForeign(lower)) return 'foreign'
   // ZIP is checked LAST among place signals: France, Germany and Spain also use 5-digit
   // postal codes, so "75009, Paris" must be caught as foreign before the digits count.
