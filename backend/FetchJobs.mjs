@@ -351,8 +351,12 @@ function hasUSCountryOrState(lower) {
   if (/\b[kw][a-z]{2,3}[-\s]?(tv|am|fm|dt)\b/.test(lower)) return true
   if (US_COUNTRY_STATE.some(m => hasWord(lower, m))) return true
   if (/(^|[^a-z])(u\.?s\.?a?)([^a-z]|$)/i.test(lower)) return true
-  if (/(^|[^\d])\d{5}(-\d{4})?([^\d]|$)/.test(lower) && /[a-z]/.test(lower)) return true
   return false
+}
+// A 5-digit postal code only means "US" once an explicit foreign country has been ruled
+// out — France, Germany and Spain all use 5-digit codes too.
+function hasUSZip(lower) {
+  return /(^|[^\d])\d{5}(-\d{4})?([^\d]|$)/.test(lower) && /[a-z]/.test(lower)
 }
 function hasForeignCountry(lower) {
   return FOREIGN_COUNTRIES.some(m => hasWord(lower, m))
@@ -360,9 +364,6 @@ function hasForeignCountry(lower) {
 
 function hasStrongUS(lower) {
   if (US_STRONG.some(m => hasWord(lower, m))) return true
-  // A US ZIP code is unambiguous. Street addresses ("210 Andover St, Peabody, MA 01960")
-  // are common on Greenhouse and were falling through to `unknown` — real US jobs lost.
-  if (/(^|[^\d])\d{5}(-\d{4})?([^\d]|$)/.test(lower) && /[a-z]/.test(lower)) return true
   // Bare "US"/"U.S." as a whole word: "Work from Home - US (Central)", "Field - US".
   // Word-boundaried so it can't fire inside words like "Aarhus" or "campus".
   if (/(^|[^a-z])(u\.?s\.?a?)([^a-z]|$)/i.test(lower)) return true
@@ -391,11 +392,19 @@ function classifyLocation(location = '') {
   if (hasUSCountryOrState(lower)) return 'us'
   if (hasForeignCountry(lower)) return 'foreign'
   if (hasStrongUS(lower)) return 'us'
-  if (hasForeign(lower)) return 'foreign'
+  // A US state code outranks a foreign CITY name: "Brisbane, CA" is California, and
+  // "Venice, CA" is Los Angeles — both were being dropped as Australia and Italy.
+  // Foreign COUNTRIES were already handled above, so "Brisbane, Australia" still drops.
+  // Accepted residual: a foreign city with a country code that collides with a state
+  // ("Munich, DE") reads as US. Rare in practice; the checker's foreign-slip list shows it.
   if (extractState(location)) return 'weak-us'
   // "…, MA 01960" / "Allen, TX; Remote" — a 2-letter state code that extractState's
   // pattern misses because of what follows it.
   if (/(^|[\s,])(a[klrz]|c[aot]|d[ce]|fl|ga|hi|i[adln]|k[sy]|la|m[adeinost]|n[cdehjmvy]|o[hkr]|pa|ri|s[cd]|t[nx]|ut|v[at]|w[aivy])([\s,;|]|$)/i.test(deaccent(location))) return 'weak-us'
+  if (hasForeign(lower)) return 'foreign'
+  // ZIP is checked LAST among place signals: France, Germany and Spain also use 5-digit
+  // postal codes, so "75009, Paris" must be caught as foreign before the digits count.
+  if (hasUSZip(lower)) return 'us'
   const stripped = lower.replace(/\b(remote|hybrid|onsite|on-site)\b/g, ' ').trim()
   if (!stripped || VAGUE_WORDS.test(lower)) return 'ambiguous'
   return 'unknown'
