@@ -755,13 +755,23 @@ app.get('/jobs', async (req, res) => {
         { $addFields: {
             _score: { $add: score },
             _day: { $dateToString: { format: '%Y-%m-%d', date: '$postedAt' } },
-            // Relevance TIER comes before date, so today's "Embedded Software Engineer"
-            // can't outrank yesterday's "Data Engineer". The tier is HOW MANY of the
-            // search words are in the title, not all-or-nothing: searching "senior data
-            // engineer" puts 3/3 matches first, then "Data Engineer" (2/3), then 1/3
-            // stragglers. Without this, "Data Engineer" would be lumped in with
-            // "Software Engineer" and buried.
-            _tier: { $add: tierWords.map(w => ({ $cond: [titleHas(w), 1, 0] })) },
+            // Relevance tiers, strongest first. A plain word count treated "Senior
+            // DataOps Engineer" as an equal match for "data engineer" — DataOps merely
+            // CONTAINS "data" — and then a few hours of freshness decided the order.
+            // A better title should outrank a fresher one.
+            //   4  title IS the query               "Data Engineer"
+            //   3  title contains the whole phrase  "Senior Data Engineer"
+            //   2  all core words as WHOLE words    "Data Platform Engineer"
+            //   1  all core words, substring only   "Senior DataOps Engineer"
+            //   0  only some words                  "Analytics Engineer"
+            _tier: { $switch: { branches: [
+              { case: { $regexMatch: { input: '$title', regex: '^\\s*' + phrase + '\\s*$', options: 'i' } }, then: 4 },
+              // Phrase must end on a word boundary, so "Data Engineering" does not count
+              // as containing "data engineer".
+              { case: { $regexMatch: { input: '$title', regex: '(^|[^a-z])' + phrase + '([^a-z]|$)', options: 'i' } }, then: 3 },
+              { case: { $and: tierWords.map(titleHasWord) }, then: 2 },
+              { case: { $and: tierWords.map(titleHas) }, then: 1 },
+            ], default: 0 } },
         } },
         { $sort: sortStage },
         { $skip: (page - 1) * PAGE_SIZE },
