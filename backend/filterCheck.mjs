@@ -147,6 +147,10 @@ const EEO_CONTEXT = [
   'without regard to', 'regardless of', 'equal opportunity', 'equal employment',
   'does not discriminate', 'do not discriminate', 'discriminat', 'protected veteran',
   'affirmative action', 'genetic information', 'gender identity', 'sexual orientation',
+  // E-Verify / Form I-9 text appears in nearly every US posting and is not a restriction
+  // — it is the standard employment-eligibility notice. It was filling 44 of 112 slots.
+  'e-verify', 'everify', 'form i-9', 'i-9', 'employment eligibility verification',
+  'right to work poster', 'social security administration', 'department of homeland',
   'marital status', 'alienage', 'protected characteristic', 'protected by federal',
   'protected class', 'eeo', 'diversity, equity',
 ]
@@ -172,6 +176,25 @@ function inEEOContext(lower, index, matchLen) {
 // the posting still fires — we skip the flag only if EVERY mention is boilerplate.
 const EEO_PRONE = new Set(['citizen', 'federal (agency)'])
 
+// Ordinary business phrases that happen to contain a flag word. Checked on the sentence
+// around the match, so a real requirement elsewhere in the posting still fires.
+const BENIGN_PHRASES = {
+  'citizen': ['citizen engagement', 'citizen experience', 'citizen services', 'citizen-facing',
+              'citizen data scientist', 'citizens of the world', 'good corporate citizen'],
+  'clearance': ['regulatory clearance', 'fda clearance', '510(k)', 'customs clearance',
+                'line clearance', 'inventory clearance', 'clearance sale', 'creepage',
+                'clearance to see clients', 'background check', 'clearance risk'],
+  'defense agency': ['astronaut training', 'space center', 'nasa attractions', 'near nasa'],
+}
+function isBenign(label, lower, index, matchLen) {
+  const list = BENIGN_PHRASES[label]
+  if (!list) return false
+  const from = Math.max(0, index - 60)
+  const to = Math.min(lower.length, index + matchLen + 60)
+  const around = lower.slice(from, to)
+  return list.some(p => around.includes(p))
+}
+
 export function scanRedFlags(plainText = '') {
   const lower = plainText.toLowerCase()
   const hits = []
@@ -179,12 +202,12 @@ export function scanRedFlags(plainText = '') {
   for (const { label, re } of RED_FLAGS) {
     if (seen.has(label)) continue
     let m
-    if (EEO_PRONE.has(label)) {
+    if (EEO_PRONE.has(label) || BENIGN_PHRASES[label]) {
       // walk every occurrence and keep the first that is NOT boilerplate
       const g = new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g')
       let found = null, x
       while ((x = g.exec(lower)) !== null) {
-        if (!inEEOContext(lower, x.index, x[0].length)) { found = x; break }
+        if (!inEEOContext(lower, x.index, x[0].length) && !isBenign(label, lower, x.index, x[0].length)) { found = x; break }
         if (x.index === g.lastIndex) g.lastIndex++
       }
       m = found

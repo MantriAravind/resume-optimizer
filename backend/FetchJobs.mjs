@@ -86,7 +86,9 @@ const DISQUALIFIER_PATTERNS = [
   /\b(visa\s+)?sponsorship\s+(is\s+)?(not\s+available|unavailable)\b/,
   /\bwithout\s+(employer\s+)?sponsorship\b/,
   /\bmust\s+be\s+(legally\s+|lawfully\s+)?authorized\s+to\s+work\b[^.]{0,40}\bwithout\b/,
-  /\bnot\s+eligible\s+for\s+(\w+\s+){0,3}sponsorship\b/,
+  // Allow a longer qualifier run: "not eligible for employment-based immigration
+  // sponsorship" has four words between "for" and "sponsorship".
+  /\bnot\s+eligible\s+for\s+([\w-]+\s+){0,5}sponsorship\b/,
   /\bineligible\s+for\s+(\w+\s+){0,3}sponsorship\b/,
   /\bno\s+h-?1b\s+or\s+opt\s+(visa\s+)?sponsorship\b/,
   /\bregret\s+that\s+we\s+are\s+unable\s+to\s+(offer|provide)/,
@@ -116,6 +118,21 @@ const DISQUALIFIER_PATTERNS = [
   // so a positive sentence ("we cannot guarantee timelines, we support sponsorship")
   // cannot match.
   /\b(can\s?not|cannot|will\s+not|unable\s+to|do(es)?\s+not)\b[^.]{0,60}\bor\s+sponsor\b/,
+  // "We do not currently sponsor immigration visas" — negation + SPONSOR as a verb with
+  // no "sponsorship" noun, so the noun-anchored patterns miss it.
+  /\b(do(es)?\s+not|will\s+not|cannot|can\s?not|are\s+not|is\s+not)\s+(currently\s+|presently\s+|at\s+this\s+time\s+)?sponsor\b/,
+  // "must be U.S. work authorized with no current or future sponsorship needs"
+  /\bno\s+(current\s+(or|and)\s+future\s+|future\s+|ongoing\s+)?sponsorship\s+(need|requirement)/,
+  // "US Person; clearance eligible" — a bare ITAR requirement in a semicolon list, with
+  // none of the "must be a" wording the other U.S. Person patterns expect.
+  /\bu\.?\s?s\.?\s+person\b\s*[;,:]?\s*(clearance|security|itar|eligib)/,
+  /\bclearance\s+eligib\w+/,
+  // "we are not able to consider applicants that require sponsorship, now or in the
+  // future" — the negation attaches to CONSIDER (the applicant), not to a sponsorship
+  // verb, so the verb-anchored patterns miss it entirely. Found on 41 jobs.
+  /\b(not\s+(\w+\s+){0,3}able\s+to|cannot|can\s?not|unable\s+to|do(es)?\s+not|will\s+not)\s+(consider|accept|hire|employ|entertain|review)\b[^.]{0,80}\b(require|requiring|need|needing|request)\w*\s+(visa\s+|immigration\s+|employer\s+|work\s+)?sponsorship\b/,
+  // Same idea, reversed: "applicants requiring sponsorship will not be considered".
+  /\b(requir\w+|need\w+)\s+(visa\s+|immigration\s+|employer\s+|work\s+)?sponsorship\b[^.]{0,60}\b(will\s+not|cannot|can\s?not)\s+be\s+(considered|accepted|hired|employed)\b/,
   // "must be able to fully access information and technology subject to US export
   // controls" — an export-control gate. Access is limited to U.S. Persons, which an F-1
   // student is not, so this excludes the student even though no visa word appears.
@@ -291,6 +308,10 @@ const US_STRONG = [
 
   // "Parish" is a Louisiana-only administrative term — a reliable US signal.
   'parish',
+  // Arizona and other small US cities found in the allow-list's `unknown` bucket
+  'sierra vista','flagstaff','kingman','yuma','casa grande','bullhead city','prescott',
+  'lake havasu','sedona','tempe','glendale az','peoria az','surprise az','goodyear',
+  'maricopa','san tan valley','oro valley','marana','buckeye','avondale','apache junction',
   // US regional shorthand that appears instead of a city
   'bay area','silicon valley','socal','norcal','tri-state','midwest','new england',
   'east coast','west coast','pacific northwest','south florida','southern california',
