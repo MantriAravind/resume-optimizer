@@ -902,6 +902,40 @@ async function fetchAllJobs() {
     }
   }
 
+  // ── AGE PURGE ───────────────────────────────────────────────────────────────
+  // A posting older than two weeks has usually collected hundreds of applications,
+  // and students on an OPT clock are better served by a smaller, fresher board than
+  // a large stale one. Accepted cost: a few genuinely-open older roles are lost.
+  //
+  // Same guard as the sweep — abort if the share is implausible — but with a much
+  // higher ceiling, because the FIRST run legitimately clears months of backlog and
+  // a 25% limit would block it forever. Lower MAX_PURGE_SHARE to ~0.25 once the
+  // board is steady, so a date bug can't quietly empty it.
+  const MAX_AGE_DAYS = 14
+  const MAX_PURGE_SHARE = 0.90
+  console.log(`\n📅 Removing jobs posted more than ${MAX_AGE_DAYS} days ago...`)
+
+  const cutoff = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000)
+  // Jobs with no postedAt are left alone: unknown age is not the same as old.
+  const oldFilter = { postedAt: { $ne: null, $lt: cutoff } }
+  const totalJobs = await Job.countDocuments({})
+  const oldTotal = await Job.countDocuments(oldFilter)
+  const oldShare = totalJobs ? oldTotal / totalJobs : 0
+  let purged = 0
+
+  console.log(`   Cutoff: ${cutoff.toISOString().slice(0, 10)}  ·  ${oldTotal} of ${totalJobs} jobs are older (${Math.round(oldShare * 100)}%)`)
+
+  if (oldTotal === 0) {
+    console.log('   ✅ Nothing older than the cutoff.')
+  } else if (oldShare > MAX_PURGE_SHARE) {
+    console.log(`   🛑 ABORTED: that is over ${Math.round(MAX_PURGE_SHARE * 100)}% of the board — likely a date bug, not real age.`)
+    console.log('      Nothing was deleted. Investigate before the next run.')
+  } else {
+    const r = await Job.deleteMany(oldFilter)
+    purged = r.deletedCount || 0
+    console.log(`   🗑️  Removed ${purged} jobs older than ${MAX_AGE_DAYS} days.`)
+  }
+
   console.log(`\n✅ Done!`)
   console.log(`   💾 Saved:              ${saved}`)
   console.log(`   🚫 Disqualified:       ${disqualified}`)
@@ -911,6 +945,7 @@ async function fetchAllJobs() {
   console.log(`   🏢 Companies OK:       ${okSlugs.length}`)
   console.log(`   📡 Companies failed:   ${failedCompanies}  (skipped, not swept)`)
   console.log(`   🗑️  Removed (stale):    ${removed}`)
+  console.log(`   📅 Removed (>${MAX_AGE_DAYS}d old):  ${purged}`)
 
   await mongoose.disconnect()
   console.log('🔌 Disconnected from MongoDB')

@@ -31,7 +31,9 @@ const TIME_OPTIONS = [
   { value: 'today', label: 'Today' },
   { value: '3days', label: 'Past 3 days' },
   { value: 'week', label: 'Past week' },
-  { value: 'month', label: 'Past month' },
+  // No "past month": the pipeline deletes anything older than 14 days, so the option
+  // would return nothing. Two weeks is the widest window the board holds.
+  { value: '2weeks', label: 'Past 2 weeks' },
 ]
 
 const CSS = `
