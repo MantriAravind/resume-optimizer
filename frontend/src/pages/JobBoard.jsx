@@ -211,6 +211,15 @@ const CSS = `
   color: var(--muted); display: flex; align-items: center; justify-content: center;
 }
 .jb-close:hover { color: var(--ink); border-color: var(--ink); }
+.jb-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.jb-head-text { min-width: 0; }
+.jb-head-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.jb-btn-ghost {
+  border: 1px solid var(--border); background: #fff; color: var(--body);
+  border-radius: 8px; padding: 7px 12px; font-size: 12px; font-weight: 600;
+  font-family: inherit; cursor: pointer; white-space: nowrap;
+}
+.jb-btn-ghost:hover { border-color: #C7D2E0; }
 .jb-drawer-head h2 { font-size: 20px; font-weight: 700; letter-spacing: -.02em; line-height: 1.25; margin-right: 42px; margin-bottom: 5px; }
 .jb-drawer-head .co { font-size: 13.5px; color: var(--muted); }
 .jb-drawer-head .loc { font-size: 12px; color: #9CA3AF; margin-top: 6px; }
@@ -372,18 +381,9 @@ function locLabel(job) {
   return extra > 0 ? `${shortLoc(job.location)} +${extra} more` : shortLoc(job.location)
 }
 
-function JobCard({ job, onOpen, onOptimize, selected }) {
+function JobCard({ job, onOpen, selected }) {
   const salary = formatSalary(job.salaryMin, job.salaryMax)
   const years = formatYears(job.yearsMin, job.yearsMax)
-
-  function handleOptimizeClick(e) {
-    e.stopPropagation()
-    onOptimize(job)
-  }
-
-  function handleApplyClick(e) {
-    e.stopPropagation()
-  }
 
   // A job the backend has confirmed is gone from the source. These are normally
   // filtered out of the list, so this only shows for a board loaded before the job
@@ -431,7 +431,10 @@ function JobCard({ job, onOpen, onOptimize, selected }) {
         <div className="jb-card-head">
           <div>
             <h3>{job.title}</h3>
-            <div className="co">{job.company}</div>
+            {/* "Posted x ago" rides on the company line instead of its own footer row —
+                that footer cost a full row on every card, roughly a third of the jobs
+                visible on screen. */}
+            <div className="co">{job.company} · Posted {timeAgo(job.postedAt)}</div>
           </div>
           {job.sponsorBadge && (
             <span className="jb-sponsor"><CheckCircle2 size={13} /> Sponsors visa</span>
@@ -447,15 +450,8 @@ function JobCard({ job, onOpen, onOptimize, selected }) {
         {years && <span className="jb-pill jb-pill--years"><Clock />{years}</span>}
       </div>
 
-      <div className="jb-card-foot">
-        <span className="jb-posted">Posted {timeAgo(job.postedAt)}</span>
-        <div className="jb-actions">
-          <button className="jb-btn-opt" onClick={handleOptimizeClick}>
-            <Sparkles size={13} /> Optimize
-          </button>
-          <a className="jb-btn-apply" href={job.applyUrl} target="_blank" rel="noreferrer" onClick={handleApplyClick}>Apply →</a>
-        </div>
-      </div>
+      {/* No Optimize/Apply here: both already exist in the detail pane, so a second
+          copy on every card was pure duplication. */}
     </div>
   )
 }
@@ -486,6 +482,7 @@ export default function JobBoard() {
 
   const [loadingMore, setLoadingMore] = useState(false)
   const [locIndex, setLocIndex] = useState(0)
+  const [copiedShare, setCopiedShare] = useState(false)
 
   useEffect(() => {
     const next = {}
@@ -494,6 +491,10 @@ export default function JobBoard() {
     if (experienceLevel) next.experienceLevel = experienceLevel
     if (timePosted) next.timePosted = timePosted
     if (stateFilter) next.state = stateFilter
+    // Keep ?job= until the shared-link effect has used it. This effect runs on mount,
+    // before the jobs have loaded, so writing the params immediately would strip the id
+    // out of the URL and the shared link would just open the top of the board.
+    if (sharedJobId.current) next.job = sharedJobId.current
     setSearchParams(next, { replace: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, workType, experienceLevel, timePosted, stateFilter])
@@ -559,16 +560,66 @@ export default function JobBoard() {
 
   // Keep the right pane filled on desktop: when a new page of results loads, or the
   // current selection is no longer in the list, select the first open job.
+  // A shared link (?job=<id>) should open that posting rather than the top of the
+  // board. One-shot: the id is cleared after use so it can't fight the normal
+  // auto-select when the user searches or pages.
+  const sharedJobId = useRef(searchParams.get('job'))
+  // Stays true for the life of the page: the auto-select must never replace a job the
+  // user was sent a link to, even after the first page of results arrives.
+  const cameFromSharedLink = useRef(Boolean(searchParams.get('job')))
+  useEffect(() => {
+    const id = sharedJobId.current
+    if (!id) return
+    sharedJobId.current = null
+    // Fetch the job directly rather than looking for it in the list: a shared posting
+    // is usually not on the first page of results, so searching the list would miss it.
+    ;(async () => {
+      try {
+        const res = await fetch(`${BACKEND}/jobs/${id}`)
+        if (!res.ok) return
+        const full = await res.json()
+        setSelected(full)
+        setLocIndex(0)
+        setCopiedShare(false)
+        if (!isTwoPane()) document.body.style.overflow = 'hidden'
+      } catch {
+        // job gone or backend asleep — fall through to the normal board
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     if (!isTwoPane() || !jobs.length) return
+    // Don't clobber a job opened from a shared link with the first search result.
+    if (cameFromSharedLink.current) { cameFromSharedLink.current = false; return }
     const stillListed = selected && jobs.some(j => j.id === selected.id)
     if (!stillListed) openJob(jobs.find(j => !j.closed) || jobs[0])
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobs])
 
+  // Share copies a link that reopens THIS job. ?job=<id> is read on load so the
+  // recipient lands on the posting, not the top of the board.
+  async function shareJob() {
+    if (!selected) return
+    const url = `${window.location.origin}${window.location.pathname}?job=${selected.id}`
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `${selected.title} at ${selected.company}`, url })
+        return
+      }
+      await navigator.clipboard.writeText(url)
+    } catch {
+      return   // share sheet dismissed, or clipboard blocked
+    }
+    setCopiedShare(true)
+    setTimeout(() => setCopiedShare(false), 2000)
+  }
+
   async function openJob(job) {
     setSelected(job)
     setLocIndex(0)
+    setCopiedShare(false)
     setDetailLoading(true)
     // Only lock the page behind the slide-in drawer. In two-pane mode nothing is
     // covered, so the page must stay usable.
@@ -666,9 +717,18 @@ export default function JobBoard() {
     <>
       <div className="jb-drawer-head">
         <button className="jb-close" onClick={closeJob}>×</button>
-        <h2>{selected.title}</h2>
-        <div className="co">{selected.company}</div>
-        <div className="loc">{shortLoc(shownLocation)} · {timeAgo(selected.postedAt)}</div>
+        <div className="jb-head-row">
+          <div className="jb-head-text">
+            <h2>{selected.title}</h2>
+            <div className="co">{selected.company}</div>
+            <div className="loc">{shortLoc(shownLocation)} · {timeAgo(selected.postedAt)}</div>
+          </div>
+          <div className="jb-head-actions">
+            <button className="jb-btn-ghost" onClick={shareJob}>
+              {copiedShare ? '✓ Copied' : '↗ Share'}
+            </button>
+          </div>
+        </div>
       </div>
       {variants && variants.length > 1 && (
         <div className="jb-locpick">
@@ -791,7 +851,6 @@ export default function JobBoard() {
                   key={job.id}
                   job={job}
                   onOpen={openJob}
-                  onOptimize={optimizeFor}
                   selected={selected?.id === job.id}
                 />
               ))}
