@@ -211,6 +211,11 @@ const CSS = `
   color: var(--muted); display: flex; align-items: center; justify-content: center;
 }
 .jb-close:hover { color: var(--ink); border-color: var(--ink); }
+.jb-toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 9px;
+  font-size: 13px; font-weight: 500; z-index: 60; box-shadow: 0 6px 20px rgba(0,0,0,.18);
+}
 .jb-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .jb-head-text { min-width: 0; }
 .jb-head-actions { display: flex; gap: 6px; flex-shrink: 0; }
@@ -469,6 +474,14 @@ export default function JobBoard() {
   // Search and filters live in the URL, so refreshing the page (to check for new
   // openings) keeps what you were looking at, and the link can be shared/bookmarked.
   const [searchParams, setSearchParams] = useSearchParams()
+  // A shared link (?job=<id>) should open that posting rather than the top of the
+  // board. One-shot: the id is cleared after use so it can't fight the normal
+  // auto-select when the user searches or pages.
+  const sharedJobId = useRef(searchParams.get('job'))
+  // Stays true for the life of the page: the auto-select must never replace a job the
+  // user was sent a link to, even after the first page of results arrives.
+  const cameFromSharedLink = useRef(Boolean(searchParams.get('job')))
+
   const [searchInput, setSearchInput] = useState(searchParams.get('query') || '')
   const [query, setQuery] = useState(searchParams.get('query') || '')
   const [workType, setWorkType] = useState(searchParams.get('workType') || '')
@@ -560,13 +573,6 @@ export default function JobBoard() {
 
   // Keep the right pane filled on desktop: when a new page of results loads, or the
   // current selection is no longer in the list, select the first open job.
-  // A shared link (?job=<id>) should open that posting rather than the top of the
-  // board. One-shot: the id is cleared after use so it can't fight the normal
-  // auto-select when the user searches or pages.
-  const sharedJobId = useRef(searchParams.get('job'))
-  // Stays true for the life of the page: the auto-select must never replace a job the
-  // user was sent a link to, even after the first page of results arrives.
-  const cameFromSharedLink = useRef(Boolean(searchParams.get('job')))
   useEffect(() => {
     const id = sharedJobId.current
     if (!id) return
@@ -876,6 +882,8 @@ export default function JobBoard() {
       )}
 
       <div className={`jb-overlay ${selected ? 'open' : ''}`} onClick={closeJob} />
+      {copiedShare && <div className="jb-toast">Link copied</div>}
+
       <aside className={`jb-drawer ${selected ? 'open' : ''}`}>
         {detailBody}
       </aside>
