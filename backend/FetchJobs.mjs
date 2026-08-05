@@ -33,6 +33,27 @@ const jobSchema = new mongoose.Schema({
 
 const Job = mongoose.models.Job || mongoose.model('Job', jobSchema)
 
+// ── FRESHNESS WINDOW ────────────────────────────────────────────────────────
+// Module scope on purpose: the fetch-time age gate and the purge at the end of
+// the run MUST use the same number. Two copies would drift the moment one is
+// edited, and the board would silently keep jobs it claims to have removed.
+const MAX_AGE_DAYS = 14
+
+// The real posting date. Greenhouse gives two dates and they mean different things:
+//   first_published — when the job went live. This is what a student cares about.
+//   updated_at      — when a recruiter last edited it. A six-month-old posting with a
+//                     typo fix yesterday has updated_at = yesterday.
+// Using updated_at made stale jobs look brand new. first_published is not on every
+// posting, so updated_at stays as the fallback.
+// ONE function, used by both the age gate and the saved postedAt, so the date we
+// filter on can never differ from the date we show.
+function postedDate(job) {
+  const raw = job.first_published || job.updated_at
+  if (!raw) return null
+  const d = new Date(raw)
+  return isNaN(d.getTime()) ? null : d
+}
+
 // ── HTML handling ────────────────────────────────────────────────────────
 function stripHtml(html = '') {
   return html
@@ -675,12 +696,18 @@ async function fetchAllJobs() {
   console.log(`📋 Loaded ${allSlugs.length} Greenhouse slugs`)
 
   let saved = 0, skipped = 0, disqualified = 0, nonUS = 0, contractOrPartTime = 0
-  let failedCompanies = 0, removed = 0
+  let failedCompanies = 0, removed = 0, tooOld = 0
   const BATCH_SIZE = 10
 
   // Anything whose fetchedAt is older than this by the end of the run was not seen
   // at the source this time, which means it closed or no longer passes our filters.
   const runStart = new Date()
+
+  // ONE cutoff for the whole run. Computed here, not at purge time, because a run
+  // takes 1-2 hours: a cutoff recomputed at the end would be up to two hours later
+  // than the one the fetch gate used, so jobs saved as fresh would be deleted as old
+  // minutes afterwards. Sharing the value makes that impossible.
+  const ageCutoff = new Date(runStart.getTime() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000)
   const okSlugs = []
   const failedSlugs = []
 
@@ -697,6 +724,20 @@ async function fetchAllJobs() {
       okSlugs.push(slug)
 
       for (const job of jobs) {
+        // ── AGE GATE ───────────────────────────────────────────────────────
+        // First check in the loop because it is the cheapest one: a single date
+        // compare, before stripHtml and before ~173 regexes run over the full
+        // description.
+        //
+        // Greenhouse returns EVERY open posting regardless of age. Without this
+        // gate the run saved ~37,000 rows that the purge below deleted minutes
+        // later — the same rows, every run, forever.
+        //
+        // Unknown age is NOT old. A posting with no updated_at is kept, matching
+        // the purge, which leaves a null postedAt alone.
+        const posted = postedDate(job)
+        if (posted && posted < ageCutoff) { tooOld++; continue }
+
         const location  = job.location?.name || ''
         const plainText = stripHtml(job.content || '')
 
@@ -730,7 +771,7 @@ async function fetchAllJobs() {
               isRemote:        location.toLowerCase().includes('remote'),
               description:     plainText.slice(0, 500),
               applyUrl:        job.absolute_url || '',
-              postedAt:        job.updated_at ? new Date(job.updated_at) : new Date(),
+              postedAt:        posted,
               sponsorBadge:    false,
               ats:             'greenhouse',
               fetchedAt:       new Date(),
@@ -754,7 +795,7 @@ async function fetchAllJobs() {
 
     if ((i + BATCH_SIZE) % 50 === 0) {
       const done = Math.min(i + BATCH_SIZE, allSlugs.length)
-      console.log(`⏳ ${done}/${allSlugs.length} companies | 💾 ${saved} saved | 🚫 ${disqualified} disqualified | 📋 ${contractOrPartTime} contract/part-time | 🌍 ${nonUS} non-US`)
+      console.log(`⏳ ${done}/${allSlugs.length} companies | 💾 ${saved} saved | ⌛ ${tooOld} too old | 🚫 ${disqualified} disqualified | 📋 ${contractOrPartTime} contract/part-time | 🌍 ${nonUS} non-US`)
     }
 
     await new Promise(r => setTimeout(r, 200))
@@ -788,6 +829,20 @@ async function fetchAllJobs() {
         failedCompanies--
         okSlugs.push(slug)
         for (const job of jobs) {
+          // ── AGE GATE ───────────────────────────────────────────────────────
+          // First check in the loop because it is the cheapest one: a single date
+          // compare, before stripHtml and before ~173 regexes run over the full
+          // description.
+          //
+          // Greenhouse returns EVERY open posting regardless of age. Without this
+          // gate the run saved ~37,000 rows that the purge below deleted minutes
+          // later — the same rows, every run, forever.
+          //
+          // Unknown age is NOT old. A posting with no updated_at is kept, matching
+          // the purge, which leaves a null postedAt alone.
+          const posted = postedDate(job)
+          if (posted && posted < ageCutoff) { tooOld++; continue }
+
           const plainText = stripHtml(job.content || '')
           const location  = job.location?.name || ''
           if (location !== '' && !isUSLocation(location)) { nonUS++; continue }
@@ -810,7 +865,7 @@ async function fetchAllJobs() {
                 isRemote:        location.toLowerCase().includes('remote'),
                 description:     plainText.slice(0, 500),
                 applyUrl:        job.absolute_url || '',
-                postedAt:        job.updated_at ? new Date(job.updated_at) : new Date(),
+                postedAt:        posted,
                 sponsorBadge:    false,
                 ats:             'greenhouse',
                 fetchedAt:       new Date(),
@@ -911,11 +966,13 @@ async function fetchAllJobs() {
   // higher ceiling, because the FIRST run legitimately clears months of backlog and
   // a 25% limit would block it forever. Lower MAX_PURGE_SHARE to ~0.25 once the
   // board is steady, so a date bug can't quietly empty it.
-  const MAX_AGE_DAYS = 14
+  // MAX_AGE_DAYS now lives at module scope (see top of file) so the fetch gate
+  // above and this purge cannot disagree.
   const MAX_PURGE_SHARE = 0.90
   console.log(`\n📅 Removing jobs posted more than ${MAX_AGE_DAYS} days ago...`)
 
-  const cutoff = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000)
+  // Reuses the run-start cutoff the fetch gate used, not a fresh one.
+  const cutoff = ageCutoff
   // Jobs with no postedAt are left alone: unknown age is not the same as old.
   const oldFilter = { postedAt: { $ne: null, $lt: cutoff } }
   const totalJobs = await Job.countDocuments({})
@@ -938,6 +995,7 @@ async function fetchAllJobs() {
 
   console.log(`\n✅ Done!`)
   console.log(`   💾 Saved:              ${saved}`)
+  console.log(`   ⌛ Skipped (>${MAX_AGE_DAYS}d old):  ${tooOld}`)
   console.log(`   🚫 Disqualified:       ${disqualified}`)
   console.log(`   📋 Contract/Part-time: ${contractOrPartTime}`)
   console.log(`   🌍 Non-US:             ${nonUS}`)

@@ -10,11 +10,25 @@ on:
   # Lets you trigger it by hand from the Actions tab.
   workflow_dispatch:
 
+# Only one pipeline may run at a time.
+#
+# Why this matters: at the end of every run the pipeline DELETES jobs it did not see
+# at the source. Two runs at once means one can delete rows the other just saved,
+# because each only knows about the jobs it fetched itself.
+#
+# cancel-in-progress is false on purpose. Cancelling would kill a run partway through
+# its delete pass, which is worse than making the new run wait its turn. A queued run
+# starts the moment the current one finishes.
+concurrency:
+  group: refresh-job-board
+  cancel-in-progress: false
+
 jobs:
   refresh:
     runs-on: ubuntu-latest
     # The pipeline walks every company slug with rate-limit pauses, so give it room.
     # The full run was 1h22m before the retry pass, which adds roughly 30 more minutes.
+    # Expect this to drop once the fetch-time age gate skips ~half the postings.
     timeout-minutes: 180
 
     steps:
