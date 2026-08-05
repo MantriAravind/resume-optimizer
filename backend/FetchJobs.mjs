@@ -37,7 +37,13 @@ const Job = mongoose.models.Job || mongoose.model('Job', jobSchema)
 // Module scope on purpose: the fetch-time age gate and the purge at the end of
 // the run MUST use the same number. Two copies would drift the moment one is
 // edited, and the board would silently keep jobs it claims to have removed.
-const MAX_AGE_DAYS = 14
+// 30, not 14. The original 14 was chosen while the pipeline was reading updated_at,
+// which meant months-old postings were being kept anyway — so 14 was never really in
+// force. With first_published giving true ages, a strict 14 days left only ~13,000
+// jobs, thin enough that a filtered search returns almost nothing. 30 days is still
+// well inside a normal hiring cycle. Tighten it again once there is usage data
+// showing students prefer a fresher, smaller board.
+const MAX_AGE_DAYS = 30
 
 // The real posting date. Greenhouse gives two dates and they mean different things:
 //   first_published — when the job went live. This is what a student cares about.

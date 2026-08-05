@@ -31,9 +31,11 @@ const TIME_OPTIONS = [
   { value: 'today', label: 'Today' },
   { value: '3days', label: 'Past 3 days' },
   { value: 'week', label: 'Past week' },
-  // No "past month": the pipeline deletes anything older than 14 days, so the option
-  // would return nothing. Two weeks is the widest window the board holds.
   { value: '2weeks', label: 'Past 2 weeks' },
+  // 30 days is the pipeline's cutoff, so this is the widest window that can return
+  // anything. Two weeks stays as well — a student who wants only fresh postings
+  // shouldn't lose that just because the board now holds more.
+  { value: 'month', label: 'Past month' },
 ]
 
 const CSS = `

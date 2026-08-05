@@ -655,10 +655,10 @@ app.get('/jobs', async (req, res) => {
 
     // Time posted: a rolling window on postedAt. Jobs with no postedAt are excluded
     // from a time filter, which is the right call — an undated job isn't "from this week".
-    // The pipeline deletes anything older than 14 days, so two weeks is the widest
-    // window the board holds. An old "month" link simply falls through to no filter,
-    // which now shows the same jobs anyway.
-    const windows = { today: 1, '3days': 3, week: 7, '2weeks': 14 }
+    // The pipeline deletes anything older than 30 days (MAX_AGE_DAYS in FetchJobs.mjs),
+    // so a month is the widest window the board holds. Keep these two numbers in step:
+    // a window longer than MAX_AGE_DAYS would advertise jobs that no longer exist.
+    const windows = { today: 1, '3days': 3, week: 7, '2weeks': 14, month: 30 }
     const days = windows[req.query.time_posted]
     if (days) {
       filter.postedAt = { $gte: new Date(Date.now() - days * 24 * 60 * 60 * 1000) }
