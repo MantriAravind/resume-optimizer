@@ -117,6 +117,16 @@ const CSS = `
 
 .jb-count { display: none; }
 
+/* Shared-link pin. The job opened from ?job=<id> is almost never on page one, so
+   it is rendered ABOVE the list instead of being hunted for inside it. Without this
+   the right pane showed the correct job while the left pane showed unrelated ones,
+   which read as a broken link even though the fetch had worked. */
+.jb-shared-pill { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: #1D4ED8; background: #DBEAFE; padding: 3px 9px;
+  border-radius: 6px; margin: 0 0 9px 2px; }
+.jb-shared-divider { display: flex; align-items: center; gap: 10px; margin: 16px 2px 12px;
+  color: #9CA3AF; font-size: 11px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
+.jb-shared-divider::before, .jb-shared-divider::after { content: ''; height: 1px; background: #ECECEF; flex: 1; }
 .jb-list { max-width: 900px; margin: 0 auto; padding: 6px 28px 60px; display: flex; flex-direction: column; gap: 12px; }
 .jb-card--closed { background: #FBFBFC; border-color: #ECECEF; cursor: default; }
 .jb-card--closed:hover { transform: none; box-shadow: none; border-color: #ECECEF; }
@@ -496,6 +506,9 @@ export default function JobBoard() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [locIndex, setLocIndex] = useState(0)
   const [copiedShare, setCopiedShare] = useState(false)
+  // The posting a ?job=<id> link opened, pinned above the list so the left and right
+  // panes agree. Null in every normal visit.
+  const [sharedJob, setSharedJob] = useState(null)
 
   useEffect(() => {
     const next = {}
@@ -545,16 +558,20 @@ export default function JobBoard() {
   useEffect(() => { fetchJobs() }, [fetchJobs])
 
   function runSearch() {
+    setSharedJob(null)
     setPage(1)
     setQuery(searchInput)
   }
 
-  function pickWorkType(e) { setPage(1); setWorkType(e.target.value) }
-  function pickExperience(e) { setPage(1); setExperienceLevel(e.target.value) }
-  function pickTimePosted(e) { setPage(1); setTimePosted(e.target.value) }
-  function pickState(e) { setPage(1); setStateFilter(e.target.value) }
+  // Each of these clears the pin: once the student runs their own search, a job from
+  // someone else's link sitting at the top is just noise.
+  function pickWorkType(e) { setSharedJob(null); setPage(1); setWorkType(e.target.value) }
+  function pickExperience(e) { setSharedJob(null); setPage(1); setExperienceLevel(e.target.value) }
+  function pickTimePosted(e) { setSharedJob(null); setPage(1); setTimePosted(e.target.value) }
+  function pickState(e) { setSharedJob(null); setPage(1); setStateFilter(e.target.value) }
 
   function clearFilters() {
+    setSharedJob(null)
     setPage(1)
     setSearchInput('')
     setQuery('')
@@ -585,6 +602,7 @@ export default function JobBoard() {
         if (!res.ok) return
         const full = await res.json()
         setSelected(full)
+        setSharedJob(full)
         setLocIndex(0)
         setCopiedShare(false)
         if (!isTwoPane()) document.body.style.overflow = 'hidden'
@@ -843,7 +861,7 @@ export default function JobBoard() {
           <p>{error}</p>
           <button className="jb-retry" onClick={fetchJobs}>Try again</button>
         </div>
-      ) : jobs.length === 0 ? (
+      ) : (jobs.length === 0 && !sharedJob) ? (
         <div className="jb-state">
           <h3>No jobs match that search</h3>
           <p>Try a different keyword or clear your filters.</p>
@@ -852,7 +870,20 @@ export default function JobBoard() {
         <div className="jb-panes">
           <div className="jb-list-col">
             <div className="jb-list">
-              {jobs.map(job => (
+              {sharedJob && (
+                <>
+                  <span className="jb-shared-pill">Shared with you</span>
+                  <JobCard
+                    job={sharedJob}
+                    onOpen={openJob}
+                    selected={selected?.id === sharedJob.id}
+                  />
+                  <div className="jb-shared-divider">All jobs</div>
+                </>
+              )}
+              {/* Skip the pinned job if it also happens to be in this page of
+                  results, otherwise the same card appears twice. */}
+              {jobs.filter(job => job.id !== sharedJob?.id).map(job => (
                 <JobCard
                   key={job.id}
                   job={job}
