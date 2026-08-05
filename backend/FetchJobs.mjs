@@ -45,6 +45,27 @@ const Job = mongoose.models.Job || mongoose.model('Job', jobSchema)
 // showing students prefer a fresher, smaller board.
 const MAX_AGE_DAYS = 30
 
+// ⚠️  TEMPORARY — PUT THIS BACK TO 0.25 AFTER ONE RUN. ⚠️
+//
+// The sweep deletes jobs it did not see at the source this run, and aborts if that
+// share looks implausible. 0.25 is the correct steady-state value.
+//
+// It is 0.50 right now for a one-time cleanup. The board still holds ~18,000 rows
+// saved by the old code, which stamped postedAt from updated_at. Those rows carry
+// fake-recent dates, so the age purge cannot see them (it reported 0 of 44,265 older
+// than 30 days while only 26,065 jobs were actually saved). The fetch gate skips them
+// because their real first_published is old, so they never refresh and never leave.
+// The sweep is the only thing that can remove them, and at 41% the 0.25 guard blocks
+// it forever.
+//
+// Deleting them is safe: a job that is genuinely open AND inside the 30-day window
+// would have been saved by this run. Anything the sweep catches is either too old or
+// closed. If something is wrongly deleted, the next run re-adds it.
+//
+// Once the board settles near 26,000, set this back to 0.25. Left at 0.50 it would
+// let a future bug delete half the board without complaint.
+const MAX_SWEEP_SHARE = 0.50
+
 // The real posting date. Greenhouse gives two dates and they mean different things:
 //   first_published — when the job went live. This is what a student cares about.
 //   updated_at      — when a recruiter last edited it. A six-month-old posting with a
@@ -948,7 +969,7 @@ async function fetchAllJobs() {
     for (const chunk of chunks) staleTotal += await Job.countDocuments(staleFilter(chunk))
 
     const share = totalGreenhouse ? staleTotal / totalGreenhouse : 0
-    if (share > 0.25) {
+    if (share > MAX_SWEEP_SHARE) {
       console.log(`   🛑 ABORTED: sweep would delete ${staleTotal} of ${totalGreenhouse} jobs (${Math.round(share * 100)}%).`)
       console.log('      That is too many to be genuine closures. Nothing was deleted.')
       console.log('      Investigate before the next run.')
@@ -968,13 +989,16 @@ async function fetchAllJobs() {
   // and students on an OPT clock are better served by a smaller, fresher board than
   // a large stale one. Accepted cost: a few genuinely-open older roles are lost.
   //
-  // Same guard as the sweep — abort if the share is implausible — but with a much
-  // higher ceiling, because the FIRST run legitimately clears months of backlog and
-  // a 25% limit would block it forever. Lower MAX_PURGE_SHARE to ~0.25 once the
-  // board is steady, so a date bug can't quietly empty it.
+  // Same guard as the sweep: abort if the share is implausible.
+  //
+  // Was 0.90 while the backlog was being cleared. Now that old postings are skipped at
+  // fetch instead of saved-then-deleted, a normal run purges almost nothing — the last
+  // run removed 5 of 38,065, then 0 of 44,265. 0.90 is far looser than anything real,
+  // so a date bug could empty the board unchallenged. 0.25 is the honest ceiling.
+  //
   // MAX_AGE_DAYS now lives at module scope (see top of file) so the fetch gate
   // above and this purge cannot disagree.
-  const MAX_PURGE_SHARE = 0.90
+  const MAX_PURGE_SHARE = 0.25
   console.log(`\n📅 Removing jobs posted more than ${MAX_AGE_DAYS} days ago...`)
 
   // Reuses the run-start cutoff the fetch gate used, not a fresh one.
