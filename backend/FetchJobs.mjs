@@ -64,7 +64,7 @@ const MAX_AGE_DAYS = 30
 //
 // Once the board settles near 26,000, set this back to 0.25. Left at 0.50 it would
 // let a future bug delete half the board without complaint.
-const MAX_SWEEP_SHARE = 0.50
+const MAX_SWEEP_SHARE = 0.25
 
 // The real posting date. Greenhouse gives two dates and they mean different things:
 //   first_published — when the job went live. This is what a student cares about.
