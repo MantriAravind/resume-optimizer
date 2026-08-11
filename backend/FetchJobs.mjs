@@ -778,7 +778,13 @@ async function fetchAllJobs() {
         if (isDisqualified(fullText)) { disqualified++; continue }
         if (isContractOrPartTime(plainText, job.title || '')) { contractOrPartTime++; continue }
 
-        const companyName = slug.charAt(0).toUpperCase() + slug.slice(1)
+        // Greenhouse returns the real display name in company_name — "Movable Ink",
+        // "Fischer Homes". This used to capitalise the URL slug instead, which
+        // produced Movableink, and for one company that registered a leet-speak slug,
+        // F1sch3rh0m3s. The slug stays as the fallback for the rare posting that omits
+        // the field.
+        const companyName = job.company_name?.trim()
+          || slug.charAt(0).toUpperCase() + slug.slice(1)
         const experienceLevel = detectExperienceLevel(job.title || '')
         const workType = detectWorkType(location, plainText)
         const state = extractState(location)
@@ -883,7 +889,9 @@ async function fetchAllJobs() {
           if (isDisqualified(fullText)) { disqualified++; continue }
           if (isContractOrPartTime(plainText, job.title || '')) { contractOrPartTime++; continue }
 
-          const companyName = slug.charAt(0).toUpperCase() + slug.slice(1)
+          // Same as above: real display name from Greenhouse, slug as fallback.
+          const companyName = job.company_name?.trim()
+            || slug.charAt(0).toUpperCase() + slug.slice(1)
           const salary = extractSalary(plainText)
           const years  = extractYearsExperience(plainText)
           try {
