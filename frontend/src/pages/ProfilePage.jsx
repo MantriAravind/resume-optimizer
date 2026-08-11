@@ -1,241 +1,451 @@
-import { useState, useEffect } from 'react'
-import { useAuth } from '@clerk/clerk-react'
+import { useState, useEffect, useRef } from 'react'
+import { useAuth, useUser } from '@clerk/clerk-react'
+import { useNavigate } from 'react-router-dom'
 import SidebarLayout from '../components/SidebarLayout'
-import { FileText, Check, AlertCircle } from 'lucide-react'
+import { FileText, Check, AlertCircle, RotateCcw, X, Shield, ArrowRight } from 'lucide-react'
 
-// Read from the environment so the backend can move without editing four files.
-// The fallback is the current production URL, so a missing variable degrades to
-// today's behaviour instead of silently pointing the app at nothing.
 const BACKEND = import.meta.env.VITE_BACKEND_URL || 'https://resume-optimizer-cuii.onrender.com'
+const MAX_BYTES = 10 * 1024 * 1024
+
+
+// The right-hand column. targetRole, yearsExperience and field are NOT here — they
+// live in the header sentence, because they are the only ones that change what the
+// job board shows. Everything in this list is just the student's details.
+// Required is visual plus a blocked Save — never a blocked board. A resume with no
+// phone number is common, and locking that student out of jobs entirely would be a
+// far worse failure than an incomplete profile.
+const PERSONAL = [
+  ['firstName', 'First name', true],
+  ['lastName',  'Last name',  true],
+  ['email',     'Email',      true],
+  ['phone',     'Phone',      true],
+  ['linkedin',  'LinkedIn'],
+  ['github',    'GitHub'],
+  ['location',  'Location'],
+]
 
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&display=swap');
+.pf{--blue:#2563EB;--blue-dark:#1D4ED8;--ink:#0A0A0B;--muted:#6B7280;--border:#E5E7EB;--red:#DC2626;
+  font-family:'Space Grotesk',-apple-system,sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased}
+.pf *{box-sizing:border-box;margin:0;padding:0}
 
-.pf-page {
-  --blue: #2563EB; --blue-dark: #1D4ED8; --blue-soft: #EFF6FF;
-  --ink: #0A0A0B; --body: #374151; --muted: #6B7280; --border: #E5E7EB;
-  --green: #059669; --red: #DC2626;
-  font-family: 'Space Grotesk', -apple-system, sans-serif;
-  color: var(--ink); padding: 32px 36px 60px; max-width: 760px;
-  -webkit-font-smoothing: antialiased;
-}
-.pf-page * { box-sizing: border-box; margin: 0; padding: 0; }
+.pf-banner{display:flex;gap:10px;align-items:center;padding:11px 26px;background:#FFFBEB;
+  border-bottom:1px solid #FDE68A;font-size:12.5px;color:#78350F;line-height:1.5}
+.pf-banner svg{width:15px;height:15px;flex:none}
 
-.pf-head { margin-bottom: 24px; }
-.pf-head h1 { font-size: 26px; font-weight: 800; letter-spacing: -.03em; margin-bottom: 5px; }
-.pf-head p { font-size: 14px; color: var(--muted); line-height: 1.5; }
+.pf-htop{padding:17px 26px 0;display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+/* The board button sits in the title row, where a primary action belongs. Keeping it
+   out of the sentence row means the sentence gets the full width and the two never
+   compete for space on a narrow window. */
+.pf-goboard{background:var(--blue);color:#fff;border:0;padding:9px 18px;border-radius:9px;
+  font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;
+  align-items:center;gap:7px;flex:none;white-space:nowrap}
+.pf-goboard:hover{background:var(--blue-dark)}
+.pf-goboard svg{width:15px;height:15px}
+.pf-htop h1{font-size:21px;font-weight:800;letter-spacing:-.025em}
+.pf-htop p{font-size:12.5px;color:var(--muted);margin-top:2px}
 
-.pf-card { border: 1px solid var(--border); border-radius: 16px; padding: 22px; }
-.pf-card-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 12px; }
-.pf-card-title { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
-.pf-card-title svg { width: 16px; height: 16px; color: var(--blue); }
-.pf-saved-tag {
-  font-size: 11px; font-weight: 700; background: #ECFDF5; color: var(--green);
-  border: 1px solid #A7F3D0; padding: 4px 10px; border-radius: 100px;
-  display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
-}
-.pf-saved-tag svg { width: 11px; height: 11px; }
-.pf-empty-tag {
-  font-size: 11px; font-weight: 700; background: #FEF3C7; color: #92400E;
-  padding: 4px 10px; border-radius: 100px; white-space: nowrap;
-}
+/* The sentence carries the two fields the student actually sets. The field the board
+   filters on is derived from the role on save — see /me/profile in server.js. */
+.pf-sent{padding:13px 26px 15px;border-bottom:1px solid #EEF2F6}
+/* Deliberately lighter than the panel headings below. This is a summary line, not
+   the main content, so it should sit quietly above them rather than compete. */
+.pf-line{font-size:13px;color:#4B5563;display:flex;gap:7px;align-items:center;flex-wrap:wrap;line-height:1.9}
+.pf-in{border:1px solid #BFDBFE;border-radius:6px;font-size:12.5px;font-weight:640;
+  color:#1E3A8A;background:#F7FAFF;font-family:inherit;padding:4px 8px}
+.pf-in:focus{outline:none;border-color:var(--blue);background:#fff}
+select.pf-in{cursor:pointer;padding-right:26px}
+/* An unread value gets real words, not a hole in a sentence — "roles in all fields"
+   is both true and grammatical where an empty box was neither. */
+.pf-in.miss{border-color:#FDE68A;background:#FFFBEB;color:#B45309}
 
-.pf-textarea {
-  width: 100%; min-height: 320px; border-radius: 12px; background: #F8FAFC;
-  border: 1px solid var(--border); padding: 16px; font-size: 14px;
-  font-family: inherit; color: var(--ink); resize: vertical; line-height: 1.6;
-  transition: border-color .15s, background .15s;
-}
-.pf-textarea::placeholder { color: #A1A1A6; }
-.pf-textarea:focus { outline: none; background: #fff; border-color: var(--blue); }
+.pf-body{padding:16px 26px 44px}
+.pf-cols{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start}
+.pf-panel{border:1px solid var(--border);border-radius:13px;overflow:hidden}
+.pf-ph{display:flex;justify-content:space-between;align-items:center;gap:10px;
+  padding:10px 14px;background:#FAFBFC;border-bottom:1px solid var(--border)}
+.pf-pt{font-size:12.5px;font-weight:700;display:flex;align-items:center;gap:7px}
+.pf-pt svg{width:14px;height:14px;color:var(--blue)}
+.pf-mini{padding:6px 12px;border-radius:7px;font-size:11.5px;font-weight:620;border:1px solid #D5DAE2;
+  background:#fff;color:#374151;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px}
+.pf-mini:hover{background:#F8FAFC}
+.pf-mini svg{width:12px;height:12px}
 
-.pf-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; gap: 12px; }
-.pf-count { font-size: 12px; color: #A1A1A6; }
-.pf-updated { font-size: 12px; color: var(--muted); }
+.pf-fline{display:flex;align-items:center;gap:11px;padding:11px 14px;border-bottom:1px solid #F3F4F6}
+.pf-fico{width:33px;height:33px;border-radius:8px;background:#EEF2FF;display:grid;place-items:center;flex:none}
+.pf-fico svg{width:15px;height:15px;color:var(--blue)}
+.pf-panel.bad .pf-fico{background:#FEF2F2}
+.pf-panel.bad .pf-fico svg{color:var(--red)}
+.pf-fname{font-size:12.5px;font-weight:645}
+.pf-fmeta{font-size:10.5px;color:var(--muted);margin-top:2px}
+.pf-panel.bad .pf-fmeta{color:#B91C1C}
+.pf-flag{display:flex;gap:8px;padding:10px 14px;background:#FFFBEB;border-bottom:1px solid #FDE68A;
+  font-size:11.5px;color:#78350F;line-height:1.5}
+.pf-flag svg{width:13px;height:13px;flex:none;margin-top:1px}
 
-.pf-msg {
-  border-radius: 10px; padding: 12px 14px; font-size: 13px; font-weight: 500;
-  margin-top: 14px; display: flex; align-items: center; gap: 8px;
-}
-.pf-msg svg { width: 15px; height: 15px; flex-shrink: 0; }
-.pf-msg-error { background: #FEF2F2; color: var(--red); }
-.pf-msg-ok { background: #ECFDF5; color: var(--green); }
+.pf-rt{display:block;width:100%;border:0;padding:12px 14px;font-size:11.5px;line-height:1.72;
+  color:#374151;font-family:inherit;resize:vertical;height:520px;background:#fff}
+.pf-rt:focus{outline:none}
+.pf-rtf{padding:8px 14px;background:#FAFBFC;border-top:1px solid #F3F4F6;font-size:10px;
+  color:#9CA3AF;display:flex;justify-content:space-between;gap:8px}
 
-.pf-actions { margin-top: 18px; }
-.pf-save {
-  background: var(--blue); color: #fff; border: none; padding: 13px 26px;
-  border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer;
-  font-family: inherit; display: inline-flex; align-items: center; gap: 8px;
-}
-.pf-save:hover:not(:disabled) { background: var(--blue-dark); }
-.pf-save:disabled { background: #B0D4F5; cursor: default; }
-.pf-spin {
-  border: 2.5px solid rgba(255,255,255,.4); border-top-color: #fff;
-  border-radius: 50%; width: 14px; height: 14px;
-  animation: pf-spin .7s linear infinite; flex-shrink: 0;
-}
-@keyframes pf-spin { to { transform: rotate(360deg); } }
+.pf-drop{margin:13px 14px;border:2px dashed #CBD5E1;border-radius:12px;padding:26px 16px;
+  text-align:center;background:#F9FAFB;cursor:pointer}
+.pf-drop:hover,.pf-drop.over{border-color:var(--blue);background:#F7FAFF}
+.pf-drop .ic{font-size:25px;margin-bottom:7px}
+.pf-drop .t{font-size:13.5px;font-weight:650;margin-bottom:3px}
+.pf-drop .h{font-size:11.5px;color:#9CA3AF}
 
-.pf-loading { padding: 60px 24px; text-align: center; color: var(--muted); font-size: 14px; }
-.pf-loading-spin {
-  width: 32px; height: 32px; border: 3px solid var(--border);
-  border-top-color: var(--blue); border-radius: 50%;
-  margin: 0 auto 14px; animation: pf-spin .7s linear infinite;
-}
+.pf-fields{padding:13px}
+.pf-frow{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+.pf-fld{margin-bottom:11px}
+.pf-fld label{display:block;font-size:10px;font-weight:650;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.pf-req{color:#DC2626;margin-left:2px}
+.pf-fld input.needed{border-color:#FCA5A5;background:#FEF2F2}
+.pf-fld input{width:100%;padding:8px 11px;border:1px solid #BAE6FD;border-radius:7px;
+  font-size:12.5px;font-family:inherit;background:#F0F9FF;color:var(--ink)}
+.pf-fld input.empty{background:#FFFBEB;border-color:#FDE68A}
+.pf-fld input.ro{background:#F9FAFB;border-color:var(--border);color:var(--muted)}
+.pf-fld input:focus{outline:none;border-color:var(--blue)}
+.pf-fld .hint{font-size:9.5px;margin-top:3px;color:#0369A1}
+.pf-fld .hint.miss{color:#B45309}
 
-.pf-hint {
-  background: var(--blue-soft); border: 1px solid #DBEAFE; border-radius: 12px;
-  padding: 14px 16px; font-size: 13px; color: #1E40AF; line-height: 1.55;
-  margin-top: 18px;
-}
-.pf-hint b { font-weight: 700; }
+.pf-legend{display:flex;gap:15px;font-size:11px;color:var(--muted);margin-top:14px;flex-wrap:wrap}
+.pf-sw{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:-1px;margin-right:5px}
+.pf-msg{display:flex;gap:9px;font-size:12.5px;padding:11px 14px;border-radius:10px;line-height:1.55;margin-top:14px}
+.pf-msg svg{width:15px;height:15px;flex:none;margin-top:1px}
+.pf-ok{background:#F0FDF4;border:1px solid #BBF7D0;color:#166534}
+.pf-err{background:#FEF2F2;border:1px solid #FECACA;color:#991B1B}
+.pf-foot{display:flex;gap:11px;margin-top:16px}
+.pf-save{background:var(--blue);color:#fff;border:0;padding:11px 22px;border-radius:9px;
+  font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:8px}
+.pf-save:hover:not(:disabled){background:var(--blue-dark)}
+.pf-save:disabled{background:#BFDBFE;cursor:default}
+.pf-spin{border:2.5px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;
+  width:14px;height:14px;animation:pf-spin .7s linear infinite}
+@keyframes pf-spin{to{transform:rotate(360deg)}}
+.pf-load{padding:70px 24px;text-align:center;color:var(--muted);font-size:14px}
+.pf-loadspin{width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--blue);
+  border-radius:50%;margin:0 auto 14px;animation:pf-spin .7s linear infinite}
 
-@media (max-width: 640px) {
-  .pf-page { padding: 24px 20px 48px; }
-  .pf-head h1 { font-size: 22px; }
-}
+@media (max-width:1000px){ .pf-cols{grid-template-columns:1fr} }
+@media (max-width:640px){ .pf-body,.pf-sent,.pf-htop{padding-left:16px;padding-right:16px} .pf-frow{grid-template-columns:1fr} }
 `
 
 function formatDate(iso) {
   if (!iso) return null
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      month: 'short', day: 'numeric', year: 'numeric',
-    })
-  } catch {
-    return null
-  }
+  try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }
+  catch { return null }
 }
 
 export default function ProfilePage() {
   const { getToken } = useAuth()
+  const { user } = useUser()
+  const navigate = useNavigate()
+  const inputRef = useRef(null)
+
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving]   = useState(false)
+  const [error, setError]     = useState('')
+  const [saved, setSaved]     = useState(false)
 
   const [resumeText, setResumeText] = useState('')
-  const [loading, setLoading]       = useState(true)
-  const [saving, setSaving]         = useState(false)
-  const [error, setError]           = useState('')
-  const [saved, setSaved]           = useState(false)
+  const [fileName, setFileName]     = useState('')
   const [updatedAt, setUpdatedAt]   = useState(null)
-  const [hasResume, setHasResume]   = useState(false)
+  const [profile, setProfile]       = useState({})
+
+  const [replacing, setReplacing] = useState(false)
+  const [dragOver, setDragOver]   = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [scrambled, setScrambled] = useState(false)
+  // True when the email box holds the Clerk address because the resume had none.
+  // Without this the field claimed "From your resume" while showing the signup
+  // address — a caption that quietly lies about where a value came from is worse
+  // than no caption, because the student has no reason to check it.
+  const [emailFromAccount, setEmailFromAccount] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-
     async function load() {
       try {
         const token = await getToken()
-        const res = await fetch(`${BACKEND}/me/resume`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
+        const res = await fetch(`${BACKEND}/me/resume`, { headers: { Authorization: `Bearer ${token}` } })
         if (!res.ok) throw new Error('load failed')
         const data = await res.json()
         if (cancelled) return
         setResumeText(data.resumeText || '')
+        setFileName(data.resumeFileName || '')
         setUpdatedAt(data.updatedAt || null)
-        setHasResume(Boolean(data.hasResume))
+        // The resume's email wins — a student often applies with a different address
+        // to the one they signed up with, and the resume is what an employer sees.
+        // The account email is only a fallback, so a resume without one does not
+        // leave a required box empty and block Save for no reason.
+        const p = data.profile || {}
+        if (!p.email && user?.primaryEmailAddress?.emailAddress) {
+          p.email = user.primaryEmailAddress.emailAddress
+          setEmailFromAccount(true)
+        }
+        setProfile(p)
       } catch {
-        if (!cancelled) setError('Could not load your saved resume. Please refresh.')
+        if (!cancelled) setError('Could not load your profile. Please refresh.')
       } finally {
         if (!cancelled) setLoading(false)
       }
     }
-
     load()
     return () => { cancelled = true }
-  }, [getToken])
+  }, [getToken, user])
 
-  async function handleSave() {
-    if (!resumeText.trim()) {
-      setError('Please paste your resume before saving.')
-      return
-    }
-    setSaving(true)
+  async function handleFile(f) {
     setError('')
-    setSaved(false)
+    if (!f) return
+    if (!/\.(pdf|docx|doc)$/i.test(f.name)) { setError('Please choose a PDF or Word file.'); return }
+    if (f.size > MAX_BYTES) { setError('That file is over 10MB.'); return }
+
+    setUploading(true)
     try {
       const token = await getToken()
-      const res = await fetch(`${BACKEND}/me/resume`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ resumeText }),
+      const form = new FormData()
+      form.append('resume', f)
+      const res = await fetch(`${BACKEND}/me/resume/upload`, {
+        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form,
       })
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data.error || 'Could not save. Please try again.')
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(data.error || 'Could not read that file.'); return }
+      if (data.status === 'empty' || data.status === 'short') {
+        setError(data.message + ' Paste the text into the box on the left instead.')
         return
       }
+      setResumeText(data.text || '')
+      setFileName(data.fileName || f.name)
+      setScrambled(data.status === 'not_resume')
+      if (data.profile) {
+        setProfile(p => ({ ...p, ...data.profile }))
+        if (data.profile.email) setEmailFromAccount(false)
+      }
+      setReplacing(false)
+      setSaved(false)
+    } catch {
+      setError('Could not reach the server. Please try again.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  async function handleSave() {
+    if (!resumeText.trim()) { setError('Your resume text is empty.'); return }
+    setSaving(true); setError(''); setSaved(false)
+    try {
+      const token = await getToken()
+      const res = await fetch(`${BACKEND}/me/profile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ resumeText, resumeFileName: fileName, profile }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(data.error || 'Could not save. Please try again.'); return }
       setSaved(true)
-      setHasResume(true)
       setUpdatedAt(data.updatedAt)
       setTimeout(() => setSaved(false), 3000)
     } catch {
-      setError('Could not connect to the server. Please try again.')
+      setError('Could not reach the server. Please try again.')
     } finally {
       setSaving(false)
     }
   }
 
+  const set = (k, v) => setProfile(p => ({ ...p, [k]: v }))
+
+  if (loading) {
+    return (
+      <SidebarLayout>
+        <div className="pf"><style>{CSS}</style>
+          <div className="pf-load"><div className="pf-loadspin" />Loading your profile…</div>
+        </div>
+      </SidebarLayout>
+    )
+  }
+
+  // yearsExperience is still extracted and still saved — it is only hidden. Nothing
+  // in the product reads it yet, but a job card showing "5+ years" or an experience
+  // filter would need it, and by then everyone who signed up already has the value.
+  // Deleting it would mean asking every user to re-upload.
+  const ALL = [...PERSONAL, ['targetRole', ''], ['yearsExperience', '']]
+  const readCount = ALL.filter(([k]) => profile[k]).length
+  const broken = !profile.targetRole
   const when = formatDate(updatedAt)
+
+  const fld = ([key, label, required]) => {
+    const empty = !profile[key]
+    return (
+      <div className="pf-fld" key={key}>
+        <label>{label}{required && <span className="pf-req">*</span>}</label>
+        <input
+          className={required && empty ? 'needed' : (empty ? 'empty' : '')}
+          value={profile[key] || ''}
+          placeholder={required ? 'Required' : 'Not found'}
+          onChange={e => {
+            if (key === 'email') setEmailFromAccount(false)
+            set(key, e.target.value)
+          }}
+        />
+        <div className={`hint ${empty ? 'miss' : ''}`}>
+          {empty
+            ? (required ? 'Please add this' : "Couldn't read this")
+            : (key === 'email' && emailFromAccount
+                ? 'From your account — not on your resume'
+                : 'From your resume')}
+        </div>
+      </div>
+    )
+  }
+
+  // Blocks Save, not the board. The student can still browse jobs with an incomplete
+  // profile — they just cannot save one that is missing the basics.
+  const missingRequired = PERSONAL.filter(([k, , req]) => req && !profile[k]).map(([, l]) => l)
 
   return (
     <SidebarLayout>
-      <div className="pf-page">
+      <div className="pf">
         <style>{CSS}</style>
 
-        <div className="pf-head">
-          <h1>Profile</h1>
-          <p>Save your resume once. Every job you optimize will use it automatically.</p>
+        {broken && (
+          <div className="pf-banner">
+            <AlertCircle />
+            <span><b>Your resume didn't come through cleanly.</b> Some fields are blank — check the text and fill in what's missing.</span>
+          </div>
+        )}
+
+        <div className="pf-htop">
+          <div>
+            <h1>Your profile</h1>
+            <p>Read from your resume. Edit anything that looks wrong.</p>
+          </div>
+          <button className="pf-goboard" onClick={() => navigate('/jobs')}>
+            Go to job board <ArrowRight />
+          </button>
         </div>
 
-        {loading ? (
-          <div className="pf-loading">
-            <div className="pf-loading-spin" />
-            Loading your resume…
+        {/* The role IS the filter. There is no field control here: whatever the
+            student types is run through the same categoriser that labelled every job,
+            so "Data Engineer" becomes Tech and the board narrows to it. One control
+            instead of two. The trade-off, accepted deliberately: a wrong inference can
+            only be corrected by changing the role text. */}
+        <div className="pf-sent">
+          <div className="pf-line">
+            <span>Looking for</span>
+            <input
+              className={`pf-in ${profile.targetRole ? '' : 'miss'}`}
+              size={20}
+              value={profile.targetRole || ''}
+              placeholder="a role"
+              onChange={e => set('targetRole', e.target.value)}
+            />
+            <span>roles.</span>
           </div>
-        ) : (
-          <>
-            <div className="pf-card">
-              <div className="pf-card-head">
-                <div className="pf-card-title"><FileText />Your resume</div>
-                {hasResume
-                  ? <span className="pf-saved-tag"><Check />Saved</span>
-                  : <span className="pf-empty-tag">Not saved yet</span>}
-              </div>
+        </div>
 
-              <textarea
-                className="pf-textarea"
-                placeholder="Paste your resume text here. Include work experience, skills, education, and any other relevant sections."
-                value={resumeText}
-                onChange={e => setResumeText(e.target.value)}
-              />
+        <div className="pf-body">
+          <div className="pf-cols">
 
-              <div className="pf-meta">
-                <span className="pf-count">{resumeText.length.toLocaleString()} characters</span>
-                {when && <span className="pf-updated">Last updated {when}</span>}
-              </div>
-
-              {error && (
-                <div className="pf-msg pf-msg-error"><AlertCircle />{error}</div>
-              )}
-              {saved && !error && (
-                <div className="pf-msg pf-msg-ok"><Check />Resume saved.</div>
-              )}
-
-              <div className="pf-actions">
-                <button className="pf-save" onClick={handleSave} disabled={saving}>
-                  {saving ? <><span className="pf-spin" />Saving…</> : 'Save resume'}
+            {/* ── LEFT: the resume ── */}
+            <div className={`pf-panel ${scrambled ? 'bad' : ''}`}>
+              <div className="pf-ph">
+                <div className="pf-pt"><FileText />Your resume</div>
+                <button className="pf-mini" onClick={() => setReplacing(v => !v)}>
+                  {replacing ? <><X />Cancel</> : <><RotateCcw />Replace</>}
                 </button>
               </div>
+              <div className="pf-fline">
+                <div className="pf-fico"><FileText /></div>
+                <div style={{ minWidth: 0 }}>
+                  <div className="pf-fname">{fileName || 'Your resume'}</div>
+                  <div className="pf-fmeta">
+                    {when ? `Updated ${when}` : 'Not saved yet'} · we read {readCount} of {ALL.length} fields from this
+                  </div>
+                </div>
+              </div>
+
+              {scrambled && (
+                <div className="pf-flag">
+                  <AlertCircle />
+                  <span><b>This came out jumbled.</b> Your resume may have two columns, which PDFs often scramble. Fix the text below, or replace it with a single-column version.</span>
+                </div>
+              )}
+
+              {replacing && (
+                <>
+                  <div className="pf-flag">
+                    <AlertCircle />
+                    <span>A new file replaces the text below and re-reads every field. Anything you have corrected by hand will be overwritten.</span>
+                  </div>
+                  <div
+                    className={`pf-drop ${dragOver ? 'over' : ''}`}
+                    onClick={() => inputRef.current?.click()}
+                    onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files?.[0]) }}
+                  >
+                    <div className="ic">📄</div>
+                    <div className="t">{uploading ? 'Reading…' : 'Drop a new resume, or click to choose'}</div>
+                    <div className="h">PDF or Word · up to 10MB</div>
+                  </div>
+                  <input ref={inputRef} type="file" accept=".pdf,.doc,.docx" style={{ display: 'none' }}
+                    onChange={e => handleFile(e.target.files?.[0])} />
+                </>
+              )}
+
+              <textarea className="pf-rt" value={resumeText} onChange={e => setResumeText(e.target.value)} />
+              <div className="pf-rtf">
+                <span>{resumeText.length.toLocaleString()} characters · what your job matches and rewrites are built from</span>
+                <span>editable</span>
+              </div>
             </div>
 
-            <div className="pf-hint">
-              <b>Coming soon:</b> upload a PDF or Word file instead of pasting. For now, open your resume, select all, and paste it above.
+            {/* ── RIGHT: the details ── */}
+            <div>
+              <div className="pf-panel">
+                <div className="pf-ph"><div className="pf-pt"><Check />What we read from it</div></div>
+                <div className="pf-fields">
+                  <div className="pf-frow">{fld(PERSONAL[0])}{fld(PERSONAL[1])}</div>
+                  <div className="pf-frow">{fld(PERSONAL[2])}{fld(PERSONAL[3])}</div>
+                  <div className="pf-frow">{fld(PERSONAL[4])}{fld(PERSONAL[5])}</div>
+                  {fld(PERSONAL[6])}
+
+                </div>
+              </div>
+
+              <div className="pf-legend">
+                <span><i className="pf-sw" style={{ background: '#F0F9FF', border: '1px solid #BAE6FD' }} />Read from your resume</span>
+                {readCount < ALL.length && (
+                  <span><i className="pf-sw" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }} />Needs you</span>
+                )}
+              </div>
+
+              {error && <div className="pf-msg pf-err"><AlertCircle />{error}</div>}
+              {saved && !error && <div className="pf-msg pf-ok"><Check />Saved.</div>}
+
+              <div className="pf-foot">
+                <button className="pf-save" onClick={handleSave} disabled={saving || missingRequired.length > 0}>
+                  {saving ? <><span className="pf-spin" />Saving…</> : 'Save changes'}
+                </button>
+                {missingRequired.length > 0 && (
+                  <span style={{ fontSize: 12, color: '#B91C1C', alignSelf: 'center' }}>
+                    Add {missingRequired.join(', ')} to save
+                  </span>
+                )}
+              </div>
+
+              <div className="pf-msg pf-ok" style={{ marginTop: 18 }}>
+                <Shield />
+                <span>We store the text of your resume, not the file. It is never sent to employers or third parties without you choosing to.</span>
+              </div>
             </div>
-          </>
-        )}
+
+          </div>
+        </div>
       </div>
     </SidebarLayout>
   )

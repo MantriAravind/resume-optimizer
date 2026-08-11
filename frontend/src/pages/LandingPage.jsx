@@ -173,11 +173,31 @@ const CSS = `
 const HERO_JOBS = [
   { logo: 'L', grad: 'linear-gradient(135deg,#DC2626,#991B1B)', title: 'Systems Engineer', co: 'Lockheed Martin', tag: 'Clearance', bad: true },
   { logo: 'R', grad: 'linear-gradient(135deg,#DC2626,#991B1B)', title: 'Federal Data Analyst', co: 'RTX', tag: 'Citizens only', bad: true },
-  { logo: 'S', grad: 'linear-gradient(135deg,#0EA5E9,#2563EB)', title: 'Data Scientist', co: 'Stripe', tag: 'Sponsors visa', bad: false },
-  { logo: 'D', grad: 'linear-gradient(135deg,#6366F1,#2563EB)', title: 'Product Designer', co: 'Discord', tag: 'Sponsors visa', bad: false },
-  { logo: 'A', grad: 'linear-gradient(135deg,#2563EB,#7C3AED)', title: 'ML Engineer', co: 'Airbnb', tag: 'Sponsors visa', bad: false },
+  { logo: 'S', grad: 'linear-gradient(135deg,#0EA5E9,#2563EB)', title: 'Data Scientist', co: 'Stripe', tag: 'No visa barrier', bad: false },
+  { logo: 'D', grad: 'linear-gradient(135deg,#6366F1,#2563EB)', title: 'Product Designer', co: 'Discord', tag: 'No visa barrier', bad: false },
+  { logo: 'A', grad: 'linear-gradient(135deg,#2563EB,#7C3AED)', title: 'ML Engineer', co: 'Airbnb', tag: 'No visa barrier', bad: false },
 ];
 const KEYWORDS = ['Python', 'SQL', 'PySpark', 'Distributed', 'Warehousing'];
+
+const BACKEND = import.meta.env.VITE_BACKEND_URL || 'https://resume-optimizer-cuii.onrender.com';
+
+// The board size was hardcoded as 54,658 and drifted to more than double the real
+// figure — on a page that claimed every number on it was real. Read it live so it
+// cannot go stale again. Shows an em dash until the number arrives: a placeholder
+// would mean either a wrong figure for a moment or another hardcoded one, and this
+// is the page where that matters most.
+function useJobCount() {
+  const [count, setCount] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${BACKEND}/stats`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (!cancelled && d?.total) setCount(d.total); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  return count;
+}
 
 function useFilterLoop() {
   const [filtered, setFiltered] = useState(false);
@@ -198,7 +218,7 @@ function HeroDemo() {
       <div className="pg-demo-head">
         <span className="pg-demo-title">Live job feed</span>
         <span className={`pg-demo-count ${filtered ? 'done' : 'filtering'}`}>
-          {filtered ? `${good} you can take` : 'Filtering…'}
+          {filtered ? `${good} with no visa barrier` : 'Filtering…'}
         </span>
       </div>
       {HERO_JOBS.map((j, i) => (
@@ -230,12 +250,12 @@ function FindDemo() {
             <div className="plf-co">{j.co}</div>
           </div>
           <span className={`plf-tag ${j.bad ? 'bad' : 'good'}`}>
-            {j.bad ? <><X />{j.tag}</> : <><Check />Sponsors</>}
+            {j.bad ? <><X />{j.tag}</> : <><Check />{j.tag}</>}
           </span>
         </div>
       ))}
       <div className="plf-status">
-        {filtered ? <>Showing <b>{good} jobs you can take</b></> : <>Filtering out clearance & citizenship…</>}
+        {filtered ? <>Showing <b>{good} with no visa barrier</b></> : <>Filtering out clearance & citizenship…</>}
       </div>
     </div>
   );
@@ -283,10 +303,10 @@ function LandDemo() {
 }
 
 const FAQS = [
-  { q: 'How do you know a job will sponsor a visa?', a: "We scan every job description against 50+ patterns for citizenship requirements, security clearances, and explicit \"no sponsorship\" language — and hide any job that matches. When a posting explicitly mentions sponsorship, we show a green \"Sponsors visa\" badge. We're deliberately strict: we'd rather hide a borderline job than let a dead-end slip through." },
+  { q: 'Do these jobs sponsor visas?', a: "We can't promise that, and we won't pretend to. What we do is scan every description against 173 patterns for citizenship requirements, security clearances, export controls and explicit refusals to sponsor, then remove anything that matches. So a job here has not ruled you out — but whether a particular employer will sponsor is still a question for them. Confirm it before you invest hours in an application." },
   { q: 'Where do the job listings come from?', a: "Directly from company career pages — not aggregators like Indeed or LinkedIn. Every \"Apply\" button takes you straight to the company's official application, so you're never chasing a reposted or expired listing." },
-  { q: 'What visa types is this built for?', a: "International students on F1, CPT, OPT, and STEM OPT. Every filter is tuned for people who need employer sponsorship to work in the US — so you only see roles that are actually open to you." },
-  { q: 'Is it free?', a: "Yes — the full job board is free, along with 3 resume optimizations per month. Pro ($9/month) unlocks unlimited optimizations, cover letters, and application tracking." },
+  { q: 'What visa types is this built for?', a: "International students on F1, CPT, OPT, and STEM OPT. Every filter is tuned for people who need employer sponsorship to work in the US. One thing worth knowing: some roles need a US state licence — nursing, law, teaching, certain trades — and a posting rarely says so outright. We are working on flagging those." },
+  { q: 'Is it free?', a: "Yes — the job board is free, along with 3 resume optimizations per month. Pro ($9/month) raises that to 30 a month. Each optimization costs real money in AI compute, so there is no unlimited tier — we would rather cap it honestly than promise unlimited and quietly throttle you." },
   { q: 'How current are the jobs?', a: "The board refreshes regularly, and expired or filled roles are removed so you're not wasting time on listings that are already gone." },
 ]
 
@@ -305,6 +325,8 @@ function FAQItem({ q, a }) {
 
 export default function LandingPage() {
   const navigate = useNavigate()
+  const jobCount = useJobCount()
+  const jobCountText = jobCount ? jobCount.toLocaleString() : '—'
   return (
     <div className="pg">
       <style>{CSS}</style>
@@ -316,7 +338,8 @@ export default function LandingPage() {
           <a href="#find">Resume Tool</a>
           <a href="#how">How it works</a>
           <a href="#pricing">Pricing</a>
-          <button className="pg-nav-cta" onClick={() => navigate('/login')}>Log in</button>
+          <a href="/login" style={{ color: '#6B7280', fontSize: '13.5px', fontWeight: 500, cursor: 'pointer' }}>Log in</a>
+          <button className="pg-nav-cta" onClick={() => navigate('/signup')}>Sign up free</button>
         </div>
       </nav>
 
@@ -325,12 +348,12 @@ export default function LandingPage() {
         <div>
           <div className="pg-eyebrow"><GraduationCap />Built for F1 · CPT · OPT · STEM OPT</div>
           <h1 className="pg-h1">Stop applying to jobs that <span className="strike">won't sponsor you.</span></h1>
-          <p className="pg-sub">We hide every role requiring citizenship or clearance — then help you tailor a resume that beats the ATS.</p>
+          <p className="pg-sub">We hide every role requiring citizenship or clearance, or that says it won't sponsor — then help you tailor a resume to the ones that are left.</p>
           <div className="pg-ctas">
-            <button className="pg-primary" onClick={() => navigate('/jobs')}>Browse jobs free <ArrowRight /></button>
+            <button className="pg-primary" onClick={() => navigate('/signup')}>Get started free <ArrowRight /></button>
             <a className="pg-secondary" href="#how" style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}>See how it works</a>
           </div>
-          <div className="pg-trust"><b>54,658</b> sponsor-friendly jobs · updated daily · no credit card</div>
+          <div className="pg-trust"><b>{jobCountText}</b> jobs with no visa barrier · updated daily · no credit card</div>
         </div>
         <HeroDemo />
       </section>
@@ -354,20 +377,20 @@ export default function LandingPage() {
             <div className="pl-num">01 — FIND</div>
             <div className="pl-icon a"><Search /></div>
             <h3>A job board that won't waste your time</h3>
-            <p>Direct links to company career pages, filtered so you never see a job you can't legally take.</p>
+            <p>Direct links to company career pages, with the citizenship, clearance and no-sponsorship roles stripped out.</p>
             <FindDemo />
             <div className="pl-feat"><Check />Hides citizenship & clearance roles</div>
-            <div className="pl-feat"><Check />Green badge when sponsorship is confirmed</div>
+            <div className="pl-feat"><Check />Direct links — no aggregators, no expired reposts</div>
             <div className="pl-feat"><Check />Filter by role, location, experience</div>
           </div>
           <div className="pl">
             <div className="pl-num">02 — LAND</div>
             <div className="pl-icon b"><FileText /></div>
             <h3>A resume built to beat the ATS</h3>
-            <p>Paste any job, and our AI tailors your resume to match — then download in a template inspired by top companies.</p>
+            <p>Paste any job, and our AI tailors your resume to match — using only work you have actually done. It never invents experience.</p>
             <LandDemo />
             <div className="pl-feat"><Check />Instant ATS match score</div>
-            <div className="pl-feat"><Check />5 recruiter-tested templates</div>
+            <div className="pl-feat"><Check />Four clean, ATS-safe fonts</div>
             <div className="pl-feat"><Check />Download as Word or PDF</div>
           </div>
         </div>
@@ -380,7 +403,7 @@ export default function LandingPage() {
           <div className="pg-section-title">From search to sent in minutes</div>
         </div>
         <div className="pg-steps">
-          <div className="pg-step"><div className="pg-step-num">1</div><h4>Browse filtered jobs</h4><p>Only roles that will actually sponsor you.</p></div>
+          <div className="pg-step"><div className="pg-step-num">1</div><h4>Browse filtered jobs</h4><p>Roles that won't reject you for needing a visa.</p></div>
           <div className="pg-step"><div className="pg-step-num">2</div><h4>Click optimize</h4><p>See your ATS match and what's missing.</p></div>
           <div className="pg-step"><div className="pg-step-num">3</div><h4>Tailor your resume</h4><p>AI rewrites it to match the role.</p></div>
           <div className="pg-step"><div className="pg-step-num">4</div><h4>Apply direct</h4><p>Straight to the company's career page.</p></div>
@@ -389,9 +412,9 @@ export default function LandingPage() {
 
       {/* DIFFERENTIATOR */}
       <section className="pg-band">
-        <h2>Every job here is <span className="hl">actually possible</span> for you.</h2>
-        <p>No citizenship walls. No clearance requirements. No "we don't sponsor" surprises after you've already spent an hour on the application. Just jobs you can take — so every application actually counts.</p>
-        <button className="pg-band-cta" onClick={() => navigate('/jobs')}>Start browsing jobs <ArrowRight /></button>
+        <h2>No more <span className="hl">"we don't sponsor"</span> after you've already applied.</h2>
+        <p>Every posting here is checked against 173 patterns for citizenship requirements, security clearances, export controls and explicit refusals to sponsor. Anything that matches is removed before you see it.</p>
+        <button className="pg-band-cta" onClick={() => navigate('/signup')}>Get started free <ArrowRight /></button>
       </section>
 
       {/* HONEST PROOF BAND */}
@@ -402,15 +425,15 @@ export default function LandingPage() {
         </div>
         <div className="pg-proof-grid">
           <div className="pg-proof-card">
-            <div className="pg-proof-num blue">54,658</div>
-            <div className="pg-proof-label">jobs you can actually take</div>
+            <div className="pg-proof-num blue">{jobCountText}</div>
+            <div className="pg-proof-label">jobs with no visa barrier</div>
           </div>
           <div className="pg-proof-card">
-            <div className="pg-proof-num green">7,531</div>
-            <div className="pg-proof-label">dead-end jobs filtered out</div>
+            <div className="pg-proof-num green">30</div>
+            <div className="pg-proof-label">days — nothing older stays on the board</div>
           </div>
           <div className="pg-proof-card">
-            <div className="pg-proof-num violet">50+</div>
+            <div className="pg-proof-num violet">173</div>
             <div className="pg-proof-label">citizenship & clearance checks per job</div>
           </div>
           <div className="pg-proof-card">
@@ -418,7 +441,7 @@ export default function LandingPage() {
             <div className="pg-proof-label">aggregators — direct company links only</div>
           </div>
         </div>
-        <div className="pg-proof-note">Every number here is real. No inflated counts, no jobs you'll get rejected from for sponsorship.</div>
+        <div className="pg-proof-note">The job count is read live from the board, not typed in. What we can promise: no role here demands citizenship or refuses sponsorship. What we can't: that any given employer will sponsor you — always confirm before applying.</div>
       </section>
 
       {/* PRICING */}
@@ -433,7 +456,7 @@ export default function LandingPage() {
             <div className="pg-price-amt">$0<span>/month</span></div>
             <div className="pg-price-feat"><Check />Full job board access</div>
             <div className="pg-price-feat"><Check />3 resume optimizations / month</div>
-            <div className="pg-price-feat"><Check />All 5 templates</div>
+            <div className="pg-price-feat"><Check />Word and PDF download</div>
             <button className="pg-price-btn free" onClick={() => navigate('/signup')}>Get started</button>
           </div>
           <div className="pg-price pro">
@@ -441,8 +464,8 @@ export default function LandingPage() {
             <div className="pg-price-name">Pro</div>
             <div className="pg-price-amt">$9<span>/month</span></div>
             <div className="pg-price-feat"><Check />Everything in Free</div>
-            <div className="pg-price-feat"><Check />Unlimited optimizations</div>
-            <div className="pg-price-feat"><Check />Cover letters & tracking</div>
+            <div className="pg-price-feat"><Check />30 resume optimizations / month</div>
+            <div className="pg-price-feat"><Check />Priority support</div>
             <button className="pg-price-btn pro" onClick={() => navigate('/signup')}>Upgrade to Pro</button>
           </div>
         </div>

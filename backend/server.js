@@ -3,6 +3,9 @@ import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import Anthropic from '@anthropic-ai/sdk'
+import { CATEGORIES, categorizeJob } from './jobCategory.mjs'
+import multer from 'multer'
+import { extractText, assessExtraction } from './resumeExtract.mjs'
 import mongoose from 'mongoose'
 import crypto from 'crypto'
 import { Document, Packer, Paragraph, TextRun, AlignmentType, LevelFormat, BorderStyle } from 'docx'
@@ -46,6 +49,9 @@ const jobSchema = new mongoose.Schema({
   postedAt:        Date,
   sponsorBadge:    Boolean,
   ats:             String,
+  // Job field, written by the pipeline from the title via jobCategory.mjs.
+  field:           String,
+  needsLicense:    Boolean,
   fetchedAt:       Date,
   experienceLevel: String,
   workType:        String,
@@ -77,6 +83,12 @@ jobSchema.index({ closed: 1, postedAt: -1 })
 jobSchema.index({ closed: 1, workType: 1, postedAt: -1 })
 jobSchema.index({ closed: 1, experienceLevel: 1, postedAt: -1 })
 jobSchema.index({ closed: 1, state: 1, postedAt: -1 })
+// The field dropdown is the biggest single cut on the board — Tech alone takes
+// 26,133 down to ~3,900 — so it earns an index of its own.
+jobSchema.index({ closed: 1, field: 1, postedAt: -1 })
+// Every board query now carries needsLicense, so it belongs in the compound index
+// rather than forcing a scan on 26,000 documents.
+jobSchema.index({ closed: 1, needsLicense: 1, postedAt: -1 })
 
 // Used by the pipeline's stale sweep, which asks "which jobs from these companies did
 // I not see this run?" over the whole collection. Unindexed, that is a full scan on
@@ -139,6 +151,33 @@ const userSchema = new mongoose.Schema({
   clerkUserId:    { type: String, required: true, unique: true, index: true },
   resumeText:     { type: String, default: '' },
   resumeFileName: { type: String, default: '' },
+
+  // Read out of the resume by Haiku at upload time, not on every page load.
+  // Every one of these may be empty — a resume states some and not others.
+  //
+  // Graduation date and visa status were here and were dropped. Nothing in the
+  // product read either one: the board filters on `field`, the optimizer uses the
+  // resume text. They were two boxes no resume can answer, sitting behind an
+  // "incomplete profile" banner, collected for nothing. Add a field the day a
+  // feature reads it — the extraction prompt takes one more key.
+  profile: {
+    firstName:      { type: String, default: '' },
+    lastName:       { type: String, default: '' },
+    // From the RESUME, not the Clerk account. A student often applies with a
+    // different address to the one they signed up with, and the resume is what an
+    // employer will see. Falls back to the account email when the resume has none.
+    email:          { type: String, default: '' },
+    field:          { type: String, default: '' },   // one of CATEGORIES
+    targetRole:     { type: String, default: '' },
+    degree:         { type: String, default: '' },
+    major:          { type: String, default: '' },
+    yearsExperience:{ type: String, default: '' },
+    location:       { type: String, default: '' },
+    phone:          { type: String, default: '' },
+    linkedin:       { type: String, default: '' },
+    github:         { type: String, default: '' },
+    graduationDate: { type: String, default: '' },
+  },
   updatedAt:      { type: Date, default: Date.now },
 })
 
@@ -158,6 +197,11 @@ app.get('/me/resume', requireUser, async (req, res) => {
       resumeText:     user?.resumeText     || '',
       resumeFileName: user?.resumeFileName || '',
       updatedAt:      user?.updatedAt      || null,
+      // The board reads profile.field from here to decide which jobs to show, so
+      // it must come back on the same call the resume gate already makes — a
+      // second round trip would mean the board renders unfiltered first and then
+      // visibly jumps.
+      profile:        user?.profile        || {},
     })
   } catch (error) {
     console.error('Get resume error:', error)
@@ -611,6 +655,296 @@ Respond in this exact JSON format with no extra text:
 })
 
 // ── JOB DETAIL — Fetch full description from Greenhouse
+// ── RESUME UPLOAD (PDF / Word) ──────────────────────────────────────────────
+//
+// The login gate made adding a resume the mandatory door into the product. Asking
+// a stranger to open their resume, select all, copy and paste is the highest-friction
+// version of the highest-friction step, so this accepts a file instead.
+//
+// WE STORE THE TEXT, NOT THE FILE. Keeping people's CVs on disk means object
+// storage, retention rules and a real privacy obligation, and nothing downstream
+// needs the original bytes. The buffer lives in memory for the length of one request.
+//
+// NOTHING HERE BLOCKS. A file that fails the checks still comes back with its text
+// and a warning; the client decides. If the checks are wrong even 2% of the time,
+// blocking locks a real student out permanently with no way to argue, while letting
+// a wrong file through costs them ten seconds — they see the wrong jobs and know.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = /\.(pdf|docx|doc)$/i.test(file.originalname)
+    cb(ok ? null : new Error('Please upload a PDF or Word file.'), ok)
+  },
+})
+
+// Asks Haiku for the profile fields in one call. Returns nulls rather than guesses:
+// a wrong graduation date shown as fact is worse than an empty box the student fills.
+async function readProfileFromResume(resumeText) {
+  const allowed = CATEGORIES.join(', ')
+  // The model has no idea what day it is, so "Jan 2022 - Present" is unresolvable
+  // and it guesses. A resume reading 5+ years came back as 3 for exactly this.
+  const today = new Date().toISOString().slice(0, 10)
+  try {
+  const message = await anthropic.messages.create({
+    model: MODEL_EXTRACT,
+    max_tokens: 700,
+    messages: [{
+      role: 'user',
+      content: `Read this resume and return ONLY a JSON object. No preamble, no markdown fences.
+
+Keys, all required, use null when the resume does not say:
+  firstName, lastName, email, targetRole, degree, major, yearsExperience, location,
+  phone, linkedin, github, graduationDate
+  field  - must be exactly one of: ${allowed}
+  isResume - true only if this is genuinely a resume or CV
+
+Rules:
+- Never guess. If the resume does not state something, use null.
+- yearsExperience: TODAY IS ${today}. Work it out by adding up every role's date
+  range, treating "Present" or "Current" as today. Do not copy a number stated in
+  a summary if the dates disagree with it. Round to a whole number. null if there
+  is no work history at all.
+- field: the field this person WORKS IN, from their most recent roles. If there is
+  no work history, fall back to the degree and major.
+- linkedin/github: full URLs if present, otherwise null.
+- graduationDate: as "MMM YYYY" if the education section gives one.
+
+RESUME:
+${resumeText.slice(0, 12000)}`,
+    }],
+  })
+
+  const raw = message.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim()
+    const parsed = JSON.parse(raw)
+    const clean = v => (typeof v === 'string' && v.trim() && v.trim().toLowerCase() !== 'null') ? v.trim() : ''
+    return {
+      isResume:        parsed.isResume !== false,
+      firstName:       clean(parsed.firstName),
+      lastName:        clean(parsed.lastName),
+      email:           clean(parsed.email),
+      targetRole:      clean(parsed.targetRole),
+      degree:          clean(parsed.degree),
+      major:           clean(parsed.major),
+      yearsExperience: clean(parsed.yearsExperience),
+      location:        clean(parsed.location),
+      phone:           clean(parsed.phone),
+      linkedin:        clean(parsed.linkedin),
+      github:          clean(parsed.github),
+      graduationDate:  clean(parsed.graduationDate),
+      // Anything outside the known list is dropped. A made-up field would filter the
+      // board down to zero jobs and look like a broken search.
+      field: CATEGORIES.includes(parsed.field) ? parsed.field : '',
+    }
+  } catch (err) {
+    // Covers BOTH a bad JSON response and the API call itself failing — an
+    // outage, a rate limit, a revoked key. None of those may block onboarding:
+    // the text is already extracted and is the part that matters, so the student
+    // continues with empty fields and fills them in. Losing the AI should cost
+    // six auto-filled boxes, not the ability to create an account.
+    console.error('profile extraction failed:', err.message)
+    return null
+  }
+}
+
+app.post('/me/resume/upload', requireUser, (req, res) => {
+  upload.single('resume')(req, res, async err => {
+    if (err) {
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? 'That file is over 10MB. Please upload a smaller one.'
+        : err.message || 'Could not read that file.'
+      return res.status(400).json({ error: msg })
+    }
+    if (!req.file) return res.status(400).json({ error: 'No file received.' })
+
+    try {
+      const { text, pages, method } = await extractText(req.file.buffer, req.file.originalname)
+      const assessment = assessExtraction(text)
+
+      // No text at all, or barely any. Returned as 200 with a status the client can
+      // act on — this is an expected outcome for a scanned PDF, not a server error.
+      if (assessment.status === 'empty' || assessment.status === 'short') {
+        return res.json({
+          status: assessment.status,
+          message: assessment.message,
+          text,
+          fileName: req.file.originalname,
+        })
+      }
+
+      const profile = await readProfileFromResume(text)
+
+      // Two independent opinions on whether this is a resume: the regex checks and
+      // the model. Either objecting is enough to warn, because they fail on different
+      // things — the checks miss an unusual layout, the model misses a bank statement
+      // that happens to contain an email address.
+      const suspect = assessment.status === 'not_resume' || profile?.isResume === false
+
+      res.json({
+        status: suspect ? 'not_resume' : 'ok',
+        message: suspect
+          ? "This doesn't look like a resume. We read the text but couldn't find the things a resume normally has."
+          : null,
+        checks: assessment.checks || null,
+        text,
+        pages,
+        method,
+        fileName: req.file.originalname,
+        profile: profile || null,
+      })
+    } catch (error) {
+      console.error('Resume upload error:', error)
+      res.status(500).json({ error: 'Could not read that file. Please try another, or paste the text instead.' })
+    }
+  })
+})
+
+// ── ANALYSE PASTED TEXT ──────────────────────────────────────
+// The paste box is the fallback when a PDF holds no text at all — a scan or a photo.
+// Those students must get the same profile extraction as everyone else, or the one
+// group already having a bad time is also the group whose board cannot be filtered.
+// Same response shape as the upload endpoint so the client handles one format.
+app.post('/me/resume/analyze', requireUser, async (req, res) => {
+  try {
+    const text = String(req.body?.text || '').trim()
+    const assessment = assessExtraction(text)
+
+    if (assessment.status === 'empty' || assessment.status === 'short') {
+      return res.json({ status: assessment.status, message: assessment.message, text })
+    }
+
+    const profile = await readProfileFromResume(text)
+    const suspect = assessment.status === 'not_resume' || profile?.isResume === false
+
+    res.json({
+      status: suspect ? 'not_resume' : 'ok',
+      message: suspect
+        ? "This doesn't look like a resume. We read the text but couldn't find the things a resume normally has."
+        : null,
+      checks: assessment.checks || null,
+      text,
+      profile: profile || null,
+    })
+  } catch (error) {
+    console.error('Resume analyse error:', error)
+    res.status(500).json({ error: 'Could not read that. Please try again.' })
+  }
+})
+
+// ── SAVE THE CONFIRMED RESUME + PROFILE ─────────────────────────────────────
+// Separate from the upload on purpose. Upload reads and returns; this saves what the
+// student has actually seen and approved. Nothing reaches the database until they
+// have looked at the extracted text — which is the point of the review step, since
+// scrambled extraction produces bad matches with no visible cause.
+app.post('/me/profile', requireUser, async (req, res) => {
+  try {
+    const { resumeText, resumeFileName, profile } = req.body || {}
+    if (!resumeText || !String(resumeText).trim()) {
+      return res.status(400).json({ error: 'Resume text is required.' })
+    }
+
+    const p = profile || {}
+    const str = v => (typeof v === 'string' ? v.trim() : '')
+
+    // The role is the single source of truth for the board. There is no field control
+    // on the profile any more, so whatever the student types as their target role is
+    // run through the same categoriser that labelled all 26,976 jobs — "Data Engineer"
+    // becomes Tech, and the board filters on that.
+    //
+    // Why the board cannot just match the role text: "Data Engineer" as a title search
+    // returns a couple of jobs. Backend, Analytics, ML and Platform Engineer all vanish,
+    // and every one of those is a job this student would take. The role is a narrow
+    // match; the field is the net.
+    //
+    // categorizeJob returns 'Other' when a title gives no clear signal — "Consultant",
+    // say. Storing that would filter the board down to the Other bucket, which is not
+    // what an unclear role means, so it is left empty and the board shows everything.
+    const role = str(p.targetRole)
+    let derivedField = ''
+    if (role) {
+      const guess = categorizeJob(role)
+      if (guess && guess !== 'Other') derivedField = guess
+    }
+
+    const update = {
+      clerkUserId:    req.userId,
+      resumeText:     String(resumeText),
+      resumeFileName: str(resumeFileName),
+      updatedAt:      new Date(),
+      profile: {
+        firstName:       str(p.firstName),
+        lastName:        str(p.lastName),
+        email:           str(p.email),
+        field:           derivedField,
+        targetRole:      str(p.targetRole),
+        degree:          str(p.degree),
+        major:           str(p.major),
+        yearsExperience: str(p.yearsExperience),
+        location:        str(p.location),
+        phone:           str(p.phone),
+        linkedin:        str(p.linkedin),
+        github:          str(p.github),
+        graduationDate:  str(p.graduationDate),
+      },
+    }
+
+    const user = await User.findOneAndUpdate(
+      { clerkUserId: req.userId },
+      update,
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    ).lean()
+
+    // Drives the board banner. These are things a resume DOES normally state, so an
+    // empty one means extraction went wrong — a scrambled two-column PDF, say — not
+    // that the student skipped a form. The banner is a fault report, not a nag.
+    const missing = ['field', 'targetRole', 'degree']
+      .filter(k => !user.profile?.[k])
+
+    res.json({ saved: true, profile: user.profile, missing, updatedAt: user.updatedAt })
+  } catch (error) {
+    console.error('Save profile error:', error)
+    res.status(500).json({ error: 'Could not save your profile. Please try again.' })
+  }
+})
+
+// ── BOARD STATS (public) ────────────────────────────────────
+// The landing page reads its job count from here. It used to be hardcoded, drifted
+// to more than double the real figure, and sat directly above a line claiming every
+// number on the page was real. A live count cannot go stale.
+//
+// Cached for 5 minutes: every visitor to a public page hits this, and the number only
+// changes when the pipeline runs — every 6 hours.
+let statsCache = { total: null, at: 0 }
+const STATS_TTL_MS = 5 * 60 * 1000
+
+app.get('/stats', async (req, res) => {
+  try {
+    // ?field=Tech returns the count for that field alone. The profile page shows it
+    // beside the sentence, so changing the field visibly changes the number — the
+    // control proves what it does instead of describing it. It also exposes a thin
+    // field for free: pick Engineering & Science and 281 appears, which tells a
+    // student more than any caption could.
+    const field = req.query.field
+    if (field && CATEGORIES.includes(field)) {
+      const total = await Job.countDocuments({ closed: { $ne: true }, field })
+      return res.json({ total, field })
+    }
+
+    const now = Date.now()
+    if (statsCache.total === null || now - statsCache.at > STATS_TTL_MS) {
+      // Same condition the board applies, so the advertised number matches what a
+      // student actually sees rather than counting rows they can never reach.
+      statsCache = { total: await Job.countDocuments({ closed: { $ne: true } }), at: now }
+    }
+    res.json({ total: statsCache.total })
+  } catch (err) {
+    // A failed count must never break the landing page. The client renders an em dash
+    // when total is missing, which is better than showing a wrong number.
+    console.error('stats failed:', err.message)
+    res.status(500).json({ error: 'could not read stats' })
+  }
+})
+
 // ── LIST jobs (search + filters + pagination)
 // The board calls this with: page, query, workType, experienceLevel, time_posted, state.
 // It expects back { jobs, total, pages }. Page size is decided here, not by the client.
@@ -628,7 +962,17 @@ app.get('/jobs', async (req, res) => {
     // matches come first, newest first within each tier.
     // Escaped so a query like "c++" or "node.js" can't break the regex.
     const esc = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const q = (req.query.query || '').trim()
+    // When the student has not searched, their TARGET ROLE becomes the query. The
+    // board is not filtered by it — every job is still there — it is only RANKED, so
+    // a Data Engineer opens the board and sees today's Data Engineer roles first, then
+    // today's related ones, then yesterday's.
+    //
+    // Filtering on the role text instead would be far worse: "Senior Data Engineer" as
+    // a title match returns a couple of jobs, and Backend, Analytics, ML and Platform
+    // Engineer all disappear — every one of them a job this student would take.
+    // Ranking keeps them, just lower down.
+    const searched = (req.query.query || '').trim()
+    const q = searched || (req.query.role || '').trim()
     const words = q ? q.split(/\s+/).filter(Boolean).slice(0, 6) : []
     // Seniority/filler words are weak signals — "Senior Software Engineer" should NOT
     // rank alongside "Data Engineer" for the search "senior data engineer" just because
@@ -652,6 +996,27 @@ app.get('/jobs', async (req, res) => {
     if (req.query.workType)        filter.workType = req.query.workType
     if (req.query.experienceLevel) filter.experienceLevel = req.query.experienceLevel
     if (req.query.state)           filter.state = req.query.state
+    // Field: validated against CATEGORIES rather than passed straight through, so a
+    // stale or hand-edited URL cannot filter on a value no job carries and silently
+    // return an empty board. An unknown value is ignored, showing everything.
+    // Roles needing a US state licence or bar admission are hidden. The board header
+    // promises these are not here, and until now that promise was only half true: the
+    // 173-pattern filter catches postings that SAY "citizens only", but a Registered
+    // Nurse posting never says it — the barrier is the licence.
+    //
+    // `$ne: true` rather than `false` on purpose: jobs saved before this field existed
+    // have no value at all, and a strict false would hide the entire back catalogue.
+    filter.needsLicense = { $ne: true }
+
+    // The field filter is deliberately no longer applied. Hiding four fifths of the
+    // board on an inferred category meant a wrong inference was invisible and had no
+    // manual fix. Relevance ranking does the same work honestly: everything is present,
+    // the right things are at the top.
+    //
+    // The parameter is still accepted so old links and bookmarks do not break.
+    if (req.query.field && CATEGORIES.includes(req.query.field)) {
+      filter.field = req.query.field
+    }
 
     // Time posted: a rolling window on postedAt. Jobs with no postedAt are excluded
     // from a time filter, which is the right call — an undated job isn't "from this week".

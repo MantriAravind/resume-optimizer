@@ -1,0 +1,18 @@
+import { isDisqualified } from './FetchJobs.mjs'
+const CASES = [
+  ['Roblox (the leak)', 'For US based roles only, please note the Company may not be able to employ candidates for this role who have United States work authorization related to certain U.S. visa categories, or support future H-1B sponsorship at this time.', true],
+  ['standalone hedged', 'The company may not be able to support future H-1B sponsorship at this time.', true],
+  ['cannot support sponsorship', 'Unfortunately we cannot support visa sponsorship for this role.', true],
+  ['POSITIVE offer', 'We are happy to offer visa sponsorship (H-1B, OPT) to qualified candidates.', false],
+  ['POSITIVE support', 'We proudly support H-1B sponsorship for this role.', false],
+  ['does not support IE', 'Our platform does not support Internet Explorer.', false],
+  ['regression: not eligible', 'This position is not eligible for immigration sponsorship.', true],
+  ['regression: citizen', 'Applicants must be a U.S. citizen.', true],
+  ['clean job', 'Build React apps with a great team. Full-time with benefits.', false],
+]
+let bad=0
+for(const [name,txt,want] of CASES){
+  const got=isDisqualified(txt); const ok=got===want; if(!ok)bad++
+  console.log(`${ok?'PASS':'FAIL'}  ${got?'BLOCK':'pass '}  (want ${want?'BLOCK':'pass'})  ${name}`)
+}
+console.log(`\n${bad===0?'REAL FILE: ALL PASS ✅':bad+' FAILED ❌'}`)

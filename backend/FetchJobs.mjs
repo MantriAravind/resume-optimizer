@@ -1,4 +1,5 @@
 import mongoose from 'mongoose'
+import { categorizeJob, requiresLicense } from './jobCategory.mjs'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
@@ -20,6 +21,19 @@ const jobSchema = new mongoose.Schema({
   postedAt:        Date,
   sponsorBadge:    Boolean,
   ats:             String,
+  // Which field the job belongs to (Tech, Healthcare, Legal...). Set from the
+  // TITLE by categorizeJob(). Powers the board's field dropdown.
+  field:           String,
+  // True when the TITLE names a role needing a US state licence or bar admission —
+  // nurse, attorney, teacher, electrician. These postings never mention citizenship
+  // because they do not need to: the barrier is the licence, not a sentence in the
+  // text, so the 173-pattern disqualifier filter cannot see them at all.
+  //
+  // Flagged, not deleted. A wrong rule is fixed by editing a word and the jobs come
+  // back; a wrong delete needs a full re-fetch, and anything expired at source is
+  // gone for good. The first version of this filter had five false positives on real
+  // data, including two sales jobs — which is the argument in one line.
+  needsLicense:    Boolean,
   fetchedAt:       { type: Date, default: Date.now },
   experienceLevel: String,
   workType:        String,
@@ -45,25 +59,15 @@ const Job = mongoose.models.Job || mongoose.model('Job', jobSchema)
 // showing students prefer a fresher, smaller board.
 const MAX_AGE_DAYS = 30
 
-// ⚠️  TEMPORARY — PUT THIS BACK TO 0.25 AFTER ONE RUN. ⚠️
+// The sweep deletes jobs it did not see at the source this run, and aborts if
+// that share looks implausible.
 //
-// The sweep deletes jobs it did not see at the source this run, and aborts if that
-// share looks implausible. 0.25 is the correct steady-state value.
-//
-// It is 0.50 right now for a one-time cleanup. The board still holds ~18,000 rows
-// saved by the old code, which stamped postedAt from updated_at. Those rows carry
-// fake-recent dates, so the age purge cannot see them (it reported 0 of 44,265 older
-// than 30 days while only 26,065 jobs were actually saved). The fetch gate skips them
-// because their real first_published is old, so they never refresh and never leave.
-// The sweep is the only thing that can remove them, and at 41% the 0.25 guard blocks
-// it forever.
-//
-// Deleting them is safe: a job that is genuinely open AND inside the 30-day window
-// would have been saved by this run. Anything the sweep catches is either too old or
-// closed. If something is wrongly deleted, the next run re-adds it.
-//
-// Once the board settles near 26,000, set this back to 0.25. Left at 0.50 it would
-// let a future bug delete half the board without complaint.
+// Briefly raised to 0.50 for a one-time cleanup: ~18,100 rows saved by the old
+// code carried postedAt copied from updated_at, so their dates read as recent and
+// the age purge could not see them. Only the sweep could, and at 41% the 0.25
+// guard blocked it. That cleanup removed 18,149 rows and the board settled at
+// ~26,100. The very next run swept 92 — 0.35% — which is what a normal run looks
+// like. Back to 0.25 and it should stay there.
 const MAX_SWEEP_SHARE = 0.25
 
 // The real posting date. Greenhouse gives two dates and they mean different things:
@@ -800,6 +804,8 @@ async function fetchAllJobs() {
               applyUrl:        job.absolute_url || '',
               postedAt:        posted,
               sponsorBadge:    false,
+              field:             categorizeJob(job.title),
+              needsLicense:             requiresLicense(job.title),
               ats:             'greenhouse',
               fetchedAt:       new Date(),
               experienceLevel,
@@ -894,6 +900,8 @@ async function fetchAllJobs() {
                 applyUrl:        job.absolute_url || '',
                 postedAt:        posted,
                 sponsorBadge:    false,
+                field:             categorizeJob(job.title),
+                needsLicense:             requiresLicense(job.title),
                 ats:             'greenhouse',
                 fetchedAt:       new Date(),
                 experienceLevel: detectExperienceLevel(job.title || ''),

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useUser } from '@clerk/clerk-react'
 import DOMPurify from 'dompurify'
+import { useHasResume } from '../hooks/useHasResume'
 import SidebarLayout from '../components/SidebarLayout'
 import OptimizeModal from './OptimizeModal'
 import {
@@ -25,6 +26,9 @@ const STATES = [
   'Wisconsin', 'Wyoming', 'District of Columbia',
 ]
 const WORK_TYPES = ['Onsite', 'Hybrid', 'Remote US']
+// Must match CATEGORIES in backend/jobCategory.mjs. The server validates against
+// that list, so a value only present here would silently return an empty board.
+
 const EXPERIENCE_LEVELS = ['Internship', 'Entry', 'Mid', 'Senior', 'Staff', 'Director']
 const TIME_OPTIONS = [
   { value: '', label: 'Time posted' },
@@ -500,6 +504,13 @@ export default function JobBoard() {
   const [experienceLevel, setExperienceLevel] = useState(searchParams.get('experienceLevel') || '')
   const [timePosted, setTimePosted] = useState(searchParams.get('timePosted') || '')
   const [stateFilter, setStateFilter] = useState(searchParams.get('state') || '')
+  // The board is no longer filtered by field. Instead the student's TARGET ROLE is
+  // sent as a ranking hint whenever they have not searched: every job is present, the
+  // closest title matches lead. Day still beats relevance, so today's postings come
+  // first and the best matches sit at the top of each day.
+  const { profile } = useHasResume()
+  const targetRole = profile?.targetRole || ''
+
 
   const [selected, setSelected] = useState(null)
   const [detailLoading, setDetailLoading] = useState(false)
@@ -539,6 +550,8 @@ export default function JobBoard() {
       if (experienceLevel) params.set('experienceLevel', experienceLevel)
       if (timePosted) params.set('time_posted', timePosted)
       if (stateFilter) params.set('state', stateFilter)
+      // Ranking hint only, and only when they have not typed their own search.
+      if (!query && targetRole) params.set('role', targetRole)
 
       const res = await fetch(`${BACKEND}/jobs?${params.toString()}`)
       if (!res.ok) throw new Error('bad response')
@@ -555,7 +568,7 @@ export default function JobBoard() {
       setLoading(false)
       setLoadingMore(false)
     }
-  }, [page, query, workType, experienceLevel, timePosted, stateFilter])
+  }, [page, query, workType, experienceLevel, timePosted, stateFilter, targetRole])
 
   useEffect(() => { fetchJobs() }, [fetchJobs])
 

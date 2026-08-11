@@ -1,0 +1,31 @@
+import { isUSLocation, isContractOrPartTime } from './FetchJobs.mjs'
+
+let bad = 0
+const L = (loc, want) => { const g = isUSLocation(loc); const ok = (g===want); if(!ok)bad++;
+  console.log(`${ok?'PASS':'FAIL'}  ${g?'US    ':'non-US'}  (want ${want?'US':'non-US'})  "${loc}"`) }
+const C = (name, body, title, want) => { const g = isContractOrPartTime(body,title); const ok=(g===want); if(!ok)bad++;
+  console.log(`${ok?'PASS':'FAIL'}  ${g?'CONTRACT':'passed  '}  (want ${want?'CONTRACT':'passed'})  ${name}`) }
+
+console.log('=== LOCATION ===')
+L('(Remote EU)', false)         // the leak
+L('Remote EU', false)
+L('Remote UK', false)
+L('Remote - EMEA', false)
+L('Remote (US)', true)          // must stay US
+L('Remote, US', true)
+L('Remote Austin, TX', true)
+L('Remote', true)               // bare remote -> US (unchanged default)
+L('Eugene, OR', true)           // must not be broken by the new rule
+L('Westport, CT', true)
+
+console.log('\n=== CONTRACT ===')
+const yld = 'Location: (Remote EU) Employment Type: Contract (B2B) Contract Length: 6 months (with potential for extension) About YLD: help clients move forward.'
+C('YLD contract (the leak)', yld, 'Contract Solutions Engineer', true)
+C('Employment Type: Contract', 'Employment Type: Contract. Join us.', 'Solutions Engineer', true)
+C('Contract Length: field', 'Great role. Contract Length: 12 months.', 'Data Engineer', true)
+C('full-time SWE', 'Employment Type: Full-time. Build great products.', 'Software Engineer', false)
+C('Smart Contract Engineer (FT)', 'Employment Type: Full-time. Build smart contracts on Ethereum.', 'Smart Contract Engineer', false)
+C('Contract Manager (FT)', 'Employment Type: Full-time. Negotiate contract length with vendors.', 'Contract Manager', false)
+C('Govt Contracts Analyst (FT)', 'Employment Type: Full-time. Analyze government contracts.', 'Government Contracts Analyst', false)
+
+console.log(`\n${bad===0?'ALL PASS ✅':bad+' FAILED ❌'}`)
