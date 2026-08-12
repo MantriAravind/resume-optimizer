@@ -693,8 +693,14 @@ export default function JobBoard() {
       navigate('/login')
       return
     }
-    // open the modal in place — no navigation, no lost job
-    if (selected) closeJob()
+    // Open the modal in place — no navigation, no lost job.
+    //
+    // The selected job is NOT cleared. It used to be, which meant closing the modal
+    // dropped you on an empty pane reading "Select a job" — the job you had just been
+    // reading, gone. On mobile the detail drawer is a full-screen overlay that would
+    // sit behind the modal, so that one is still closed; on desktop the detail is a
+    // pane and there is nothing to hide.
+    if (selected && window.innerWidth < 1100) closeJob()
     setOptimizeJob(job)
     document.body.style.overflow = 'hidden'
   }

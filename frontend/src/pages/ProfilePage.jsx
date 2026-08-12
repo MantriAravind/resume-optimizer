@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useAuth, useUser } from '@clerk/clerk-react'
 import { useNavigate } from 'react-router-dom'
 import SidebarLayout from '../components/SidebarLayout'
-import { FileText, Check, AlertCircle, RotateCcw, X, Shield, ArrowRight } from 'lucide-react'
+import { FileText, Check, AlertCircle, RotateCcw, X, ArrowRight } from 'lucide-react'
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || 'https://resume-optimizer-cuii.onrender.com'
 const MAX_BYTES = 10 * 1024 * 1024
@@ -11,6 +11,10 @@ const MAX_BYTES = 10 * 1024 * 1024
 // The right-hand column. targetRole, yearsExperience and field are NOT here — they
 // live in the header sentence, because they are the only ones that change what the
 // job board shows. Everything in this list is just the student's details.
+// targetRole lives in this grid rather than in its own row. It is the only field that
+// changes what the board shows — it runs through categorizeJob() on save and ranks the
+// board — but a separate sentence for one field was more weight than the page needed.
+//
 // Required is visual plus a blocked Save — never a blocked board. A resume with no
 // phone number is common, and locking that student out of jobs entirely would be a
 // far worse failure than an incomplete profile.
@@ -21,7 +25,8 @@ const PERSONAL = [
   ['phone',     'Phone',      true],
   ['linkedin',  'LinkedIn'],
   ['github',    'GitHub'],
-  ['location',  'Location'],
+  ['location',   'Location'],
+  ['targetRole', 'Target role'],
 ]
 
 const CSS = `
@@ -48,17 +53,8 @@ const CSS = `
 
 /* The sentence carries the two fields the student actually sets. The field the board
    filters on is derived from the role on save — see /me/profile in server.js. */
-.pf-sent{padding:13px 26px 15px;border-bottom:1px solid #EEF2F6}
-/* Deliberately lighter than the panel headings below. This is a summary line, not
-   the main content, so it should sit quietly above them rather than compete. */
-.pf-line{font-size:13px;color:#4B5563;display:flex;gap:7px;align-items:center;flex-wrap:wrap;line-height:1.9}
-.pf-in{border:1px solid #BFDBFE;border-radius:6px;font-size:12.5px;font-weight:640;
-  color:#1E3A8A;background:#F7FAFF;font-family:inherit;padding:4px 8px}
-.pf-in:focus{outline:none;border-color:var(--blue);background:#fff}
-select.pf-in{cursor:pointer;padding-right:26px}
 /* An unread value gets real words, not a hole in a sentence — "roles in all fields"
    is both true and grammatical where an empty box was neither. */
-.pf-in.miss{border-color:#FDE68A;background:#FFFBEB;color:#B45309}
 
 .pf-body{padding:16px 26px 44px}
 .pf-cols{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start}
@@ -99,21 +95,16 @@ select.pf-in{cursor:pointer;padding-right:26px}
 
 .pf-fields{padding:13px}
 .pf-frow{display:grid;grid-template-columns:1fr 1fr;gap:11px}
-.pf-fld{margin-bottom:11px}
+.pf-fld{margin-bottom:12px}
 .pf-fld label{display:block;font-size:10px;font-weight:650;color:var(--muted);
   text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
 .pf-req{color:#DC2626;margin-left:2px}
 .pf-fld input.needed{border-color:#FCA5A5;background:#FEF2F2}
 .pf-fld input{width:100%;padding:8px 11px;border:1px solid #BAE6FD;border-radius:7px;
   font-size:12.5px;font-family:inherit;background:#F0F9FF;color:var(--ink)}
-.pf-fld input.empty{background:#FFFBEB;border-color:#FDE68A}
-.pf-fld input.ro{background:#F9FAFB;border-color:var(--border);color:var(--muted)}
 .pf-fld input:focus{outline:none;border-color:var(--blue)}
 .pf-fld .hint{font-size:9.5px;margin-top:3px;color:#0369A1}
-.pf-fld .hint.miss{color:#B45309}
 
-.pf-legend{display:flex;gap:15px;font-size:11px;color:var(--muted);margin-top:14px;flex-wrap:wrap}
-.pf-sw{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:-1px;margin-right:5px}
 .pf-msg{display:flex;gap:9px;font-size:12.5px;padding:11px 14px;border-radius:10px;line-height:1.55;margin-top:14px}
 .pf-msg svg{width:15px;height:15px;flex:none;margin-top:1px}
 .pf-ok{background:#F0FDF4;border:1px solid #BBF7D0;color:#166534}
@@ -131,7 +122,7 @@ select.pf-in{cursor:pointer;padding-right:26px}
   border-radius:50%;margin:0 auto 14px;animation:pf-spin .7s linear infinite}
 
 @media (max-width:1000px){ .pf-cols{grid-template-columns:1fr} }
-@media (max-width:640px){ .pf-body,.pf-sent,.pf-htop{padding-left:16px;padding-right:16px} .pf-frow{grid-template-columns:1fr} }
+@media (max-width:640px){ .pf-body,.pf-htop{padding-left:16px;padding-right:16px} .pf-frow{grid-template-columns:1fr} }
 `
 
 function formatDate(iso) {
@@ -160,11 +151,6 @@ export default function ProfilePage() {
   const [dragOver, setDragOver]   = useState(false)
   const [uploading, setUploading] = useState(false)
   const [scrambled, setScrambled] = useState(false)
-  // True when the email box holds the Clerk address because the resume had none.
-  // Without this the field claimed "From your resume" while showing the signup
-  // address — a caption that quietly lies about where a value came from is worse
-  // than no caption, because the student has no reason to check it.
-  const [emailFromAccount, setEmailFromAccount] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -185,7 +171,6 @@ export default function ProfilePage() {
         const p = data.profile || {}
         if (!p.email && user?.primaryEmailAddress?.emailAddress) {
           p.email = user.primaryEmailAddress.emailAddress
-          setEmailFromAccount(true)
         }
         setProfile(p)
       } catch {
@@ -221,10 +206,7 @@ export default function ProfilePage() {
       setResumeText(data.text || '')
       setFileName(data.fileName || f.name)
       setScrambled(data.status === 'not_resume')
-      if (data.profile) {
-        setProfile(p => ({ ...p, ...data.profile }))
-        if (data.profile.email) setEmailFromAccount(false)
-      }
+      if (data.profile) setProfile(p => ({ ...p, ...data.profile }))
       setReplacing(false)
       setSaved(false)
     } catch {
@@ -272,32 +254,24 @@ export default function ProfilePage() {
   // in the product reads it yet, but a job card showing "5+ years" or an experience
   // filter would need it, and by then everyone who signed up already has the value.
   // Deleting it would mean asking every user to re-upload.
-  const ALL = [...PERSONAL, ['targetRole', ''], ['yearsExperience', '']]
-  const readCount = ALL.filter(([k]) => profile[k]).length
   const broken = !profile.targetRole
   const when = formatDate(updatedAt)
 
+  // Plain boxes, no caption underneath. The hints ("From your resume" / "Couldn't read
+  // this") and the amber tint made every empty optional field look like a task — a
+  // student with no GitHub read it as something they had failed to do. The only tint
+  // left is on a required field that is empty, because that one genuinely blocks Save.
   const fld = ([key, label, required]) => {
     const empty = !profile[key]
     return (
       <div className="pf-fld" key={key}>
         <label>{label}{required && <span className="pf-req">*</span>}</label>
         <input
-          className={required && empty ? 'needed' : (empty ? 'empty' : '')}
+          className={required && empty ? 'needed' : ''}
           value={profile[key] || ''}
-          placeholder={required ? 'Required' : 'Not found'}
-          onChange={e => {
-            if (key === 'email') setEmailFromAccount(false)
-            set(key, e.target.value)
-          }}
+          placeholder={required ? 'Required' : ''}
+          onChange={e => set(key, e.target.value)}
         />
-        <div className={`hint ${empty ? 'miss' : ''}`}>
-          {empty
-            ? (required ? 'Please add this' : "Couldn't read this")
-            : (key === 'email' && emailFromAccount
-                ? 'From your account — not on your resume'
-                : 'From your resume')}
-        </div>
       </div>
     )
   }
@@ -328,25 +302,6 @@ export default function ProfilePage() {
           </button>
         </div>
 
-        {/* The role IS the filter. There is no field control here: whatever the
-            student types is run through the same categoriser that labelled every job,
-            so "Data Engineer" becomes Tech and the board narrows to it. One control
-            instead of two. The trade-off, accepted deliberately: a wrong inference can
-            only be corrected by changing the role text. */}
-        <div className="pf-sent">
-          <div className="pf-line">
-            <span>Looking for</span>
-            <input
-              className={`pf-in ${profile.targetRole ? '' : 'miss'}`}
-              size={20}
-              value={profile.targetRole || ''}
-              placeholder="a role"
-              onChange={e => set('targetRole', e.target.value)}
-            />
-            <span>roles.</span>
-          </div>
-        </div>
-
         <div className="pf-body">
           <div className="pf-cols">
 
@@ -363,7 +318,7 @@ export default function ProfilePage() {
                 <div style={{ minWidth: 0 }}>
                   <div className="pf-fname">{fileName || 'Your resume'}</div>
                   <div className="pf-fmeta">
-                    {when ? `Updated ${when}` : 'Not saved yet'} · we read {readCount} of {ALL.length} fields from this
+                    {when ? `Updated ${when}` : 'Not saved yet'}
                   </div>
                 </div>
               </div>
@@ -412,16 +367,9 @@ export default function ProfilePage() {
                   <div className="pf-frow">{fld(PERSONAL[0])}{fld(PERSONAL[1])}</div>
                   <div className="pf-frow">{fld(PERSONAL[2])}{fld(PERSONAL[3])}</div>
                   <div className="pf-frow">{fld(PERSONAL[4])}{fld(PERSONAL[5])}</div>
-                  {fld(PERSONAL[6])}
+                  <div className="pf-frow">{fld(PERSONAL[6])}{fld(PERSONAL[7])}</div>
 
                 </div>
-              </div>
-
-              <div className="pf-legend">
-                <span><i className="pf-sw" style={{ background: '#F0F9FF', border: '1px solid #BAE6FD' }} />Read from your resume</span>
-                {readCount < ALL.length && (
-                  <span><i className="pf-sw" style={{ background: '#FFFBEB', border: '1px solid #FDE68A' }} />Needs you</span>
-                )}
               </div>
 
               {error && <div className="pf-msg pf-err"><AlertCircle />{error}</div>}
@@ -438,11 +386,7 @@ export default function ProfilePage() {
                 )}
               </div>
 
-              <div className="pf-msg pf-ok" style={{ marginTop: 18 }}>
-                <Shield />
-                <span>We store the text of your resume, not the file. It is never sent to employers or third parties without you choosing to.</span>
-              </div>
-            </div>
+                </div>
 
           </div>
         </div>

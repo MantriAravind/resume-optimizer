@@ -6,7 +6,10 @@ import { Briefcase, User, FileText, Calendar, Settings, ChevronsLeft, ChevronsRi
 const NAV_ITEMS = [
   { icon: Briefcase, label: 'Job Board',   path: '/jobs', available: true },
   { icon: User,      label: 'Profile',     path: '/profile', available: true },
-  { icon: FileText,  label: 'Resume Tool', path: '/app', available: true },
+  // Hidden until after launch. The /app route still exists and still works — this
+  // only removes it from the sidebar, so nothing has to be rebuilt to bring it back.
+  // The board's own "Optimize my resume" button opens a modal and is unaffected.
+  // { icon: FileText,  label: 'Resume Tool', path: '/app', available: true },
   { icon: Calendar,  label: 'Tracker',     path: '/tracker', available: false },
   { icon: Settings,  label: 'Settings',    path: '/settings', available: false },
 ]

@@ -441,6 +441,122 @@ function gateContentWords(str, skills) {
 // source bullet) lets reworded and merged bullets pass; only work that simply is
 // not in the resume gets flagged. The threshold is deliberately low to avoid
 // false positives on honest rewrites.
+// ── STRAY PROSE AFTER THE RESUME ───────────────────────────────────────────
+//
+// A real failure: the model appended a paragraph to the bottom of a finished resume —
+// "Note: Grailed sits at the intersection of fashion, community, and commerce... I
+// recently bought a pair of Needles track pants through a peer-to-peer sale on Depop."
+// None of that was in the resume. It read the job description, invented a personal
+// anecdote, and attached it to the candidate's CV.
+//
+// inventedBullets() did not catch it because that only inspects EXPERIENCE bullets, and
+// this was loose text after CERTIFICATIONS. A resume ends at its last section; anything
+// after it is not a resume.
+const RESUME_SECTIONS = /^(SUMMARY|PROFESSIONAL SUMMARY|OBJECTIVE|SKILLS|TECHNICAL SKILLS|TECHNICAL PROFICIENCY|CORE COMPETENCIES|EXPERIENCE|PROFESSIONAL EXPERIENCE|WORK EXPERIENCE|EMPLOYMENT|PROJECTS|KEY PROJECTS|NOTABLE PROJECTS|EDUCATION|CERTIFICATIONS|CERTIFICATIONS & LICENSES|LICENSES|PUBLICATIONS|AWARDS|VOLUNTEER EXPERIENCE|LANGUAGES|INTERESTS)\s*$/i
+
+/**
+ * Returns lines that appear after the last legitimate section and read as prose rather
+ * than resume content.
+ *
+ * A bullet or a short entry after CERTIFICATIONS is fine — that is the section's own
+ * content. What is not fine is a paragraph, especially one opening "Note:" or written
+ * in the first person, which no resume contains.
+ */
+function strayProse(text) {
+  const lines = String(text || '').split(/\r?\n/)
+  let lastSection = -1
+  lines.forEach((l, i) => { if (RESUME_SECTIONS.test(l.trim())) lastSection = i })
+  if (lastSection === -1) return []
+
+  const flagged = []
+  for (const raw of lines.slice(lastSection + 1)) {
+    const l = raw.trim()
+    if (!l) continue
+    if (/^[-•*]/.test(l)) continue                 // a bullet is section content
+    if (l.length < 120) continue                   // short lines are entries, not prose
+    // First person or a note label. A resume is written about the candidate, never by
+    // them in conversation.
+    if (/^note\s*:/i.test(l) || /\b(I|I'm|I've|my|me)\b/.test(l)) flagged.push(l)
+  }
+  return flagged
+}
+
+// ── YEARS OF EXPERIENCE, COMPUTED ──────────────────────────────────────────
+//
+// The model cannot do this. It was asked twice, in the prompt, with today's date
+// supplied — and still wrote "4+ years" for a resume totalling 68 months. It has no
+// reliable sense of what day it is, and an instruction buried in a list of rules is a
+// suggestion. So the arithmetic happens here and the answer is handed over as a fact.
+//
+// Matches the date ranges resumes actually use:
+//   Jan 2024 - Present     Jan 2024 – Present     01/2024 - Present
+//   Nov 2022 - Dec 2023    Oct 2020 – Dec 2021
+const MONTHS = { jan:1, feb:2, mar:3, apr:4, may:5, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12 }
+const DATE_RANGE = new RegExp(
+  '\\b(?:(' + Object.keys(MONTHS).join('|') + ')[a-z]*\\.?\\s+|(\\d{1,2})[\\/\\-])?' +  // start month
+  '((?:19|20)\\d{2})' +                                                            // start year
+  '\\s*[-–—]{1,2}\\s*' +                                                              // separator
+  '(?:(present|current|now)|' +                                                   // or an end date
+  '(?:(' + Object.keys(MONTHS).join('|') + ')[a-z]*\\.?\\s+|(\\d{1,2})[\\/\\-])?((?:19|20)\\d{2}))',
+  'gi',
+)
+
+/**
+ * Total months of work experience across every role in the resume.
+ *
+ * Sums each range separately rather than measuring first-start to today, because gaps
+ * are real: this resume has a four-month gap in 2022, and counting straight through
+ * would overstate by that much.
+ *
+ * Overlapping ranges are summed too. That overstates for someone holding two jobs at
+ * once, which is rare on a student resume — and overstating slightly is a smaller
+ * problem than the current bug, which understates by nearly two years.
+ *
+ * Returns null when nothing parses, and the caller then leaves the number out
+ * entirely. A missing figure is better than a wrong one.
+ */
+function totalExperienceMonths(resumeText) {
+  // Only the EXPERIENCE section. Education dates ("May 2024") and certification years
+  // would otherwise be counted as jobs.
+  const upper = String(resumeText || '')
+  const expStart = upper.search(/^\s*(?:PROFESSIONAL\s+|WORK\s+)?EXPERIENCE\s*$/mi)
+  // No EXPERIENCE section means no work history to count. Scanning the whole document
+  // as a fallback read "BS | 2018 - 2022" as five years of employment — which is a
+  // fresh graduate, exactly the person who must not have their experience overstated.
+  if (expStart === -1) return null
+  const after = upper.slice(expStart)
+  const expEnd = after.slice(1).search(/^\s*(PROJECTS|EDUCATION|CERTIFICATIONS|SKILLS)\s*$/mi)
+  const section = expEnd === -1 ? after : after.slice(0, expEnd + 1)
+
+  const now = new Date()
+  let total = 0
+  let found = 0
+
+  DATE_RANGE.lastIndex = 0
+  for (const m of section.matchAll(DATE_RANGE)) {
+    const [, sMonName, sMonNum, sYear, present, eMonName, eMonNum, eYear] = m
+    const startY = parseInt(sYear, 10)
+    const startM = sMonName ? MONTHS[sMonName.toLowerCase().slice(0, 3)]
+                 : sMonNum  ? parseInt(sMonNum, 10)
+                 : 1
+    let endY, endM
+    if (present) {
+      endY = now.getFullYear()
+      endM = now.getMonth() + 1
+    } else {
+      endY = parseInt(eYear, 10)
+      endM = eMonName ? MONTHS[eMonName.toLowerCase().slice(0, 3)]
+           : eMonNum  ? parseInt(eMonNum, 10)
+           : 12
+    }
+    // Inclusive of both endpoints: Jan–Dec is twelve months, not eleven.
+    const months = (endY * 12 + endM) - (startY * 12 + startM) + 1
+    if (months > 0 && months < 600) { total += months; found++ }
+  }
+
+  return found ? total : null
+}
+
 function inventedBullets(optimized, original, skills) {
   const origWords = new Set(gateContentWords(original, skills))
   const flagged = []
@@ -479,6 +595,13 @@ app.post('/optimize', async (req, res) => {
 They told us this directly. Treat it as fact.`
       : `The candidate has not confirmed any additional skills. Do not add any skill that does not already appear somewhere in their resume.`
 
+    // Computed here, not asked of the model — see totalExperienceMonths above.
+    const expMonths = totalExperienceMonths(resumeText)
+    const expYears = expMonths === null ? null : Math.floor(expMonths / 12)
+    const yearsRule = expYears === null
+      ? '- YEARS OF EXPERIENCE. The work history could not be read reliably, so do NOT state a number of years in the summary. Describe the experience without counting it.'
+      : `- YEARS OF EXPERIENCE. This candidate has ${expYears}+ years of experience. That number is calculated from the dates in their resume and is correct. If the summary states a number of years it MUST say "${expYears}+ years". Do not recalculate it and do not copy a different number from the original resume, which may be out of date.`
+
     const basePrompt = `You are an expert resume editor and ATS specialist. Rewrite the resume below so it is targeted at this specific job.
 
 ${confirmedBlock}
@@ -513,6 +636,8 @@ Bullets containing real results outrank keyword-carrying bullets. "Reduced pipel
 LENGTH DISCIPLINE (keeps the resume tight, ideally two pages):
 - Each bullet is ONE to TWO lines. If a bullet runs to three lines, it is doing too much — split the real result into its own bullet or trim the setup words. No bullet is a paragraph.
 - The SUMMARY is 2-3 sentences. Not a paragraph. Not five sentences. It states who they are, their strongest relevant skills, and nothing else.
+${yearsRule}
+- THE RESUME ENDS AT ITS LAST SECTION. Do not append notes, commentary, a cover letter, a message to the employer, or anything written in the first person. Never write a sentence beginning "Note:" or containing "I". The output is a resume and nothing else.
 - PROJECT descriptions are 1-2 sentences each. A project is not a second job history; it is a short proof point.
 - Cut filler openers: "Responsible for", "Worked on", "Tasked with", "Helped to". Start bullets with the verb.
 - For older or less relevant roles, fewer bullets (2-3) is correct. Weight the bullets toward the most recent and most relevant experience.
@@ -607,19 +732,30 @@ Respond in this exact JSON format with no extra text:
       const invented = inventedBullets(out, resumeText, confirmed)
       const dashes = findBannedDashes(out)
       const pastT = findCurrentRolePastTense(out)
-      if (!invented.length && !dashes.length && !pastT.length) break
+      const stray = strayProse(out)
+      if (!invented.length && !dashes.length && !pastT.length && !stray.length) break
       if (attempt === 2) {
         if (invented.length) gateNote = ' (Please review the experience section: one or more bullets may describe work not in your original resume.)'
-        console.warn('optimize gate unresolved after retries: invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length)
+        // Last resort: strip it. A fabricated paragraph reaching a student's resume is
+        // worse than a slightly shorter document, and this is the point where retries
+        // have run out.
+        if (stray.length) {
+          for (const p of stray) out = out.replace(p, '').trim()
+          console.warn('optimize gate: stripped ' + stray.length + ' stray paragraph(s)')
+        }
+        console.warn('optimize gate unresolved after retries: invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length + ' stray=' + stray.length)
         break
       }
-      console.warn('optimize gate retry ' + (attempt + 1) + ': invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length)
+      console.warn('optimize gate retry ' + (attempt + 1) + ': invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length + ' stray=' + stray.length)
       let corrections = 'Your draft breaks the rules below. Fix ONLY these problems and return the same JSON format.\n'
       if (invented.length) {
         corrections += '\nINVENTED EXPERIENCE. These bullets describe work that is NOT in the original resume, which is fabrication and is forbidden:\n' + invented.map(b => '  - "' + b + '"').join('\n') + '\nDelete each one. If a bullet exists only to carry a confirmed skill, remove the bullet and place that skill in the skills section instead. Do not write a replacement bullet.\n'
       }
       if (dashes.length) {
         corrections += '\nBANNED DASHES (em-dash, en-dash, or --) on these lines:\n' + dashes.map(l => '  - "' + l + '"').join('\n') + '\nReplace each with a comma, a full stop, or a plain hyphen. Keep a plain hyphen only inside a certification name.\n'
+      }
+      if (stray.length) {
+        corrections += '\\nTEXT THAT IS NOT PART OF A RESUME. You appended prose after the last section:\\n' + stray.map(l => '  - "' + l.slice(0, 120) + '…"').join('\\n') + '\\nDelete it entirely. A resume ends at its final section. Never add notes, commentary, or anything written in the first person.\\n'
       }
       if (pastT.length) {
         corrections += '\nTENSE. Your CURRENT role (its dates end in "Present") must be present tense throughout. These bullets open in PAST tense:\n' + pastT.map(l => '  - "' + l + '"').join('\n') + '\nRewrite each opening verb to present tense (Managed to Manage, Led to Lead, Built to Build, Optimized to Optimize). If a flagged word is actually an adjective or already present tense, leave it unchanged.\n'
