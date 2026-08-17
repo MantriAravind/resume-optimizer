@@ -2,7 +2,7 @@ import dns from 'dns'
 import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
-import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 import { CATEGORIES, categorizeJob } from './jobCategory.mjs'
 import multer from 'multer'
 import { extractText, assessExtraction } from './resumeExtract.mjs'
@@ -23,7 +23,49 @@ dotenv.config()
 const app = express()
 const PORT = 3001
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+
+// One place where every model call goes through, so a model swap is an env change
+// and not a code change. Returns the assistant's text directly — callers never
+// touch the response shape.
+//
+// Three OpenAI quirks are handled here rather than at each call site:
+//   1. `max_tokens` is deprecated; reasoning models want `max_completion_tokens`,
+//      and that budget covers INVISIBLE REASONING TOKENS as well as the reply.
+//      Too low a number returns an empty string with finish_reason 'length'.
+//   2. `reasoning_effort` turns that thinking down. Extraction tasks do not need
+//      it; the rewrite does.
+//   3. Models differ on which optional params they accept at all (gpt-5-nano
+//      refuses temperature: 0). Rather than hard-code who supports what, a
+//      rejected param is dropped and the call retried, with a warning so you
+//      can see it happening instead of guessing.
+async function askModel({ model, maxTokens, temperature, reasoningEffort, messages }) {
+  const params = { model, messages, max_completion_tokens: maxTokens }
+  if (typeof temperature === 'number') params.temperature = temperature
+  if (reasoningEffort) params.reasoning_effort = reasoningEffort
+
+  const optional = ['temperature', 'reasoning_effort']
+  let completion
+  for (let tries = 0; ; tries++) {
+    try {
+      completion = await openai.chat.completions.create(params)
+      break
+    } catch (err) {
+      const blamed = optional.find(p => p in params &&
+        (err?.param === p || new RegExp(p, 'i').test(String(err?.message || ''))))
+      if (!blamed || tries >= optional.length) throw err
+      console.warn(`askModel: ${model} rejected ${blamed}=${params[blamed]}, retrying without it`)
+      delete params[blamed]
+    }
+  }
+
+  const text = completion?.choices?.[0]?.message?.content
+  if (typeof text !== 'string' || !text.trim()) {
+    const reason = completion?.choices?.[0]?.finish_reason || 'unknown'
+    throw new Error(`${model} returned no text (finish_reason: ${reason})`)
+  }
+  return text
+}
 
 app.use(cors({
   origin: ['http://localhost:5173', 'http://localhost:5174', 'https://resume-optimizer-delta-dusky.vercel.app']
@@ -252,8 +294,11 @@ app.post('/me/resume', requireUser, async (req, res) => {
 // The rewrite is the part that has to sound human and never fabricate, so it stays
 // on the stronger model. Both /analyze and /optimize call extractKeywords, so they
 // always agree and the score cannot drift between the two calls.
-const MODEL_EXTRACT = 'claude-haiku-4-5-20251001'
-const MODEL_REWRITE = 'claude-sonnet-4-6'
+// Configurable so a model change is an env edit and a restart, not a deploy.
+// Defaults match what is documented; override in .env / Render to A/B test.
+const MODEL_EXTRACT  = process.env.OPENAI_ANALYSIS_MODEL     || 'gpt-5-nano'
+const MODEL_REWRITE  = process.env.OPENAI_OPTIMIZATION_MODEL || 'gpt-5.6-luna'
+const MODEL_FALLBACK = process.env.OPENAI_FALLBACK_MODEL     || 'gpt-5.6-terra'
 
 async function extractKeywords(resumeText, jobText) {
   const cacheKey = analyzeCacheKey(resumeText, jobText)
@@ -267,10 +312,17 @@ async function extractKeywords(resumeText, jobText) {
     console.warn('analyze cache read failed:', e.message)
   }
 
-  const message = await anthropic.messages.create({
+  const replyText = await askModel({
     model: MODEL_EXTRACT,
-    max_tokens: 1000,
-    temperature: 0,   // deterministic: same resume + same job = same skills, every time
+    // Budget covers invisible reasoning tokens too. Sized generously on purpose:
+    // if reasoning_effort is refused outright the model thinks at full effort, and
+    // a starved budget returns an empty string rather than a short answer.
+    maxTokens: 8000,
+    // gpt-5-nano refuses temperature: 0, so the determinism this call used to have
+    // is gone. 'minimal' keeps it as close to stable as we can get — this is
+    // mechanical matching, not a task that benefits from thinking. ('none' is
+    // refused by this model; minimal is its floor.)
+    reasoningEffort: 'minimal',
     messages: [{
       role: 'user',
       content: `You are an ATS specialist.
@@ -294,11 +346,17 @@ Respond in this exact JSON format with no extra text:
 }`
     }]
   })
-  const cleaned = message.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+  const cleaned = replyText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
   const parsed = JSON.parse(cleaned)
   const result = {
-    matchedKeywords: Array.isArray(parsed.matchedKeywords) ? parsed.matchedKeywords : [],
-    missingKeywords: Array.isArray(parsed.missingKeywords) ? parsed.missingKeywords : [],
+    matchedKeywords: Array.isArray(parsed.matchedKeywords) ? parsed.matchedKeywords.filter(keepAsSkill) : [],
+    // Certifications are removed before the checkbox list is ever built. The box says
+    // "Tap if you have", and next to Kubernetes that means "I have used this" while
+    // next to VMCE it means "I passed this exam" — a claim a recruiter verifies in one
+    // search. The two are indistinguishable in a list of chips, and the person who
+    // wrote this product's anti-fabrication rule still ticked VMCE and VMCSE by
+    // mistake. A student will not do better. So the option is not offered.
+    missingKeywords: Array.isArray(parsed.missingKeywords) ? parsed.missingKeywords.filter(keepAsSkill) : [],
   }
 
   // Store for next time. upsert so a race between two identical requests cannot throw
@@ -519,13 +577,18 @@ function totalExperienceMonths(resumeText) {
   // Only the EXPERIENCE section. Education dates ("May 2024") and certification years
   // would otherwise be counted as jobs.
   const upper = String(resumeText || '')
-  const expStart = upper.search(/^\s*(?:PROFESSIONAL\s+|WORK\s+)?EXPERIENCE\s*$/mi)
+  // Header wording varies more than you would think. "WORK EXPERIENCE:" with a
+  // trailing colon silently failed to match and a 10-year candidate lost their
+  // years line entirely, so the colon is optional and the synonyms are listed.
+  const expStart = upper.search(/^\s*(?:PROFESSIONAL\s+|WORK\s+|RELEVANT\s+)?(?:EXPERIENCE|EMPLOYMENT(?:\s+HISTORY)?|CAREER\s+HISTORY)\s*:?\s*$/mi)
   // No EXPERIENCE section means no work history to count. Scanning the whole document
   // as a fallback read "BS | 2018 - 2022" as five years of employment — which is a
   // fresh graduate, exactly the person who must not have their experience overstated.
   if (expStart === -1) return null
   const after = upper.slice(expStart)
-  const expEnd = after.slice(1).search(/^\s*(PROJECTS|EDUCATION|CERTIFICATIONS|SKILLS)\s*$/mi)
+  // Same colon problem here: "EDUCATION:" not matching meant the section never
+  // ended and education dates got counted as jobs.
+  const expEnd = after.slice(1).search(/^\s*(?:[A-Z][A-Za-z]*\s+)?(PROJECTS|EDUCATION|CERTIFICATIONS?|SKILLS|AWARDS|PUBLICATIONS)\s*:?\s*$/mi)
   const section = expEnd === -1 ? after : after.slice(0, expEnd + 1)
 
   const now = new Date()
@@ -567,6 +630,210 @@ function inventedBullets(optimized, original, skills) {
     if (overlap < 0.40) flagged.push(b)
   }
   return flagged
+}
+
+/**
+ * Section headers present in a resume, uppercased and stripped of punctuation.
+ *
+ * A header is a short standalone line in caps. Deliberately loose about the
+ * trailing colon and about wording ("WORK EXPERIENCE" vs "EXPERIENCE"), because
+ * the point is to compare two documents to each other, not to validate a format.
+ */
+function sectionHeaders(text) {
+  const lines = String(text || '').split('\n')
+  const out = []
+  // The name at the top is usually in caps too ("ARAVIND M"), and reporting it as an
+  // invented section would burn a retry on every single request. The contact block is
+  // never more than a few lines, so headers are only looked for after it.
+  let seen = 0
+  for (const raw of lines) {
+    const line = raw.trim().replace(/[:：]\s*$/, '')
+    if (!line) continue
+    seen++
+    if (seen <= 3) continue
+    if (line.length > 40) continue
+    if (!/^[A-Z][A-Z\s&/]*$/.test(line)) continue   // all caps, no lowercase
+    if (line.split(/\s+/).length > 4) continue      // headers are short
+    out.push(line.replace(/\s+/g, ' '))
+  }
+  return out
+}
+
+/**
+ * Section headers the model added that were not in the original.
+ *
+ * This exists because the model invented an entire PROJECTS section — real-looking
+ * header, plausible project names, a fabricated scale claim — on two separate runs
+ * of the same resume. inventedBullets() could not see it: that only inspects
+ * EXPERIENCE bullets, and strayProse() only fires on loose first-person prose after
+ * the last section. A well-formed section with a proper header looked legitimate to
+ * both of them.
+ *
+ * Comparing header sets is mechanical. There is no judgement for the model to argue
+ * with: a section that was not in the input has no business being in the output.
+ *
+ * Synonyms are folded so a rename ("PROFESSIONAL SUMMARY" to "SUMMARY", "TECHNICAL
+ * SKILLS" to "SKILLS") is not reported as an invention — that is a wording change,
+ * not fabricated content, and flagging it would burn a retry on nothing.
+ */
+const SECTION_ALIASES = [
+  [/^(PROFESSIONAL |EXECUTIVE |CAREER )?(SUMMARY|PROFILE|OBJECTIVE)$/, 'SUMMARY'],
+  [/^(TECHNICAL |CORE |KEY )?(SKILLS|PROFICIENCY|COMPETENCIES|EXPERTISE)$/, 'SKILLS'],
+  [/^(PROFESSIONAL |WORK |RELEVANT )?(EXPERIENCE|EMPLOYMENT|EMPLOYMENT HISTORY|CAREER HISTORY)$/, 'EXPERIENCE'],
+  [/^(STRATEGIC |KEY |SELECTED |ACADEMIC )?PROJECTS?$/, 'PROJECTS'],
+  [/^(EDUCATION|ACADEMIC BACKGROUND|EDUCATION TRAINING)$/, 'EDUCATION'],
+  [/^(CERTIFICATIONS?|LICENSES?|CERTIFICATIONS LICENSES)$/, 'CERTIFICATIONS'],
+]
+function canonicalSection(h) {
+  for (const [re, name] of SECTION_ALIASES) if (re.test(h)) return name
+  return h
+}
+function inventedSections(optimized, original) {
+  const had = new Set(sectionHeaders(original).map(canonicalSection))
+  const now = sectionHeaders(optimized).map(canonicalSection)
+  return [...new Set(now.filter(h => !had.has(h)))]
+}
+
+/**
+ * True when the rewrite dropped a large share of the original's bullets.
+ *
+ * A five-page resume came back with 28 bullets collapsed into 6 under one employer.
+ * That is not a rewrite, it is a summary, and the work that disappeared was the
+ * candidate's real work. The threshold is deliberately generous: merging two related
+ * bullets is legitimate editing, gutting three quarters of them is not.
+ */
+// Marker-agnostic on purpose. Word list formatting does not survive extraction — the
+// uploaded resume arrives with no "-" or "•" at all — so counting markers reported
+// zero bullets for the original and the gate never fired. What both documents DO
+// have is one long content line per point, so those are what get counted.
+function bulletCount(text) {
+  return String(text || '').split('\n')
+    .map(l => l.trim().replace(/^[-•*▪]\s*/, ''))
+    .filter(l =>
+      l.length >= 40 &&                    // long enough to be a real point
+      !/^[A-Z][A-Z\s&/:]*$/.test(l) &&     // not a section header
+      !/^Environment\s*:/i.test(l) &&      // tech-stack line, counted separately
+      /\s/.test(l)
+    ).length
+}
+function bulletsLost(optimized, original) {
+  const before = bulletCount(original)
+  const after = bulletCount(optimized)
+  if (before < 8) return null            // short resumes: condensing is not the concern
+  if (after >= before * 0.75) return null
+  return { before, after }
+}
+
+/**
+ * The SUMMARY paragraph, as sentences.
+ *
+ * A draft cut a three-sentence summary to two, deleting the sentence about the
+ * candidate's real Vertex AI work to make room for tools lifted from the posting.
+ * Sections and bullets were both intact, so neither structural gate saw it: a
+ * summary is one paragraph INSIDE a section, not a section.
+ */
+function summarySentences(text) {
+  const m = String(text || '').match(/^[ \t]*(?:PROFESSIONAL\s+|EXECUTIVE\s+|CAREER\s+)?(?:SUMMARY|PROFILE|OBJECTIVE)[ \t]*:?[ \t]*$/mi)
+  if (!m) return null
+  const after = String(text).slice(String(text).indexOf(m[0]) + m[0].length)
+  const nextHdr = after.search(/^[ \t]*[A-Z][A-Z\s&/]{2,39}:?[ \t]*$/m)
+  const body = (nextHdr === -1 ? after : after.slice(0, nextHdr)).trim()
+  if (!body) return null
+  return body.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(s => s.length > 15)
+}
+/**
+ * Summary sentence count that moved in EITHER direction.
+ *
+ * The first version of this only caught shrinking, because the observed failure was a
+ * three-sentence summary cut to two. The fallback model then satisfied "do not drop a
+ * sentence" by writing ten, and this gate passed it: seven invented sentences, none of
+ * them traceable to the resume, including "Known for diagnosing production data issues,
+ * communicating clearly under deadline" — a character claim, not experience.
+ *
+ * Guarding one direction of a two-directional constraint is not guarding it.
+ */
+function summaryDrifted(optimized, original) {
+  const a = summarySentences(original)
+  const b = summarySentences(optimized)
+  if (!a || !b || a.length < 2) return null
+  if (b.length === a.length) return null
+  return { before: a.length, after: b.length, dir: b.length < a.length ? 'cut' : 'padded' }
+}
+
+/**
+ * "Environment: GCP, BigQuery, ..." lines that the original had and the draft dropped.
+ * These are the densest keyword lines in the whole document — an ATS reads every word
+ * — and one draft deleted all five of them while the score went UP.
+ */
+function droppedEnvironmentLines(optimized, original) {
+  const grab = t => String(t || '').split('\n')
+    .map(l => l.trim()).filter(l => /^Environment\s*:/i.test(l))
+  const had = grab(original)
+  if (!had.length) return []
+  const now = String(optimized || '').toLowerCase()
+  return had.filter(l => !now.includes(l.slice(0, 40).toLowerCase()))
+}
+
+/**
+ * Certification codes appearing outside a CERTIFICATIONS section.
+ *
+ * A draft put "VMCE, and VMCSE" in the summary under "Hands-on expertise with" —
+ * two Veeam exam credentials the candidate does not hold, in the first line a
+ * recruiter reads. Confirmed-skill handling treated them as tools, because nothing
+ * in the pipeline knows a credential from a product.
+ *
+ * Matched by shape rather than by a fixed list, so a cert this code has never heard
+ * of is still caught. A token already present in the original is never flagged.
+ */
+/**
+ * False for anything that is a credential rather than a skill, so it never reaches
+ * the "Tap if you have" checkbox list. Products stay (Veeam Data Platform is a tool
+ * someone can genuinely have used); exam codes and anything containing "certified"
+ * or "certification" go.
+ */
+function keepAsSkill(entry) {
+  const s = String(entry || '').trim()
+  if (!s) return false
+  if (/\b(certified|certification|certificate|credential|licen[sc]e|associate|practitioner|specialty)\b/i.test(s)) return false
+  // An exam code embedded in a longer name: "Azure Data Engineer Associate (DP-203)".
+  if (/\b[A-Z]{2,4}-?\d{2,3}\b/.test(s)) return false
+  // Well-known credentials that are plain words, not shapes.
+  if (/^(PMP|CISSP|CISA|CISM|CCNA|CCNP|CCIE|CEH|CSM|CAPM|ITIL|PRINCE2|SAFE|OSCP|RHCE|RHCSA|MCSE|MCSA|VCP|VCAP|CKA|CKAD|CKS)$/i.test(s.replace(/[-\s]/g, ''))) return false
+  const bare = s.toUpperCase().replace(/[-\s]/g, '')
+  if (CERT_SAFE.has(bare)) return true
+  // A single all-caps token that looks like an exam code and nothing else.
+  if (!/\s/.test(s) && CERT_SHAPED.test(s) && s === s.toUpperCase()) { CERT_SHAPED.lastIndex = 0; return false }
+  CERT_SHAPED.lastIndex = 0
+  return true
+}
+
+const CERT_SHAPED = /\b(?:[A-Z]{2,3}CE|[A-Z]{4,6}|(?:AWS|AZ|GCP|MS|CCNA|CCNP|PMP|CISSP|CISA|CSM|SAA|DP|AI|DVA)[- ]?\d{2,3})\b/g
+const CERT_SAFE = new Set(['SQL','ETL','ELT','API','APIS','REST','JSON','HTTP','HTTPS','AWS','GCP','SAAS','PAAS','IAAS','CI','CD','CICD','NOSQL','OLAP','OLTP','CRUD','SDLC','AGILE','SCRUM','JIRA','HDFS','YARN','SPARK','KAFKA','LINUX','UNIX','BASH','JAVA','HTML','GRPC','SOAP','RBAC','IAM','SSO','MFA','TLS','SSL','VPC','CDN','DNS','GPU','CPU','RAM','ML','AI','LLM','MLOPS','DEVOPS','DATAOPS','ITIL'])
+function certsOutsideCertSection(optimized, original) {
+  const origUpper = String(original || '').toUpperCase()
+  // Only look before a CERTIFICATIONS header; inside one, codes are expected.
+  const cut = optimized.search(/^[ \t]*CERTIFICATIONS?[ \t]*:?[ \t]*$/mi)
+  const body = (cut === -1 ? optimized : optimized.slice(0, cut))
+    // Section headers are all-caps words too — an early draft of this gate flagged
+    // "SKILLS" as a credential and would have deleted the header.
+    .split('\n').filter(l => !/^[ \t]*[A-Z][A-Z\s&/]{2,39}:?[ \t]*$/.test(l)).join('\n')
+  const found = new Set()
+  for (const tok of body.match(CERT_SHAPED) || []) {
+    const t = tok.toUpperCase().replace(/[- ]/g, '')
+    if (CERT_SAFE.has(t)) continue
+    if (origUpper.includes(t)) continue        // they already claimed it themselves
+    found.add(tok)
+  }
+  return [...found]
+}
+
+/**
+ * Two bullets welded together with no line break ("...transformations.• Develop...").
+ * Purely mechanical, and it has survived three separate outputs.
+ */
+function mergedBullets(text) {
+  return (String(text || '').match(/^.*[a-z0-9][.)]\s*[•▪]\s*[A-Z].*$/gm) || [])
+    .map(l => l.trim().slice(0, 140))
 }
 
 app.post('/optimize', async (req, res) => {
@@ -628,20 +895,25 @@ Use the posting's TERM for a thing they did. Never lift its phrasing.
 - Lifted, not fine: the posting says "SQL transformations and Python scripts and automation to process and prepare data" and the resume says "SQL transformations and Python scripts to prepare and clean data."
 HARD LINE: no four consecutive words from the job description may appear in the resume. A recruiter reading their own posting back at them knows exactly what happened, and it is the opposite of standing out.
 
-═══ RULE 4 — SELECT AND MERGE, DO NOT ACCUMULATE ═══
-Keep each role to roughly 4-6 bullets. This is not a target to hit — four strong bullets beat six padded ones. It is a ceiling to prevent ballooning.
-If adding skills has pushed a role to 8 or 9 bullets, do two things: rank by relevance to THIS posting and cut the weakest, and merge related bullets into one. Two thin bullets about the same work become one stronger bullet.
-Bullets containing real results outrank keyword-carrying bullets. "Reduced pipeline runtime from 4 hours to 90 minutes by rewriting the join logic" survives every cut and never gets merged away. It is the most persuasive line on the page precisely because nobody invents "90 minutes".
+═══ RULE 4 — PRESERVE THE RESUME'S STRUCTURE EXACTLY ═══
+You are rewriting wording. You are not editing, curating, or shortening the document.
+- SAME SECTIONS. Every section in the original appears in your output, and NO section that is not in the original. If the original has no PROJECTS section, you do not create one. If it has no CERTIFICATIONS section, you do not add the header. Inventing a section is the single worst thing you can do here.
+- SAME BULLETS, ONE FOR ONE. If a role has 28 bullets, your output has 28 bullets for that role. Never drop one. Never merge two into one. Never decide a bullet is weak and cut it — that judgement is not yours to make, and the work you would be deleting is real work the candidate actually did.
+- SAME SUMMARY LENGTH. If the summary is three sentences, yours is three sentences. Rewrite the wording; never drop a sentence. A dropped summary sentence deletes real experience — one draft cut "developing AI-ready data products and integrating Generative AI use cases using Vertex AI" and replaced it with a list of tools from the posting. That is trading the candidate's true work for the employer's wish list, and it is forbidden.
+- KEEP EVERY "Environment:" LINE VERBATIM. Some resumes end a role with "Environment: GCP, BigQuery, Airflow, ...". Reproduce that line exactly as written, under the same role. It is not filler — it is the densest keyword line in the document and an ATS reads every word of it. Never delete it, never reword it, never merge it into a bullet.
+- SAME ROLES, SAME ORDER, SAME DATES, SAME EMPLOYERS.
+- Rewrite the WORDING of each bullet to align with the posting. That is the whole job.
+The candidate can delete a bullet themselves in one keystroke after they see it. They cannot recover one you deleted, because they no longer know what it said. When in doubt, keep it.
 
-LENGTH DISCIPLINE (keeps the resume tight, ideally two pages):
-- Each bullet is ONE to TWO lines. If a bullet runs to three lines, it is doing too much — split the real result into its own bullet or trim the setup words. No bullet is a paragraph.
-- The SUMMARY is 2-3 sentences. Not a paragraph. Not five sentences. It states who they are, their strongest relevant skills, and nothing else.
+LINE DISCIPLINE (tightens wording — it does NOT license deleting anything):
+- Each bullet is ONE to TWO lines. If a bullet runs to three lines, trim the setup words. Tighten the sentence; do not delete the bullet.
+- The SUMMARY keeps the SAME NUMBER OF SENTENCES as the original. Rewrite each sentence; never drop one and never add one. It states who they are and their strongest relevant skills. It is prose, not a keyword list: never let a sentence become a run of comma-separated product names.
+- NEVER put a certification code in the summary or the skills section. VMCE, VMCSE, AWS SAA, PMP, CCNA and anything shaped like them are exam credentials, not tools. Claiming one the candidate does not hold is the single most checkable lie on a resume — a recruiter verifies it in one search. A certification appears ONLY inside a CERTIFICATIONS section that the original already had, and only if the original already listed it.
 ${yearsRule}
 - THE RESUME ENDS AT ITS LAST SECTION. Do not append notes, commentary, a cover letter, a message to the employer, or anything written in the first person. Never write a sentence beginning "Note:" or containing "I". The output is a resume and nothing else.
-- PROJECT descriptions are 1-2 sentences each. A project is not a second job history; it is a short proof point.
+- If the original HAS a projects section, keep each description to 1-2 sentences. If it does not have one, do not create one.
 - Cut filler openers: "Responsible for", "Worked on", "Tasked with", "Helped to". Start bullets with the verb.
-- For older or less relevant roles, fewer bullets (2-3) is correct. Weight the bullets toward the most recent and most relevant experience.
-The goal is a dense, scannable resume. A recruiter spends seconds per resume; every padded line is a line they skim past.
+Tighten every line. Delete no line.
 
 ═══ RULE 5 — DO NOT INVENT THE WORK ═══
 They confirmed a tool. They did not confirm what role it played, at what scale, or with what result.
@@ -714,17 +986,29 @@ Respond in this exact JSON format with no extra text:
 }`
 
     // ── CODE GATE: verify the draft, and on a real violation send it back
-    // naming the exact problem. Retry at most twice, then ship the best effort.
+    // naming the exact problem. Attempts 0-2 use the cheap rewrite model. If it is
+    // still failing the gate after two corrections, attempt 3 escalates to the
+    // stronger fallback model — the cheap model has had three tries by then and
+    // paying more is better than shipping a resume with fabricated work in it.
     const messages = [{ role: 'user', content: basePrompt }]
+    const LAST_ATTEMPT = 3
     let parsed, out, gateNote = ''
-    for (let attempt = 0; attempt <= 2; attempt++) {
-      const message = await anthropic.messages.create({
-        model: MODEL_REWRITE,
-        max_tokens: 4000,
-        temperature: 0.3,
+    for (let attempt = 0; attempt <= LAST_ATTEMPT; attempt++) {
+      const modelForAttempt = attempt === LAST_ATTEMPT ? MODEL_FALLBACK : MODEL_REWRITE
+      if (attempt === LAST_ATTEMPT) console.warn('optimize gate: escalating to ' + MODEL_FALLBACK)
+      const replyText = await askModel({
+        model: modelForAttempt,
+        // A full resume plus JSON wrapper is long, and reasoning tokens come out of
+        // the same budget. 4000 was sized for a non-reasoning model and truncates here.
+        maxTokens: 12000,
+        reasoningEffort: 'low',
+        // No temperature. This model rejects any explicit value and the fallback in
+        // askModel then re-sends the request, so passing one cost a wasted paid call
+        // on every attempt. Note this is a real loss: the rewrite used to run at 0.3
+        // deliberately, and it now runs at the model's default.
         messages,
       })
-      const cleaned = message.content[0].text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+      const cleaned = replyText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
       parsed = JSON.parse(cleaned)
       out = parsed.optimizedResume || ''
       out = normalizeCertDashes(out)
@@ -733,8 +1017,15 @@ Respond in this exact JSON format with no extra text:
       const dashes = findBannedDashes(out)
       const pastT = findCurrentRolePastTense(out)
       const stray = strayProse(out)
-      if (!invented.length && !dashes.length && !pastT.length && !stray.length) break
-      if (attempt === 2) {
+      const newSecs = inventedSections(out, resumeText)
+      const lost = bulletsLost(out, resumeText)
+      const sumCut = summaryDrifted(out, resumeText)
+      const envGone = droppedEnvironmentLines(out, resumeText)
+      const certs = certsOutsideCertSection(out, resumeText)
+      const merged = mergedBullets(out)
+      if (!invented.length && !dashes.length && !pastT.length && !stray.length && !newSecs.length && !lost
+          && !sumCut && !envGone.length && !certs.length && !merged.length) break
+      if (attempt === LAST_ATTEMPT) {
         if (invented.length) gateNote = ' (Please review the experience section: one or more bullets may describe work not in your original resume.)'
         // Last resort: strip it. A fabricated paragraph reaching a student's resume is
         // worse than a slightly shorter document, and this is the point where retries
@@ -743,11 +1034,46 @@ Respond in this exact JSON format with no extra text:
           for (const p of stray) out = out.replace(p, '').trim()
           console.warn('optimize gate: stripped ' + stray.length + ' stray paragraph(s)')
         }
-        console.warn('optimize gate unresolved after retries: invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length + ' stray=' + stray.length)
+        // Same reasoning as the stray-prose strip above: an invented section reaching
+        // a student is worse than a shorter resume. Cut from the header to the next
+        // header, or to the end if it was the last section.
+        if (newSecs.length) {
+          for (const h of newSecs) {
+            const re = new RegExp('^[ \\t]*' + h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[ \\t]*:?[ \\t]*$', 'mi')
+            const m = out.match(re)
+            if (!m) continue
+            const from = out.indexOf(m[0])
+            const rest = out.slice(from + m[0].length)
+            const nextIdx = rest.search(/^[ \t]*[A-Z][A-Z\s&/]{2,39}:?[ \t]*$/m)
+            out = (out.slice(0, from) + (nextIdx === -1 ? '' : rest.slice(nextIdx))).trim()
+          }
+          console.warn('optimize gate: stripped invented section(s): ' + newSecs.join(', '))
+        }
+        // Mechanical repairs that need no model cooperation. A welded bullet pair is
+        // fixed by inserting the missing newline; a cert code the candidate never
+        // claimed is cut rather than shipped, because a false credential is the most
+        // checkable lie on a resume.
+        if (merged.length) {
+          out = out.replace(/([a-z0-9][.)])\s*([•▪]\s*[A-Z])/g, '$1\n$2')
+          console.warn('optimize gate: split ' + merged.length + ' merged bullet(s)')
+        }
+        if (certs.length) {
+          for (const c of certs) {
+            out = out.replace(new RegExp('[,;]?\\s*\\b' + c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g'), '')
+          }
+          out = out.replace(/,\s*,/g, ',').replace(/,\s*\./g, '.').replace(/\s{2,}/g, ' ')
+          console.warn('optimize gate: stripped unclaimed certification code(s): ' + certs.join(', '))
+        }
+        console.warn('optimize gate unresolved after retries: invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length + ' stray=' + stray.length + ' newSections=' + newSecs.length + ' bulletsLost=' + (lost ? lost.before + '->' + lost.after : 'no') + ' summaryCut=' + (sumCut ? sumCut.before + '->' + sumCut.after : 'no') + ' envDropped=' + envGone.length + ' certs=' + certs.length + ' merged=' + merged.length)
         break
       }
-      console.warn('optimize gate retry ' + (attempt + 1) + ': invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length + ' stray=' + stray.length)
+      console.warn('optimize gate retry ' + (attempt + 1) + ': invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length + ' stray=' + stray.length + ' newSections=' + newSecs.length + ' bulletsLost=' + (lost ? lost.before + '->' + lost.after : 'no') + ' summaryCut=' + (sumCut ? sumCut.before + '->' + sumCut.after : 'no') + ' envDropped=' + envGone.length + ' certs=' + certs.length + ' merged=' + merged.length)
       let corrections = 'Your draft breaks the rules below. Fix ONLY these problems and return the same JSON format.\n'
+      // Every rule you have already satisfied must STAY satisfied. Without this line
+      // the model treats each correction as the only constraint and trades one for
+      // another: run #3 fixed the certification claim and paid for it by deleting 73
+      // bullets and four Environment lines, then fixed those and broke the dashes.
+      corrections += 'Everything else in your draft was correct. Keep it exactly as it is — same sections, same number of bullets, same summary length, same Environment lines. Fixing the problems below must not undo anything you already got right.\n'
       if (invented.length) {
         corrections += '\nINVENTED EXPERIENCE. These bullets describe work that is NOT in the original resume, which is fabrication and is forbidden:\n' + invented.map(b => '  - "' + b + '"').join('\n') + '\nDelete each one. If a bullet exists only to carry a confirmed skill, remove the bullet and place that skill in the skills section instead. Do not write a replacement bullet.\n'
       }
@@ -755,12 +1081,33 @@ Respond in this exact JSON format with no extra text:
         corrections += '\nBANNED DASHES (em-dash, en-dash, or --) on these lines:\n' + dashes.map(l => '  - "' + l + '"').join('\n') + '\nReplace each with a comma, a full stop, or a plain hyphen. Keep a plain hyphen only inside a certification name.\n'
       }
       if (stray.length) {
-        corrections += '\\nTEXT THAT IS NOT PART OF A RESUME. You appended prose after the last section:\\n' + stray.map(l => '  - "' + l.slice(0, 120) + '…"').join('\\n') + '\\nDelete it entirely. A resume ends at its final section. Never add notes, commentary, or anything written in the first person.\\n'
+        corrections += '\nTEXT THAT IS NOT PART OF A RESUME. You appended prose after the last section:\n' + stray.map(l => '  - "' + l.slice(0, 120) + '…"').join('\n') + '\nDelete it entirely. A resume ends at its final section. Never add notes, commentary, or anything written in the first person.\n'
+      }
+      if (newSecs.length) {
+        corrections += '\nINVENTED SECTIONS. The original resume has no ' + newSecs.join(' and no ') + ' section, and you created one:\n' + newSecs.map(h => '  - "' + h + '"').join('\n') + '\nDelete the header and everything under it. Never add a section the original does not have. If a confirmed skill has nowhere to go, put it in the skills section — do not build a project or an entry around it.\n'
+      }
+      if (lost) {
+        corrections += '\nDELETED WORK. The original resume has ' + lost.before + ' bullet points and your draft has only ' + lost.after + '. You are removing the candidate\'s real experience.\nReturn EVERY bullet from the original, one for one, in the same order and under the same employer. Rewrite the wording of a bullet if it helps, but never drop one, and never merge two into one.\n'
+      }
+      if (sumCut && sumCut.dir === 'cut') {
+        corrections += '\nDELETED SUMMARY CONTENT. The original summary has ' + sumCut.before + ' sentences and yours has ' + sumCut.after + '. You deleted the candidate\'s real experience to make room for terms from the posting.\nRestore every sentence. Rewrite the wording if it helps, but each original sentence must still be represented. The summary is prose, not a list of product names.\n'
+      }
+      if (sumCut && sumCut.dir === 'padded') {
+        corrections += '\nINVENTED SUMMARY CONTENT. The original summary has ' + sumCut.before + ' sentences and yours has ' + sumCut.after + '. You added ' + (sumCut.after - sumCut.before) + ' sentences that are not in the original resume.\nCut it back to exactly ' + sumCut.before + ' sentences. Delete the added ones outright — do not merge them into the remaining sentences. Sentences like "Known for..." or "Effective communicator who..." are character claims, not experience, and nothing in the resume supports them.\n'
+      }
+      if (envGone.length) {
+        corrections += '\nDELETED ENVIRONMENT LINES. The original ends ' + envGone.length + ' role(s) with an "Environment:" line and you removed them:\n' + envGone.map(l => '  - "' + l.slice(0, 100) + '…"').join('\n') + '\nPut each one back, verbatim, under the same role. It is the densest keyword line in the resume and an ATS reads all of it.\n'
+      }
+      if (certs.length) {
+        corrections += '\nFALSE CERTIFICATION CLAIM. These look like exam credentials and the original resume does not contain them:\n' + certs.map(c => '  - "' + c + '"').join('\n') + '\nRemove every one. A certification is not a skill and cannot be claimed because it appears in the posting. This is the most easily verified lie a resume can contain.\n'
+      }
+      if (merged.length) {
+        corrections += '\nMERGED BULLETS. These lines contain two bullets joined with no line break:\n' + merged.map(l => '  - "' + l + '"').join('\n') + '\nPut each bullet on its own line.\n'
       }
       if (pastT.length) {
         corrections += '\nTENSE. Your CURRENT role (its dates end in "Present") must be present tense throughout. These bullets open in PAST tense:\n' + pastT.map(l => '  - "' + l + '"').join('\n') + '\nRewrite each opening verb to present tense (Managed to Manage, Led to Lead, Built to Build, Optimized to Optimize). If a flagged word is actually an adjective or already present tense, leave it unchanged.\n'
       }
-      messages.push({ role: 'assistant', content: message.content[0].text })
+      messages.push({ role: 'assistant', content: replyText })
       messages.push({ role: 'user', content: corrections })
     }
 
@@ -822,9 +1169,10 @@ async function readProfileFromResume(resumeText) {
   // and it guesses. A resume reading 5+ years came back as 3 for exactly this.
   const today = new Date().toISOString().slice(0, 10)
   try {
-  const message = await anthropic.messages.create({
+  const replyText = await askModel({
     model: MODEL_EXTRACT,
-    max_tokens: 700,
+    maxTokens: 8000,
+    reasoningEffort: 'minimal',   // straight field extraction; full reasoning starved the reply
     messages: [{
       role: 'user',
       content: `Read this resume and return ONLY a JSON object. No preamble, no markdown fences.
@@ -851,7 +1199,7 @@ ${resumeText.slice(0, 12000)}`,
     }],
   })
 
-  const raw = message.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim()
+  const raw = replyText.replace(/```json|```/g, '').trim()
     const parsed = JSON.parse(raw)
     const clean = v => (typeof v === 'string' && v.trim() && v.trim().toLowerCase() !== 'null') ? v.trim() : ''
     return {

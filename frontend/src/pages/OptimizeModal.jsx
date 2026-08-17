@@ -107,6 +107,135 @@ export default function OptimizeModal({ job, onClose }) {
   const docRef = useRef(null)
   const [dlLoading, setDlLoading] = useState('')
 
+  // The modal element itself, so focus can be moved into it on open and kept there.
+  // Without this the search input BEHIND the modal keeps focus, every keystroke goes
+  // to the page underneath, and Ctrl+Z deletes the user's search text instead of
+  // undoing their resume edit.
+  const modalRef = useRef(null)
+  const restoreFocusRef = useRef(null)
+
+  // Undo history for the resume, scoped to this component.
+  //
+  // The document is contentEditable and uncontrolled, so undo would otherwise be the
+  // browser's native stack. That stack is shared with the rest of the page: once the
+  // resume's own history runs out, the browser applies Ctrl+Z to the next editable
+  // thing it knows about — the job search box — and focus follows it out of the modal.
+  // Keeping our own stack means undo can be stopped at the bottom instead of escaping.
+  const undoStack = useRef([])
+  const redoStack = useRef([])
+  const lastSnap  = useRef('')
+
+  // ── focus containment
+  //
+  // On open, remember what had focus and move focus into the modal. On close, put it
+  // back where it was. While open, Tab cycles inside the modal instead of walking out
+  // into the page behind it.
+  useEffect(() => {
+    restoreFocusRef.current = document.activeElement
+    // Blur whatever is behind us first — a focused input back there receives keystrokes
+    // even when the modal is visually on top.
+    if (restoreFocusRef.current?.blur) restoreFocusRef.current.blur()
+    const t = setTimeout(() => modalRef.current?.focus(), 0)
+
+    function onKey(e) {
+      if (e.key === 'Escape') { e.preventDefault(); onClose(); return }
+      if (e.key !== 'Tab') return
+      const root = modalRef.current
+      if (!root) return
+      const items = [...root.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select, textarea, [contenteditable="true"], [tabindex]:not([tabindex="-1"])'
+      )].filter(el => el.offsetParent !== null)
+      if (!items.length) return
+      const first = items[0], last = items[items.length - 1]
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKey, true)
+    return () => {
+      clearTimeout(t)
+      document.removeEventListener('keydown', onKey, true)
+      const back = restoreFocusRef.current
+      if (back && document.body.contains(back)) back.focus()
+    }
+  }, [onClose])
+
+  // ── undo/redo scoped to the resume
+  useEffect(() => {
+    const el = docRef.current
+    if (!el) return
+    lastSnap.current = el.innerHTML
+    undoStack.current = []
+    redoStack.current = []
+
+    // Snapshot on a pause rather than per keystroke, so one undo reverses a word or a
+    // phrase instead of a single character.
+    let timer = null
+    const snapshot = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        const now = el.innerHTML
+        if (now === lastSnap.current) return
+        undoStack.current.push(lastSnap.current)
+        if (undoStack.current.length > 100) undoStack.current.shift()
+        redoStack.current = []
+        lastSnap.current = now
+      }, 400)
+    }
+
+    const apply = html => {
+      el.innerHTML = html
+      lastSnap.current = html
+      // Caret to the end of the restored content; without this it lands at the start.
+      const sel = window.getSelection()
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      range.collapse(false)
+      sel.removeAllRanges()
+      sel.addRange(range)
+    }
+
+    const onKey = e => {
+      const mod = e.ctrlKey || e.metaKey
+      if (!mod) return
+      const k = e.key.toLowerCase()
+      const isUndo = k === 'z' && !e.shiftKey
+      const isRedo = (k === 'z' && e.shiftKey) || k === 'y'
+      if (!isUndo && !isRedo) return
+
+      // preventDefault runs even when our stack is empty. That is the whole point: an
+      // exhausted stack is exactly when the browser would otherwise hand the keystroke
+      // to the search box behind the modal.
+      e.preventDefault()
+      e.stopPropagation()
+      clearTimeout(timer)
+
+      const current = el.innerHTML
+      if (current !== lastSnap.current) {
+        undoStack.current.push(lastSnap.current)
+        lastSnap.current = current
+      }
+      if (isUndo) {
+        const prev = undoStack.current.pop()
+        if (prev === undefined) return          // nothing left — stop here, do not escape
+        redoStack.current.push(el.innerHTML)
+        apply(prev)
+      } else {
+        const next = redoStack.current.pop()
+        if (next === undefined) return
+        undoStack.current.push(el.innerHTML)
+        apply(next)
+      }
+    }
+
+    el.addEventListener('input', snapshot)
+    el.addEventListener('keydown', onKey)
+    return () => {
+      clearTimeout(timer)
+      el.removeEventListener('input', snapshot)
+      el.removeEventListener('keydown', onKey)
+    }
+  }, [phase, optimized, added])
+
   // ── step 1: load resume + full job description, then analyze
   useEffect(() => {
     let cancelled = false
@@ -238,7 +367,15 @@ export default function OptimizeModal({ job, onClose }) {
   return (
     <div className="om-overlay">
       <style>{CSS}</style>
-      <div className="om-modal" style={{ '--om-w': phase === 'result' ? '860px' : '520px' }} onClick={e => e.stopPropagation()}>
+      <div
+        ref={modalRef}
+        tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
+        className="om-modal"
+        style={{ '--om-w': phase === 'result' ? '860px' : '520px', outline: 'none' }}
+        onClick={e => e.stopPropagation()}
+      >
         <div className="om-head">
           <div>
             <div className="om-eyebrow">Optimize for</div>
