@@ -81,7 +81,7 @@ function ResumeView({ text, skills }) {
   return <pre className="om-resume">{nodes}</pre>
 }
 
-export default function OptimizeModal({ job, onClose }) {
+export default function OptimizeModal({ job, onClose, onApplied }) {
   const { getToken } = useAuth()
 
   const [phase, setPhase]   = useState('loading') // loading | pick | rewriting | result | error
@@ -328,6 +328,27 @@ export default function OptimizeModal({ job, onClose }) {
       setScoreAfter(d.scoreAfter ?? liveScore)
       setFeedback(d.feedback || '')
       setPhase('result')
+
+      // If this job is ALREADY in the tracker — they applied straight from the board
+      // first — save the rewrite against that row now, rather than losing it when the
+      // modal closes. attachOnly means the server keeps it flagged as not-sent, because
+      // the employer received the earlier version.
+      //
+      // Never awaited and never surfaced: this is a background nicety, and a failure
+      // here should not intrude on someone reading their new resume.
+      try {
+        const token = await getToken()
+        fetch(`${BACKEND}/applications`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            jobId: job.id, attachOnly: true,
+            resumeText: d.optimizedResume || '',
+            scoreBefore, scoreAfter: d.scoreAfter ?? liveScore,
+            confirmedSkills: confirmedList,
+          }),
+        }).catch(() => {})
+      } catch {}
     } catch {
       setError('generic')
       setPhase('error')
@@ -335,6 +356,40 @@ export default function OptimizeModal({ job, onClose }) {
   }
 
   // ── step 3: download (same endpoints + payload as the Resume Tool)
+  // Fires as the student clicks through to the employer's site. Deliberately does not
+  // block or await anything the user can see: the link opens either way, and a tracker
+  // write failing must never stand between someone and a job application.
+  //
+  // The resume is read from docRef, not from `optimized`, so what gets stored is what
+  // they actually looked at — edits included.
+  async function trackApplication() {
+    try {
+      const token = await getToken()
+      await fetch(`${BACKEND}/applications`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          jobId:    job.id,
+          title:    job.title,
+          company:  job.company,
+          location: job.location || '',
+          applyUrl: job.applyUrl,
+          resumeText: docRef.current?.innerText || optimized,
+          scoreBefore,
+          scoreAfter,
+          confirmedSkills: confirmedList,
+        }),
+      })
+      // Arms the board's "did you apply?" question. Passed the company so the prompt
+      // can name it rather than asking about "this job".
+      onApplied?.(job.id, job.company)
+    } catch (err) {
+      // Silent on purpose. They are already on the employer's page by now, and an
+      // error toast about a tracker row would be noise at the worst moment.
+      console.warn('Could not record this application:', err)
+    }
+  }
+
   async function handleDownload(type) {
     if (!optimized) return
     setDlLoading(type)
@@ -511,7 +566,13 @@ export default function OptimizeModal({ job, onClose }) {
               <button className="om-dl" onClick={() => handleDownload('pdf')} disabled={!!dlLoading}>
                 <Download size={13} />{dlLoading === 'pdf' ? '…' : 'PDF'}
               </button>
-              <a className="om-apply" href={job.applyUrl} target="_blank" rel="noreferrer">
+              <a
+                className="om-apply"
+                href={job.applyUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={trackApplication}
+              >
                 <ExternalLink size={13} />Apply to this job
               </a>
             </div>

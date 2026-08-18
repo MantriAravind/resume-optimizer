@@ -1,13 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useUser } from '@clerk/clerk-react'
+import { useUser, useAuth } from '@clerk/clerk-react'
 import DOMPurify from 'dompurify'
 import { useHasResume } from '../hooks/useHasResume'
 import SidebarLayout from '../components/SidebarLayout'
 import OptimizeModal from './OptimizeModal'
 import {
   MapPin, Building2, TrendingUp, DollarSign, Clock,
-  CheckCircle2, Search, ChevronDown, X, Sparkles, GraduationCap,
+  CheckCircle2, Search, ChevronDown, X, Sparkles, GraduationCap, Check,
 } from 'lucide-react'
 
 // Read from the environment so the backend can move without editing four files.
@@ -194,6 +194,64 @@ const CSS = `
   text-decoration: none; display: inline-flex; align-items: center;
 }
 .jb-btn-apply:hover { background: var(--blue-dark); }
+
+/* ── Tracker: the applied control in the detail pane, and the card indicator.
+   The row only exists once a job has been opened on the employer's site, so it never
+   adds height to a job the student has not touched. */
+.jb-applied-row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  margin-top: 12px; padding: 11px 14px; border-radius: 10px;
+  background: #F8FAFC; border: 1px solid var(--border);
+}
+.jb-applied-txt { font-size: 12.5px; color: var(--muted); flex: 1; min-width: 180px; line-height: 1.45; }
+.jb-applied-btn {
+  padding: 7px 14px; border-radius: 20px; border: 1px solid var(--border);
+  background: #fff; color: var(--body); font-family: inherit; font-weight: 600;
+  font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.jb-applied-btn:hover { border-color: #CBD5E1; color: var(--ink); }
+.jb-applied-btn.on { background: #ECFDF5; border-color: #A7F3D0; color: #047857; }
+
+/* Centred, and above the optimize modal on purpose.
+   The modal is still open when they come back from the employer — they clicked Apply
+   from inside it — so a corner toast would sit behind the resume they were reading and
+   be missed. This is the one moment the answer is cheap to give, so it takes the screen. */
+.jb-ask-overlay {
+  /* Above the optimize modal, which sits at 1000. They clicked Apply from inside it,
+     so it is still open behind this — a lower value put the question underneath the
+     resume, where it was invisible. */
+  position: fixed; inset: 0; z-index: 1100;
+  background: rgba(15,23,42,.55);
+  display: flex; align-items: center; justify-content: center; padding: 22px;
+  animation: jbFade .18s ease;
+}
+@keyframes jbFade { from { opacity: 0 } to { opacity: 1 } }
+.jb-ask {
+  background: #fff; border-radius: 16px; padding: 26px 28px; width: 100%; max-width: 400px;
+  box-shadow: 0 24px 60px rgba(15,23,42,.28); text-align: center;
+  animation: jbAskIn .22s cubic-bezier(.2,.8,.3,1);
+}
+@keyframes jbAskIn { from { opacity: 0; transform: translateY(14px) scale(.97) } to { opacity: 1; transform: none } }
+.jb-ask h4 { font-size: 18px; font-weight: 600; letter-spacing: -.01em; margin-bottom: 8px; }
+.jb-ask p { font-size: 13px; color: var(--muted); line-height: 1.6; margin-bottom: 20px; }
+.jb-ask-btns { display: flex; gap: 9px; }
+.jb-ask-yes, .jb-ask-no {
+  flex: 1; font-family: inherit; font-size: 13.5px; font-weight: 600; padding: 11px 16px;
+  border-radius: 10px; cursor: pointer; border: 1px solid var(--border); background: #fff; color: var(--body);
+}
+.jb-ask-yes { background: var(--blue); border-color: var(--blue); color: #fff; }
+.jb-ask-yes:hover { background: var(--blue-dark); }
+.jb-ask-no:hover { background: #F8FAFC; color: var(--ink); }
+.jb-ask-yes:focus-visible, .jb-ask-no:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+@media (max-width: 480px) { .jb-ask { padding: 22px 20px; } .jb-ask-btns { flex-direction: column-reverse; } }
+
+.jb-card-tracked {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  margin-top: 9px; padding-top: 9px; border-top: 1px dashed var(--border);
+}
+.jb-tr { font-size: 11px; font-weight: 600; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
+.jb-tr--yes { color: var(--green); }
+.jb-tr--plain { color: #B45309; font-weight: 500; }
 
 .jb-state { max-width: 900px; margin: 0 auto; padding: 70px 28px; text-align: center; color: var(--muted); }
 .jb-state h3 { font-size: 17px; color: var(--ink); margin-bottom: 8px; font-weight: 600; }
@@ -402,7 +460,7 @@ function locLabel(job) {
   return extra > 0 ? `${shortLoc(job.location)} +${extra} more` : shortLoc(job.location)
 }
 
-function JobCard({ job, onOpen, selected }) {
+function JobCard({ job, onOpen, selected, tracked }) {
   const salary = formatSalary(job.salaryMin, job.salaryMax)
   const years = formatYears(job.yearsMin, job.yearsMax)
 
@@ -473,6 +531,17 @@ function JobCard({ job, onOpen, selected }) {
 
       {/* No Optimize/Apply here: both already exist in the detail pane, so a second
           copy on every card was pure duplication. */}
+
+      {/* Applied state. The control that CHANGES it lives in the detail pane, which is
+          where the student lands when they come back from the employer's site. This is
+          just the reminder they see when scrolling the list days later. */}
+      {tracked && (
+        <div className="jb-card-tracked">
+          {tracked.status === 'applied'
+            ? <span className="jb-tr jb-tr--yes"><Check size={11} /> Applied</span>
+            : <span className="jb-tr">Opened — not marked applied</span>}
+        </div>
+      )}
     </div>
   )
 }
@@ -522,6 +591,171 @@ export default function JobBoard() {
   // The posting a ?job=<id> link opened, pinned above the list so the left and right
   // panes agree. Null in every normal visit.
   const [sharedJob, setSharedJob] = useState(null)
+
+  // ── Tracker
+  //
+  // Keyed by jobId so a card can look itself up without scanning an array on every
+  // render. Value is the row: { _id, status, optimized }.
+  const [apps, setApps] = useState({})
+  const { getToken } = useAuth()
+
+  const loadApplications = useCallback(async () => {
+    if (!isSignedIn) return
+    try {
+      const token = await getToken()
+      const r = await fetch(`${BACKEND}/applications`, { headers: { Authorization: `Bearer ${token}` } })
+      if (!r.ok) return
+      const { applications = [] } = await r.json()
+      const byJob = {}
+      for (const a of applications) byJob[a.jobId] = a
+      setApps(byJob)
+    } catch (err) {
+      // The board must still work with no tracker. This is an enhancement, not a
+      // dependency — a failed fetch here should cost the student nothing.
+      console.warn('Could not load applications:', err)
+    }
+  }, [isSignedIn, getToken])
+
+  useEffect(() => { loadApplications() }, [loadApplications])
+
+  // Records an apply made straight from the board, with no optimize step. The row has
+  // no resume attached, and the tracker says so rather than pretending otherwise.
+  //
+  // Not awaited by the link: the posting opens either way. A tracker write must never
+  // stand between someone and a job application.
+  async function trackDirectApply(job, url, location) {
+    if (!isSignedIn) return
+    // No optimistic row here: the server records direct applies only when
+    // TRACK_DIRECT_APPLIES is on, and drawing a row that the server then refuses would
+    // put a state on screen that vanishes on the next refresh.
+    try {
+      const token = await getToken()
+      const r = await fetch(`${BACKEND}/applications`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          jobId: job.id, title: job.title, company: job.company,
+          location: location || job.location || '', applyUrl: url,
+        }),
+      })
+      if (r.ok) {
+        const { application } = await r.json()
+        if (application) setApps(p => ({ ...p, [job.id]: application }))
+      }
+    } catch (err) {
+      console.warn('Could not record this application:', err)
+    }
+  }
+
+  // ── "Did you apply?" on return
+  //
+  // Fires when the tab regains focus after the student clicked through to an employer.
+  // Asked ONCE per job, and only if they come back within the window.
+  //
+  // The window is an hour, not a couple of minutes. Filling in a real application form
+  // takes ten to thirty minutes, so a short window would fire only for the people who
+  // bounced straight off the page — precisely the ones who did NOT apply — and stay
+  // silent for everyone who did. It exists to stop the question appearing the next
+  // morning, not to catch people quickly.
+  const ASK_WINDOW_MS = 60 * 60 * 1000
+  const [ask, setAsk] = useState(null)          // { jobId, company }
+  const leftAt = useRef({})                     // jobId -> timestamp of the click-through
+  const askedFor = useRef(new Set())            // jobs already asked about, once each
+
+  // Called by the optimize modal the moment the student clicks through to apply.
+  const pendingCompany = useRef({})
+  const armAsk = useCallback((jobId, company) => {
+    leftAt.current[jobId] = Date.now()
+    if (company) pendingCompany.current[jobId] = company
+    loadApplications()
+  }, [loadApplications])
+
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState !== 'visible') return
+      const now = Date.now()
+      const jobId = Object.keys(leftAt.current).find(id =>
+        !askedFor.current.has(id) && now - leftAt.current[id] < ASK_WINDOW_MS)
+      if (!jobId) return
+      const row = apps[jobId]
+      // Nothing to ask about if they already marked it applied. The row itself may not
+      // have loaded yet — the company name is kept from the click-through for exactly
+      // that case, so a slow /applications response cannot swallow the question.
+      if (row && row.status === 'applied') return
+      askedFor.current.add(jobId)
+      const company = row?.company || pendingCompany.current[jobId] || 'this employer'
+      // Short beat only, so it does not paint in the same frame as the tab redrawing.
+      setTimeout(() => setAsk({ jobId, company }), 250)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [apps])
+
+  async function answerAsk(yes) {
+    const pending = ask
+    setAsk(null)
+    if (!pending) return
+    // "Not yet" deliberately changes nothing. The card keeps its Mark as applied button
+    // for as long as they need it, so a wrong tap here costs nothing.
+    if (!yes) return
+
+    // Closing is not conditional on the write succeeding. They answered the question;
+    // leaving the resume open because a PATCH was slow would make the app feel broken
+    // at the exact moment it should feel finished.
+    closeOptimize()
+    // Move to the next job rather than clearing the pane. Clearing left "Select a job to
+    // read the full description" on screen, which reads as having lost your place —
+    // the applied job vanishes from the list, so there is nothing obvious to click back to.
+    if (selected?.id === pending.jobId) {
+      // Continue DOWN the list from where they were, not back to the top. Searching the
+      // whole array returns the first result every time, which threw you to the top of
+      // the board after each application and lost your place in a list of thousands.
+      const at = jobs.findIndex(j => j.id === pending.jobId)
+      const usable = j => j && j.id !== pending.jobId && apps[j.id]?.status !== 'applied' && !j.closed
+      const next = jobs.slice(at + 1).find(usable)
+        // Only if they applied to the last one does it fall back up the list.
+        || [...jobs.slice(0, Math.max(at, 0))].reverse().find(usable)
+      if (next) openJob(next)
+      else setSelected(null)
+    }
+    try { await toggleApplied(pending.jobId) } catch (err) {
+      console.warn('Could not mark applied:', err)
+    }
+  }
+
+  async function toggleApplied(jobId) {
+    let row = apps[jobId]
+    // The row may not have arrived yet — /applications is fetched in the background when
+    // they click through, and a slow response would otherwise make this a silent no-op.
+    // Fetch it directly rather than giving up.
+    if (!row?._id) {
+      try {
+        const token = await getToken()
+        const r = await fetch(`${BACKEND}/applications`, { headers: { Authorization: `Bearer ${token}` } })
+        if (r.ok) {
+          const { applications = [] } = await r.json()
+          const byJob = {}
+          for (const a of applications) byJob[a.jobId] = a
+          setApps(byJob)
+          row = byJob[jobId]
+        }
+      } catch {}
+    }
+    if (!row?._id) return
+    const next = row.status === 'applied' ? 'opened' : 'applied'
+    setApps(prev => ({ ...prev, [jobId]: { ...row, status: next } }))   // optimistic
+    try {
+      const token = await getToken()
+      const r = await fetch(`${BACKEND}/applications/${row._id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ status: next }),
+      })
+      if (!r.ok) setApps(prev => ({ ...prev, [jobId]: row }))           // put it back
+    } catch {
+      setApps(prev => ({ ...prev, [jobId]: row }))
+    }
+  }
 
   useEffect(() => {
     const next = {}
@@ -632,8 +866,9 @@ export default function JobBoard() {
     if (!isTwoPane() || !jobs.length) return
     // Don't clobber a job opened from a shared link with the first search result.
     if (cameFromSharedLink.current) { cameFromSharedLink.current = false; return }
-    const stillListed = selected && jobs.some(j => j.id === selected.id)
-    if (!stillListed) openJob(jobs.find(j => !j.closed) || jobs[0])
+    const visible = jobs.filter(j => apps[j.id]?.status !== 'applied')
+    const stillListed = selected && visible.some(j => j.id === selected.id)
+    if (!stillListed && visible.length) openJob(visible.find(j => !j.closed) || visible[0])
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobs])
 
@@ -795,8 +1030,34 @@ export default function JobBoard() {
         <button className="jb-btn-opt" onClick={() => optimizeFor(selected)}>
           <Sparkles size={14} /> Optimize my resume
         </button>
-        <a className="jb-btn-apply" href={applyUrl} target="_blank" rel="noreferrer">Apply →</a>
+        <a
+          className="jb-btn-apply"
+          href={applyUrl}
+          target="_blank"
+          rel="noreferrer"
+          onClick={() => trackDirectApply(selected, applyUrl, shownLocation)}
+        >Apply →</a>
       </div>
+
+      {/* Appears only after they have clicked through. This is the whole reason the
+          control lives in the detail pane and not the tracker: the student comes back
+          from the employer's tab to exactly this view, so marking it is one tap with
+          no navigation. */}
+      {apps[selected.id] && (
+        <div className="jb-applied-row">
+          <span className="jb-applied-txt">
+            {apps[selected.id].status === 'applied'
+              ? 'You marked this applied.'
+              : `Opened on ${selected.company}'s site — we can't tell whether you submitted.`}
+          </span>
+          <button
+            className={`jb-applied-btn ${apps[selected.id].status === 'applied' ? 'on' : ''}`}
+            onClick={() => toggleApplied(selected.id)}
+          >
+            {apps[selected.id].status === 'applied' ? '✓ Applied' : 'Mark as applied'}
+          </button>
+        </div>
+      )}
       {detailLoading ? (
         <div className="jb-desc-loading">Loading full description…</div>
       ) : (
@@ -895,6 +1156,7 @@ export default function JobBoard() {
                 <>
                   <span className="jb-shared-pill">Shared with you</span>
                   <JobCard
+                    tracked={apps[sharedJob.id]}
                     job={sharedJob}
                     onOpen={openJob}
                     selected={selected?.id === sharedJob.id}
@@ -903,10 +1165,17 @@ export default function JobBoard() {
                 </>
               )}
               {/* Skip the pinned job if it also happens to be in this page of
-                  results, otherwise the same card appears twice. */}
-              {jobs.filter(job => job.id !== sharedJob?.id).map(job => (
+                  results, otherwise the same card appears twice.
+
+                  Applied jobs leave the board. Not deleted — the row is in the tracker
+                  with the resume that was sent, and switching it back to "Opened" there
+                  returns it here. That is the way back from a wrong tap. */}
+              {jobs
+                .filter(job => job.id !== sharedJob?.id)
+                .filter(job => apps[job.id]?.status !== 'applied')
+                .map(job => (
                 <JobCard
-                  key={job.id}
+                  tracked={apps[job.id]} key={job.id}
                   job={job}
                   onOpen={openJob}
                   selected={selected?.id === job.id}
@@ -940,8 +1209,23 @@ export default function JobBoard() {
         {detailBody}
       </aside>
 
+      {ask && (
+        // Backdrop does not dismiss. A stray click behind the dialog would answer
+        // nothing and lose the question, and this is the one moment it is worth asking.
+        <div className="jb-ask-overlay">
+          <div className="jb-ask" role="dialog" aria-modal="true" aria-label="Did you apply?">
+            <h4>Did you finish applying to {ask.company}?</h4>
+            <p>Only you know this — we can't see what happens on the employer's site.</p>
+            <div className="jb-ask-btns">
+              <button className="jb-ask-no" onClick={() => answerAsk(false)}>Not yet</button>
+              <button className="jb-ask-yes" onClick={() => answerAsk(true)} autoFocus>Yes, I applied</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {optimizeJob && (
-        <OptimizeModal job={optimizeJob} onClose={closeOptimize} />
+        <OptimizeModal job={optimizeJob} onClose={closeOptimize} onApplied={armAsk} />
       )}
     </div>
   )

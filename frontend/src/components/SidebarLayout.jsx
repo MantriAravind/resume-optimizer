@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { UserButton, useUser } from '@clerk/clerk-react'
-import { Briefcase, User, FileText, Calendar, Settings, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { Briefcase, User, FileText, Calendar, ChevronsLeft, ChevronsRight } from 'lucide-react'
 
 const NAV_ITEMS = [
   { icon: Briefcase, label: 'Job Board',   path: '/jobs', available: true },
@@ -10,8 +10,13 @@ const NAV_ITEMS = [
   // only removes it from the sidebar, so nothing has to be rebuilt to bring it back.
   // The board's own "Optimize my resume" button opens a modal and is unaffected.
   // { icon: FileText,  label: 'Resume Tool', path: '/app', available: true },
-  { icon: Calendar,  label: 'Tracker',     path: '/tracker', available: false },
-  { icon: Settings,  label: 'Settings',    path: '/settings', available: false },
+  { icon: Calendar,  label: 'Tracker',     path: '/tracker', available: true },
+  // Settings removed, not hidden. Every field it would have held already has a home:
+  // account, email, devices and account deletion are Clerk's UserButton menu (Manage
+  // account); the resume lives on Profile; role, work type and state are the board's
+  // own filter row. The only field left was work authorization, and that currently
+  // changes nothing — the job filter treats every user identically. It comes back the
+  // day that field does something real.
 ]
 
 const CSS = `

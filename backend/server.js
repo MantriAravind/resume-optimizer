@@ -225,6 +225,188 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.models.User || mongoose.model('User', userSchema)
 
+// ── APPLICATIONS (Tracker)
+//
+// A row is written the moment the student opens an employer's posting from this app.
+//
+// Everything about the job is SNAPSHOTTED rather than referenced. The pipeline prunes
+// postings on a 30-day window, so a stored jobId alone would mean applications quietly
+// disappearing from the tracker weeks later — the one thing a tracker must never do.
+// These few fields are cheap; a vanished application is not recoverable.
+//
+// resumeText, not a PDF. The download endpoints already rebuild a PDF and a Word file
+// from text, so storing the text gives an identical download for a few kilobytes
+// instead of a binary blob and a 16MB document ceiling.
+const applicationSchema = new mongoose.Schema({
+  clerkUserId: { type: String, index: true, required: true },
+  jobId:       { type: String, required: true },
+
+  // Snapshot — must survive the job being pruned.
+  title:       String,
+  company:     String,
+  location:    String,   // the variant they actually picked on a grouped posting
+  applyUrl:    String,
+
+  // 'opened' is the truth: we saw them click through to the employer, nothing more.
+  // Only the student can move it to 'applied', and only they know.
+  status:      { type: String, enum: ['opened', 'applied'], default: 'opened' },
+
+  // Null for a direct apply from the board. Kept as text; the PDF and Word endpoints
+  // regenerate the file on demand.
+  resumeText:  { type: String, default: null },
+  optimized:   { type: Boolean, default: false },
+  // Whether that resume existed AT THE MOMENT they clicked through to the employer.
+  //
+  // Someone can apply straight from the board and optimize the same job afterwards.
+  // The optimized file is worth keeping — they did the work — but it is NOT what the
+  // employer received, and a tracker whose promise is "the exact version you sent"
+  // cannot quietly show it as though it were. False makes the row say so.
+  resumeWasSent: { type: Boolean, default: false },
+  scoreBefore: { type: Number, default: null },
+  scoreAfter:  { type: Number, default: null },
+  confirmedSkills: { type: [String], default: [] },
+
+  appliedAt:   { type: Date, default: Date.now },
+  updatedAt:   { type: Date, default: Date.now },
+})
+// One row per job per user. A second apply to the same posting updates the row rather
+// than creating a duplicate the student then has to tidy up.
+applicationSchema.index({ clerkUserId: 1, jobId: 1 }, { unique: true })
+
+const Application = mongoose.models.Application || mongoose.model('Application', applicationSchema)
+
+// Direct applies are NOT recorded. Only an application made through the optimizer
+// reaches the tracker.
+//
+// Tried the other way first. Recording every "Apply →" click meant rows with no resume
+// attached, and worse, rows the product then had to describe: someone clicks Apply to
+// READ a posting, comes back, optimizes, and applies properly — at which point any copy
+// about "the employer received the earlier version" is simply false. The click proves
+// they opened a page and nothing more, so every sentence built on it was a guess.
+//
+// With this off, every row carries the resume that was on screen when they clicked
+// through. The cost is real: an application made straight from the board leaves no
+// trace. Set back to true to record those again — nothing else needs changing.
+const TRACK_DIRECT_APPLIES = false
+
+// ── TRACKER: record an application
+app.post('/applications', requireUser, async (req, res) => {
+  try {
+    const { jobId, title, company, location, applyUrl,
+            resumeText, scoreBefore, scoreAfter, confirmedSkills,
+            // Sent by the optimizer when a rewrite finishes for a job the student has
+            // ALREADY applied to. Attaches the resume without claiming it was sent.
+            attachOnly } = req.body || {}
+    if (!jobId) return res.status(400).json({ error: 'jobId is required.' })
+
+    const optimized = Boolean(resumeText)
+    if (!optimized && !TRACK_DIRECT_APPLIES) {
+      return res.json({ tracked: false, reason: 'direct applies are not recorded' })
+    }
+    // attachOnly never creates a row. Optimizing is not applying, and a tracker full of
+    // jobs someone merely looked at would stop meaning anything.
+    if (attachOnly && !(await Application.exists({ clerkUserId: req.userId, jobId }))) {
+      return res.json({ tracked: false, reason: 'no application to attach to' })
+    }
+
+    // A repeat apply must not wipe a resume that is already attached: someone who
+    // optimizes, applies, then later clicks the plain Apply link should keep the
+    // version they actually sent.
+    const existing = await Application.findOne({ clerkUserId: req.userId, jobId })
+    const set = {
+      clerkUserId: req.userId, jobId,
+      title:    title    || existing?.title    || '',
+      company:  company  || existing?.company  || '',
+      location: location || existing?.location || '',
+      applyUrl: applyUrl || existing?.applyUrl || '',
+      updatedAt: new Date(),
+    }
+    if (optimized) {
+      set.resumeText  = resumeText
+      set.optimized   = true
+      // Only an apply can mark a resume as sent, and a later attach must never
+      // downgrade one that genuinely was.
+      set.resumeWasSent = attachOnly ? Boolean(existing?.resumeWasSent) : true
+      set.scoreBefore = Number.isFinite(scoreBefore) ? scoreBefore : null
+      set.scoreAfter  = Number.isFinite(scoreAfter) ? scoreAfter : null
+      set.confirmedSkills = Array.isArray(confirmedSkills) ? confirmedSkills : []
+    }
+    if (!existing) set.appliedAt = new Date()
+
+    const doc = await Application.findOneAndUpdate(
+      { clerkUserId: req.userId, jobId },
+      { $set: set, $setOnInsert: { status: 'opened' } },
+      { upsert: true, returnDocument: 'after' }
+    )
+    res.json({ tracked: true, application: doc })
+  } catch (err) {
+    console.error('POST /applications failed:', err)
+    res.status(500).json({ error: 'Could not save this application.' })
+  }
+})
+
+// ── TRACKER: list
+app.get('/applications', requireUser, async (req, res) => {
+  try {
+    // resumeText is excluded — it is large and the list never renders it. The download
+    // route fetches the single row it needs.
+    const rows = await Application
+      .find({ clerkUserId: req.userId })
+      .select('-resumeText')
+      .sort({ appliedAt: -1 })
+      .lean()
+    res.json({ applications: rows })
+  } catch (err) {
+    console.error('GET /applications failed:', err)
+    res.status(500).json({ error: 'Could not load your applications.' })
+  }
+})
+
+// ── TRACKER: the resume actually sent, for re-download
+app.get('/applications/:id/resume', requireUser, async (req, res) => {
+  try {
+    const doc = await Application.findOne({ _id: req.params.id, clerkUserId: req.userId }).lean()
+    if (!doc) return res.status(404).json({ error: 'Not found.' })
+    if (!doc.resumeText) return res.status(404).json({ error: 'No optimized resume was saved for this application.' })
+    res.json({ resumeText: doc.resumeText, title: doc.title, company: doc.company })
+  } catch (err) {
+    console.error('GET /applications/:id/resume failed:', err)
+    res.status(500).json({ error: 'Could not load that resume.' })
+  }
+})
+
+// ── TRACKER: mark applied / not applied
+app.patch('/applications/:id', requireUser, async (req, res) => {
+  try {
+    const { status } = req.body || {}
+    if (!['opened', 'applied'].includes(status)) {
+      return res.status(400).json({ error: 'status must be "opened" or "applied".' })
+    }
+    const doc = await Application.findOneAndUpdate(
+      { _id: req.params.id, clerkUserId: req.userId },
+      { $set: { status, updatedAt: new Date() } },
+      { returnDocument: 'after' }
+    )
+    if (!doc) return res.status(404).json({ error: 'Not found.' })
+    res.json({ application: doc })
+  } catch (err) {
+    console.error('PATCH /applications failed:', err)
+    res.status(500).json({ error: 'Could not update this application.' })
+  }
+})
+
+// ── TRACKER: remove
+app.delete('/applications/:id', requireUser, async (req, res) => {
+  try {
+    const r = await Application.deleteOne({ _id: req.params.id, clerkUserId: req.userId })
+    if (!r.deletedCount) return res.status(404).json({ error: 'Not found.' })
+    res.json({ deleted: true })
+  } catch (err) {
+    console.error('DELETE /applications failed:', err)
+    res.status(500).json({ error: 'Could not remove this application.' })
+  }
+})
+
 app.get('/', (req, res) => {
   res.json({ message: 'Resume Optimizer backend is running.' })
 })
