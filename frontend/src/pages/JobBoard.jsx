@@ -134,6 +134,13 @@ const CSS = `
   color: #9CA3AF; font-size: 11px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; }
 .jb-shared-divider::before, .jb-shared-divider::after { content: ''; height: 1px; background: #ECECEF; flex: 1; }
 .jb-list { max-width: 900px; margin: 0 auto; padding: 6px 28px 60px; display: flex; flex-direction: column; gap: 12px; }
+.jb-drawer-actions--closed { display: block; }
+.jb-closed-bar {
+  background: #FDF0F0; border: 1px solid #F5D0D0; border-radius: 10px; padding: 13px 16px;
+}
+.jb-closed-bar strong { display: block; font-size: 13.5px; font-weight: 600; color: #B02020; margin-bottom: 3px; }
+.jb-closed-bar span { font-size: 12.5px; color: #8B4A4A; line-height: 1.5; }
+
 .jb-card--closed { background: #FBFBFC; border-color: #ECECEF; cursor: default; }
 .jb-card--closed:hover { transform: none; box-shadow: none; border-color: #ECECEF; }
 .jb-card--closed h3 { color: #8E8E93; }
@@ -1026,18 +1033,32 @@ export default function JobBoard() {
           </div>
         </div>
       )}
-      <div className="jb-drawer-actions">
-        <button className="jb-btn-opt" onClick={() => optimizeFor(selected)}>
-          <Sparkles size={14} /> Optimize my resume
-        </button>
-        <a
-          className="jb-btn-apply"
-          href={applyUrl}
-          target="_blank"
-          rel="noreferrer"
-          onClick={() => trackDirectApply(selected, applyUrl, shownLocation)}
-        >Apply →</a>
-      </div>
+      {/* The detail route re-checks this posting against Greenhouse on every open, so
+          `closed` here is live rather than however stale the last pipeline run left it.
+          It used to be fetched and then ignored, which is how a job that shut this
+          morning still offered a working Apply button — and worse, an Optimize button,
+          which costs a paid rewrite and a minute of someone's time before they find out. */}
+      {selected.closed ? (
+        <div className="jb-drawer-actions jb-drawer-actions--closed">
+          <div className="jb-closed-bar">
+            <strong>This posting has closed.</strong>
+            <span>The employer took it down since we last checked. It drops off the board on the next refresh.</span>
+          </div>
+        </div>
+      ) : (
+        <div className="jb-drawer-actions">
+          <button className="jb-btn-opt" onClick={() => optimizeFor(selected)}>
+            <Sparkles size={14} /> Optimize my resume
+          </button>
+          <a
+            className="jb-btn-apply"
+            href={applyUrl}
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => trackDirectApply(selected, applyUrl, shownLocation)}
+          >Apply →</a>
+        </div>
+      )}
 
       {/* Appears only after they have clicked through. This is the whole reason the
           control lives in the detail pane and not the tracker: the student comes back
