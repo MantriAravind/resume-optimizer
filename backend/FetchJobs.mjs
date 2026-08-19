@@ -129,12 +129,32 @@ const DISQUALIFIER_PATTERNS = [
   /\bclearance\b.{0,20}\bus\s+citizen\b/,
   /\bus\s+citizen\b.{0,20}\bclearance\b/,
   /\bno\s+(visa\s+)?sponsorship\b/,
+  // "No new H-1B sponsorship is available for this role."
+  //
+  // The rule above needs "no" sitting next to "sponsorship"; this posting puts two
+  // words between them, and the rest of the sentence reads POSITIVELY ("is available"),
+  // so nothing anchored on a negated verb sees it either.
+  //
+  // The gap is a fixed list of modifiers rather than \w+ on purpose. A general gap
+  // catches "there is no cap on sponsorship" and "no plans to change sponsorship" —
+  // both of which mean the opposite of a disqualifier.
+  /\bno\s+(new\s+|additional\s+|further\s+|current\s+|future\s+|ongoing\s+|employer\s+|employment\s+|work\s+|immigration\s+|us\s+|u\.s\.\s+|h-?1b\s+|h1-?b\s+|green\s+card\s+|visa\s+)+sponsorship\b/,
   /\b(will\s+not|cannot|can not|unable to|not able to|does not|do not|won't|are not able to|is not able to)\s+(offer|provide|sponsor)\b/,
   /\b(unable|not able)\s+to\s+(offer|provide)\s+(work\s+)?(visa\s+)?sponsorship\b/,
   /\b(does|do)\s+not\s+(offer|provide)\s+(work\s+)?(visa\s+)?sponsorship\b/,
   /\b(is\s+)?not\s+open\s+to\s+(visa\s+)?sponsorship\b/,
   /\bsponsorship\s*:?\s*(is\s+)?not\s+(available|offered|provided)\b/,
   /\bsponsorship\s+not\s+available\b/,
+  // "Employer work visa sponsorship AND SUPPORT ARE NOT PROVIDED for this role."
+  //
+  // Found live on the board after seven hardening rounds. The patterns above expect the
+  // negation to sit right next to "sponsorship" ("sponsorship is not provided"), and
+  // this posting puts three words in between while switching to a plural verb and a
+  // past participle — so both of the closest patterns missed by a hair.
+  //
+  // Bounded to a single sentence with [^.!?] so an unrelated later negative ("we offer
+  // sponsorship. Parking is not provided.") cannot be stitched into a false match.
+  /\b(visa\s+|work\s+|employment\s+|immigration\s+)?sponsorship\b[^.!?]{0,40}?\b(is|are|will|would|can|shall)\s+not\s+(be\s+)?(provided|offered|available|supported|considered|granted)\b/,
   /\b(visa\s+)?sponsorship\s+(is\s+)?(not\s+available|unavailable)\b/,
   /\bwithout\s+(employer\s+)?sponsorship\b/,
   /\bmust\s+be\s+(legally\s+|lawfully\s+)?authorized\s+to\s+work\b[^.]{0,40}\bwithout\b/,
