@@ -1,0 +1,54 @@
+name: Refresh SmartRecruiters jobs
+
+# The SmartRecruiters third of the board. Its own workflow, like Ashby's.
+#
+# The three fetchers cannot corrupt each other: every sweep is scoped by `ats`, so this
+# one only ever deletes `ats: 'smartrecruiters'` rows. That scoping is what makes running
+# them independently safe — if any sweep is ever widened, all three need revisiting.
+on:
+  schedule:
+    # Every 4 hours at :15, offset from Greenhouse (:00) and Ashby (:30) so no two are
+    # writing to Mongo at the same moment. GitHub queues scheduled runs on a best-effort
+    # basis so the exact minute drifts; the offset is a nudge, not a guarantee, and
+    # nothing depends on it.
+    #
+    # Four hours rather than Ashby's two because this is the expensive one. Descriptions
+    # are not included in the job list, so each posting that survives the age and location
+    # gates costs its own request — about 15,000 detail calls per run on top of 1,100 list
+    # calls. Ashby is 585 requests in total.
+    - cron: '15 */4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-smartrecruiters
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # A measured run is ~22 minutes. 60 leaves room for a slow day while still failing
+    # rather than hanging for hours.
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        # Same fallback as the other two workflows: `npm ci` needs a lockfile and fails
+        # without one, which would silently break every scheduled run.
+        run: npm ci || npm install
+
+      - name: Fetch and sweep SmartRecruiters jobs
+        working-directory: backend
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        # Filename is case-sensitive on Linux. Reads sr_companies.txt and sr_names.json
+        # from the same folder.
+        run: node fetchSR.mjs
