@@ -1921,6 +1921,45 @@ app.get('/jobs/:id', async (req, res) => {
       }
     }
 
+    if (job.ats === 'smartrecruiters' && job.companySlug) {
+      // SmartRecruiters is the one source with a real per-posting endpoint — Greenhouse
+      // needs the job id and Ashby makes you pull the whole board — so this is a single
+      // cheap request.
+      //
+      // The ad arrives in four separate sections and all four matter. Sponsorship
+      // refusals found in testing were almost always in additionalInformation, not in
+      // jobDescription, so reading only the obvious one would miss exactly the sentences
+      // this product exists to catch.
+      try {
+        const rawId = String(id).replace(/^sr_/, '')
+        const url = `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(job.companySlug)}/postings/${rawId}`
+        const sRes = await fetch(url, { signal: AbortSignal.timeout(8000) })
+
+        if (sRes.status === 404) {
+          // Authoritative, same as a Greenhouse 404: the employer took it down.
+          closed = true
+          if (!job.closed) await Job.updateOne({ id }, { closed: true })
+        } else if (sRes.ok) {
+          const d = await sRes.json()
+          const sections = d?.jobAd?.sections || {}
+          // Kept as HTML — the frontend sanitises it and styles headings, and the plain
+          // alternative would arrive as one unreadable run the way Ashby's did.
+          const html = ['companyDescription', 'jobDescription', 'qualifications', 'additionalInformation']
+            .map(k => sections[k]?.text || '')
+            .filter(Boolean)
+            .join('<br><br>')
+          if (html) fullDescription = html
+          if (closed) {
+            closed = false
+            await Job.updateOne({ id }, { closed: false })
+          }
+        }
+        // Any other status says nothing about this posting, so nothing changes.
+      } catch {
+        // Network failure. Fall back to the stored description, leave closed as it was.
+      }
+    }
+
     res.json({ ...job, description: fullDescription, closed })
 
   } catch (error) {
