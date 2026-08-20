@@ -1875,6 +1875,52 @@ app.get('/jobs/:id', async (req, res) => {
       }
     }
 
+    if (job.ats === 'ashby' && job.companySlug) {
+      // Ashby publishes a whole board at a time, not one posting, so the board is
+      // fetched and the job found inside it. That costs a slightly larger response and
+      // buys the closed check for free: a posting that has been taken down simply stops
+      // appearing in the board's list.
+      //
+      // The stored id carries an "ashby_" prefix — Ashby ids are UUIDs and Greenhouse's
+      // are numeric, so they are namespaced to keep the collection unambiguous. The
+      // prefix has to come off before matching against the API.
+      try {
+        const boardUrl = `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(job.companySlug)}`
+        const aRes = await fetch(boardUrl, { signal: AbortSignal.timeout(8000) })
+
+        if (aRes.ok) {
+          const data = await aRes.json()
+          const rawId = String(id).replace(/^ashby_/, '')
+          const posting = (data.jobs || []).find(j => String(j.id) === rawId)
+
+          if (posting) {
+            // descriptionHtml, not descriptionPlain.
+            //
+            // Ashby produces the "plain" field by flattening everything — headings,
+            // list items and paragraphs all collapse into one run of text, with raw
+            // URLs left mid-sentence. On screen that is an unreadable wall, and worse,
+            // it looked nothing like the Greenhouse jobs beside it on the same board.
+            // The HTML carries the real structure, and the frontend already sanitises
+            // it and styles bold-only paragraphs as headings.
+            fullDescription = posting.descriptionHtml || posting.descriptionPlain || fullDescription
+            if (closed) {
+              closed = false
+              await Job.updateOne({ id }, { closed: false })
+            }
+          } else {
+            // The board answered and this posting is not in it. Same authority as a
+            // Greenhouse 404: the employer took it down.
+            closed = true
+            if (!job.closed) await Job.updateOne({ id }, { closed: true })
+          }
+        }
+        // A non-OK response says nothing about this posting. The whole board being
+        // unreachable is not evidence that one job within it has closed.
+      } catch {
+        // Network failure. Fall back to the stored description, leave closed as it was.
+      }
+    }
+
     res.json({ ...job, description: fullDescription, closed })
 
   } catch (error) {

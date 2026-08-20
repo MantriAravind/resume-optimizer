@@ -1087,6 +1087,16 @@ export {
   isContractOrPartTime,
   fetchGreenhouseCompany,
   DISQUALIFIER_PATTERNS,
+  // Exported for the Ashby fetcher. Deliberately shared rather than copied: a second
+  // implementation of "is this senior?" or "which state is this?" would drift, and the
+  // board would then judge the same job differently depending on which ATS it came
+  // from. One definition, both sources.
+  detectExperienceLevel,
+  detectWorkType,
+  extractState,
+  extractSalary,
+  detectEmploymentType,
+  extractYearsExperience,
 }
 
 // Only auto-run the full pipeline when this file is executed directly
