@@ -88,9 +88,28 @@ function postedDate(job) {
 // ── HTML handling ────────────────────────────────────────────────────────
 function stripHtml(html = '') {
   return html
+    // NUMERIC ENTITIES FIRST, and generically.
+    //
+    // &nbsp; was decoded here but &#xa0; was not — the same non-breaking space, written
+    // the other way. SmartRecruiters uses the numeric form, and four AECOM postings read
+    // "sponsorship&#xa0;is not available for this role" and sailed straight through the
+    // filter: every pattern expects whitespace between the noun and the negation, and
+    // what it got was a literal ampersand-hash string.
+    //
+    // Decoding the whole numeric range rather than adding &#xa0; to the list, because
+    // the same trap applies to every character an employer's editor might emit that way
+    // — &#8217; for an apostrophe, &#8211; for a dash. One special case would have fixed
+    // one sentence and left the class of bug in place.
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
     .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+    .replace(/<[^>]*>/g, ' ')
+    // \s does not match a non-breaking space in JavaScript, so U+00A0 is collapsed
+    // explicitly. Otherwise a decoded &#xa0; survives as a character that looks like a
+    // space, prints like a space, and does not match \s+ in any pattern.
+    .replace(/[\s\u00a0\u2007\u202f]+/g, ' ')
+    .trim()
 }
 
 function normalize(text = '') {
