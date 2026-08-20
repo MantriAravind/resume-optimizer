@@ -139,6 +139,15 @@ const DISQUALIFIER_PATTERNS = [
   // catches "there is no cap on sponsorship" and "no plans to change sponsorship" —
   // both of which mean the opposite of a disqualifier.
   /\bno\s+(new\s+|additional\s+|further\s+|current\s+|future\s+|ongoing\s+|employer\s+|employment\s+|work\s+|immigration\s+|us\s+|u\.s\.\s+|h-?1b\s+|h1-?b\s+|green\s+card\s+|visa\s+)+sponsorship\b/,
+  // "This position does not include sponsorship for United States work authorization now
+  // or in the future." Three AECOM postings, all refusals, none caught: the negation
+  // rules look for "offer", "provide" or "sponsor" as the verb, and "include" was not
+  // among them.
+  //
+  // Sponsorship has to follow almost immediately. A twenty-character window matched
+  // "does not include relocation but sponsorship is available" — the opposite meaning —
+  // so only adjacent qualifiers are allowed in between.
+  /\b(does|do|will|would|can|shall)\s+not\s+include\s+(any\s+|visa\s+|work\s+|employment\s+|immigration\s+|us\s+|u\.s\.\s+)*sponsorship\b/,
   /\b(will\s+not|cannot|can not|unable to|not able to|does not|do not|won't|are not able to|is not able to)\s+(offer|provide|sponsor)\b/,
   /\b(unable|not able)\s+to\s+(offer|provide)\s+(work\s+)?(visa\s+)?sponsorship\b/,
   /\b(does|do)\s+not\s+(offer|provide)\s+(work\s+)?(visa\s+)?sponsorship\b/,
@@ -152,9 +161,16 @@ const DISQUALIFIER_PATTERNS = [
   // this posting puts three words in between while switching to a plural verb and a
   // past participle — so both of the closest patterns missed by a hair.
   //
-  // Bounded to a single sentence with [^.!?] so an unrelated later negative ("we offer
-  // sponsorship. Parking is not provided.") cannot be stitched into a false match.
-  /\b(visa\s+|work\s+|employment\s+|immigration\s+)?sponsorship\b[^.!?]{0,40}?\b(is|are|will|would|can|shall)\s+not\s+(be\s+)?(provided|offered|available|supported|considered|granted)\b/,
+  // Bounded to a single sentence so an unrelated later negative ("we offer sponsorship.
+  // Parking is not provided.") cannot be stitched into a false match. The semicolon is
+  // in that boundary too: "we provide sponsorship for all roles; overtime pay is not
+  // offered" is two clauses and only the first is about sponsorship.
+  //
+  // The gap was 40 and is now 75. A SmartRecruiters posting read "sponsorship
+  // opportunities for US employment authorization are not available" — 46 characters
+  // between the noun and the negation, so it missed by six. Widening alone introduced a
+  // false positive immediately, which is why the semicolon boundary went in with it.
+  /\b(visa\s+|work\s+|employment\s+|immigration\s+)?sponsorship\b[^.!?;]{0,75}?\b(is|are|will|would|can|shall)\s+not\s+(be\s+)?(provided|offered|available|supported|considered|granted)\b/,
   /\b(visa\s+)?sponsorship\s+(is\s+)?(not\s+available|unavailable)\b/,
   /\bwithout\s+(employer\s+)?sponsorship\b/,
   /\bmust\s+be\s+(legally\s+|lawfully\s+)?authorized\s+to\s+work\b[^.]{0,40}\bwithout\b/,
