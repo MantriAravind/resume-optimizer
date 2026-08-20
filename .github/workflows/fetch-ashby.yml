@@ -1,0 +1,64 @@
+name: Refresh Ashby jobs
+
+# The Ashby half of the board. Separate from the Greenhouse workflow on purpose.
+#
+# The two fetchers cannot corrupt each other: each sweep is scoped by `ats`, so the
+# Greenhouse run only ever deletes `ats: 'greenhouse'` rows and this one only ever
+# deletes `ats: 'ashby'`. That scoping is what makes running them independently safe —
+# if either sweep is ever widened, this needs revisiting.
+#
+# Keeping them apart also means a 26-minute Greenhouse run never blocks a 4-minute
+# Ashby run, and a failure in one does not stop the other refreshing.
+on:
+  schedule:
+    # Every 2 hours, offset 30 minutes from the Greenhouse run so the two are not
+    # writing to Mongo at the same moment. GitHub queues scheduled runs on a
+    # best-effort basis, so the exact minute drifts; the offset is a nudge, not a
+    # guarantee, and nothing depends on it.
+    #
+    # Twice as often as Greenhouse because it is a tenth of the load: 585 board
+    # requests against 5,441 company requests. Neither API publishes a rate limit and
+    # neither charges, which means either can throttle without warning — so the heavy
+    # one stays at 4 hours and the light one absorbs the faster cycle.
+    - cron: '30 */2 * * *'
+  workflow_dispatch:
+
+# One Ashby run at a time, for the same reason the Greenhouse workflow has this: the
+# run ends by DELETING Ashby jobs it did not see at the source. Two runs at once means
+# one can delete rows the other just saved, because each only knows what it fetched.
+#
+# cancel-in-progress stays false. Killing a run partway through its delete pass is
+# worse than making the next one wait.
+concurrency:
+  group: refresh-ashby
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # 585 boards at 6 concurrent takes about 4 minutes. 30 is a generous ceiling that
+    # still fails fast if Ashby starts timing out rather than hanging for hours.
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        # Same fallback as the Greenhouse workflow: `npm ci` needs a lockfile and fails
+        # without one, which would silently break every scheduled run.
+        run: npm ci || npm install
+
+      - name: Fetch and sweep Ashby jobs
+        working-directory: backend
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        # Filename is case-sensitive on Linux — lowercase f, matching the repo.
+        # Reads ashby_boards.txt and ashby_names.json from the same folder.
+        run: node fetchAshby.mjs

@@ -4,9 +4,11 @@ name: Refresh job board
 # jobs that no longer exist at the source.
 on:
   schedule:
-    # Every 6 hours, on the hour (UTC). GitHub queues scheduled runs on a best-effort
-    # basis, so the exact minute drifts. That is fine for a 6-hour refresh.
-    - cron: '0 */6 * * *'
+    # Every 4 hours, on the hour (UTC). Was 6 — the fetch-time age gate cut the run
+    # from 2h08m to roughly 26 minutes, so a 4-hour cycle has plenty of headroom and
+    # new postings reach the board sooner. GitHub queues scheduled runs on a
+    # best-effort basis, so the exact minute drifts.
+    - cron: '0 */4 * * *'
   # Lets you trigger it by hand from the Actions tab.
   workflow_dispatch:
 
@@ -27,8 +29,9 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     # The pipeline walks every company slug with rate-limit pauses, so give it room.
-    # The full run was 1h22m before the retry pass, which adds roughly 30 more minutes.
-    # Expect this to drop once the fetch-time age gate skips ~half the postings.
+    # The age gate brought a typical run down to ~26 minutes; this ceiling stays high
+    # so a slow day does not kill a run that would have finished, but it is now far
+    # above normal rather than close to it.
     timeout-minutes: 180
 
     steps:
