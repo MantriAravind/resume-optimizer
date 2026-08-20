@@ -45,6 +45,19 @@ import { categorizeJob, requiresLicense } from './jobCategory.mjs'
 const BOARDS_PATH  = 'ashby_boards.txt'
 const NAMES_PATH   = 'ashby_names.json'
 const MAX_AGE_DAYS = 30           // same window as Greenhouse; see FetchJobs.mjs
+
+// The sweep deletes jobs it did not see at the source this run, and aborts if that
+// share looks implausible.
+//
+// This is the guard against silent data loss. Genuine closures are a trickle — the
+// first three runs swept 0, 25 and 3 jobs, well under 1%. A large share means the
+// FETCH broke, not that employers closed everything at once: Ashby changing their API,
+// this IP being throttled, boards returning empty. Without the guard the fetcher would
+// read that silence as "all these jobs closed" and delete the lot.
+//
+// Named rather than inline so it can be raised deliberately for a one-off cleanup, the
+// way MAX_SWEEP_SHARE was on the Greenhouse side, without editing sweep logic.
+const MAX_SWEEP_SHARE = 0.25
 const CONCURRENCY  = 6
 const TIMEOUT_MS   = 15000
 const DRY = process.argv.includes('--dry')
@@ -219,16 +232,18 @@ async function main() {
   if (!DRY) {
     // ── STALE SWEEP, same reasoning as the Greenhouse side.
     // Ashby has no "this job closed" signal either; a closed posting simply stops being
-    // returned. Only boards that answered THIS run are swept, so an outage cannot wipe
-    // a company's jobs. Unlike Greenhouse there is no share guard yet — the first few
-    // runs should be watched before this is trusted unattended.
+    // returned. Only boards that answered THIS run are swept, so an outage that takes a
+    // board offline entirely cannot wipe that company's jobs — they are simply not
+    // considered. The share guard covers the other case: boards that answer but return
+    // nothing useful.
     if (okBoards.length) {
       const stale = await Job.countDocuments({ ats: 'ashby', companySlug: { $in: okBoards }, fetchedAt: { $lt: runStart } })
       const total = await Job.countDocuments({ ats: 'ashby' })
       const share = total ? stale / total : 0
-      if (share > 0.25) {
+      if (share > MAX_SWEEP_SHARE) {
         console.log(`   🛑 Sweep ABORTED: would remove ${stale} of ${total} Ashby jobs (${Math.round(share * 100)}%).`)
-        console.log('      Too many to be genuine closures. Nothing deleted — investigate.')
+        console.log(`      Guard is ${Math.round(MAX_SWEEP_SHARE * 100)}%. Too many to be genuine closures —`)
+        console.log('      the fetch itself probably failed. Nothing deleted. Investigate before raising this.')
       } else if (stale > 0) {
         const res = await Job.deleteMany({ ats: 'ashby', companySlug: { $in: okBoards }, fetchedAt: { $lt: runStart } })
         console.log(`   🗑️  Removed ${res.deletedCount} Ashby jobs no longer at the source.`)
