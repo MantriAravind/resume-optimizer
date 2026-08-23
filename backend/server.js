@@ -68,7 +68,13 @@ async function askModel({ model, maxTokens, temperature, reasoningEffort, messag
 }
 
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:5174', 'https://resume-optimizer-delta-dusky.vercel.app']
+  origin: [
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'https://resume-optimizer-delta-dusky.vercel.app',
+    'https://optyply.com',
+    'https://www.optyply.com',
+  ]
 }))
 app.use(express.json({ limit: '10mb' }))
 app.use(clerkMiddleware())
