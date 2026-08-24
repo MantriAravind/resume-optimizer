@@ -8,74 +8,93 @@ export default function PrivacyPage() {
         <div className="page-hero-inner">
           <span className="page-hero-badge">Legal</span>
           <h1 className="page-hero-title">Privacy Policy</h1>
-          <p className="page-hero-sub">Last updated: June 19, 2026</p>
+          <p className="page-hero-sub">Last updated: August 24, 2026</p>
         </div>
       </header>
 
       <section className="legal-section">
         <div className="legal-inner">
           <div className="legal-disclaimer">
-            This is placeholder policy text for a site still in development. It is not
-            legal advice and should be reviewed and finalized by a licensed attorney
-            before the site launches to real users.
+            We wrote this in plain language so you can actually read it. It has not yet
+            been reviewed by an attorney; we will do that before we charge anyone money.
+            If anything here is unclear, email us and we will answer honestly.
           </div>
 
-          <h2>Overview</h2>
+          <h2>Who we are</h2>
           <p>
-            This Privacy Policy describes how ResumeAI ("we," "us") collects, uses, and
-            protects information when you use our website and resume optimization service.
+            Optyply (optyply.com) is a job board and resume optimization tool built for
+            international students in the United States. It is run by a solo developer.
+            You can reach us at support@optyply.com.
           </p>
 
-          <h2>Information we collect</h2>
-          <p>We collect the following types of information:</p>
+          <h2>What we collect</h2>
           <ul>
-            <li>Account information you provide, such as your name and email address.</li>
-            <li>Resume content and job descriptions you upload or paste for optimization.</li>
-            <li>Usage data, such as pages visited and features used, to help us improve the product.</li>
+            <li>
+              <strong>Account details</strong> — your email address, and your name if you
+              provide it. Sign-in is handled by Clerk, our authentication provider.
+            </li>
+            <li>
+              <strong>Resume text</strong> — when you upload a resume, we extract the text
+              and store that text. The uploaded file itself is not kept.
+            </li>
+            <li>
+              <strong>Your activity in the app</strong> — jobs you track and resumes you
+              generate, so your tracker and history work.
+            </li>
           </ul>
 
-          <h2>How we use your information</h2>
-          <p>We use the information we collect to:</p>
+          <h2>What we deliberately don't do</h2>
           <ul>
-            <li>Provide and improve the resume optimization service.</li>
-            <li>Process your resume against job descriptions using AI analysis.</li>
-            <li>Communicate with you about your account or support requests.</li>
+            <li>No analytics or tracking scripts. No Google Analytics, no ad pixels.</li>
+            <li>We do not sell or rent your information to anyone.</li>
+            <li>We never send your resume to employers or any third party unless you
+              yourself choose to apply somewhere.</li>
+            <li>We do not use your resume to train AI models.</li>
           </ul>
 
-          <h2>Data storage and security</h2>
+          <h2>How your resume is processed</h2>
           <p>
-            We take reasonable measures to protect your information, including encrypted
-            connections and restricted access to stored data. No method of transmission
-            or storage is completely secure, and we cannot guarantee absolute security.
+            When you upload a resume or optimize it against a job posting, the text is
+            sent to Anthropic's Claude API for analysis and rewriting, under Anthropic's
+            commercial terms. The results come back to us and are stored with your
+            account so you can access them again.
           </p>
 
-          <h2>Third-party services</h2>
+          <h2>Where your data lives</h2>
           <p>
-            Resume analysis is processed using a third-party AI service. We do not sell
-            your personal information to advertisers or data brokers.
+            Account data is held by Clerk. Resume text and app data are stored in MongoDB
+            Atlas. The site runs on Vercel and Render. All connections use HTTPS.
           </p>
 
-          <h2>Your rights and choices</h2>
+          <h2>Deleting your data</h2>
           <p>
-            You can access, update, or delete your account information at any time from
-            your account settings, or by contacting us directly.
+            Email support@optyply.com from your account email and ask us to delete your
+            account. We will delete your account and stored resume text within 30 days
+            and confirm by reply. An in-app delete button is planned.
           </p>
 
-          <h2>Children's privacy</h2>
+          <h2>Security</h2>
           <p>
-            This service is not directed at children under 13, and we do not knowingly
-            collect information from children under 13.
+            We use encrypted connections and restrict access to stored data. No system is
+            perfectly secure, and we won't pretend otherwise; we will tell you if we
+            learn of a breach affecting your data.
           </p>
 
-          <h2>Changes to this policy</h2>
+          <h2>Children</h2>
           <p>
-            We may update this policy from time to time. Material changes will be posted
-            on this page with an updated date.
+            The service is for university students and graduates. It is not directed at
+            children under 13, and we do not knowingly collect their information.
           </p>
 
-          <h2>Contact us</h2>
+          <h2>Changes</h2>
           <p>
-            Questions about this policy? <Link to="/contact">Reach out through our contact page</Link>.
+            If this policy changes in a way that matters, we will update this page and
+            the date above.
+          </p>
+
+          <h2>Contact</h2>
+          <p>
+            support@optyply.com, or through the <Link to="/contact">contact page</Link>.
           </p>
         </div>
       </section>

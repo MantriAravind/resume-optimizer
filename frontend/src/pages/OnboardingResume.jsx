@@ -317,7 +317,7 @@ export default function OnboardingResume() {
       <div className="ob-eyebrow"><FileText />Last step</div>
       <h1>Upload your resume</h1>
       <p className="ob-sub">
-        We read it to show jobs in your field instead of all 26,000 at once — and to tailor
+        We read it to show jobs in your field — and to tailor
         your resume to any job you like, without inventing experience you don't have.
       </p>
     </>
@@ -537,3 +537,5 @@ export default function OnboardingResume() {
     </div>
   )
 }
+
+

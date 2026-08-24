@@ -8,85 +8,103 @@ export default function TermsPage() {
         <div className="page-hero-inner">
           <span className="page-hero-badge">Legal</span>
           <h1 className="page-hero-title">Terms of Service</h1>
-          <p className="page-hero-sub">Last updated: June 19, 2026</p>
+          <p className="page-hero-sub">Last updated: August 24, 2026</p>
         </div>
       </header>
 
       <section className="legal-section">
         <div className="legal-inner">
           <div className="legal-disclaimer">
-            This is placeholder terms text for a site still in development. It is not
-            legal advice and should be reviewed and finalized by a licensed attorney
-            before the site launches to real users.
+            Plain-language terms, not yet attorney-reviewed. We will have them reviewed
+            before any paid plan exists. Questions: support@optyply.com.
           </div>
 
-          <h2>Acceptance of terms</h2>
+          <h2>What this service is</h2>
           <p>
-            By creating an account or using ResumeAI, you agree to these Terms of Service.
-            If you do not agree, please do not use the service.
+            Optyply shows job postings that do not explicitly refuse visa sponsorship,
+            and helps you tailor your resume to them using AI. By creating an account
+            you agree to these terms.
           </p>
 
-          <h2>Description of service</h2>
+          <h2>What we do not promise</h2>
+          <ul>
+            <li>
+              We filter out postings that explicitly require citizenship or a security
+              clearance, or that state they won't sponsor. We <strong>cannot confirm that
+              any employer will sponsor you</strong>. Always verify sponsorship with the
+              employer before investing time in an application.
+            </li>
+            <li>
+              We do not guarantee interviews, offers, or employment outcomes.
+            </li>
+            <li>
+              Nothing on this site is legal or immigration advice. For questions about
+              your visa status, talk to your DSO or an immigration attorney.
+            </li>
+          </ul>
+
+          <h2>Price</h2>
           <p>
-            ResumeAI provides AI-assisted analysis and optimization of resumes against
-            job descriptions you provide. Suggestions are generated automatically and
-            are not a guarantee of employment or interview outcomes.
+            The service is currently free. There is no billing, no subscription, and no
+            payment collected. If a paid plan is introduced later, these terms will be
+            updated first and you will never be charged without explicitly signing up
+            for it.
           </p>
 
-          <h2>Accounts</h2>
+          <h2>Your resume, your responsibility</h2>
           <p>
-            You are responsible for maintaining the confidentiality of your account
-            credentials and for all activity that occurs under your account.
+            The optimizer rewrites what you actually did; it is built not to invent
+            experience. You are responsible for reviewing every optimized resume before
+            sending it and for making sure everything in it is true. Submitting false
+            information to employers can have serious consequences, including for your
+            visa status.
           </p>
 
           <h2>Acceptable use</h2>
-          <p>You agree not to:</p>
           <ul>
-            <li>Upload content that is unlawful, fraudulent, or infringes on others' rights.</li>
-            <li>Attempt to disrupt, reverse-engineer, or gain unauthorized access to the service.</li>
-            <li>Use the service to generate misleading or fraudulent application materials.</li>
+            <li>Don't use the service to create misleading or fraudulent application
+              materials.</li>
+            <li>Don't attempt to disrupt, scrape, reverse-engineer, or gain unauthorized
+              access to the service.</li>
+            <li>Don't upload content that is unlawful or infringes on others' rights.</li>
           </ul>
 
           <h2>Your content</h2>
           <p>
-            You retain ownership of the resumes and content you submit. By uploading
-            content, you grant us a limited license to process it solely for the purpose
-            of providing the optimization service to you.
+            You own your resume and everything you upload. You give us permission to
+            process and store it solely to provide the service to you. We claim no other
+            rights to it.
           </p>
 
-          <h2>Subscriptions and billing</h2>
+          <h2>Job postings</h2>
           <p>
-            Paid plans are billed on a recurring basis until canceled. You may cancel at
-            any time from your account settings; cancellation takes effect at the end of
-            the current billing period.
+            Postings are collected from employers' public applicant-tracking systems.
+            They belong to the employers who posted them, and they can change or close
+            at any time without notice.
           </p>
 
-          <h2>Disclaimers</h2>
+          <h2>Disclaimers and liability</h2>
           <p>
-            The service is provided "as is" without warranties of any kind. We do not
-            guarantee that optimization suggestions will result in interviews or job offers.
-          </p>
-
-          <h2>Limitation of liability</h2>
-          <p>
-            To the fullest extent permitted by law, ResumeAI is not liable for indirect,
+            The service is provided "as is," without warranties of any kind. To the
+            fullest extent permitted by law, Optyply is not liable for indirect,
             incidental, or consequential damages arising from your use of the service.
           </p>
 
           <h2>Termination</h2>
           <p>
-            We may suspend or terminate access to the service for violation of these terms.
+            We may suspend or terminate accounts that violate these terms. You can stop
+            using the service, and request deletion of your data, at any time.
           </p>
 
-          <h2>Changes to these terms</h2>
+          <h2>Changes</h2>
           <p>
-            We may update these terms from time to time. Continued use of the service
-            after changes constitutes acceptance of the updated terms.
+            If these terms change, we will update this page and the date above.
+            Continued use after changes means you accept them.
           </p>
 
-          <h2>Contact us</h2>
+          <h2>Contact</h2>
           <p>
-            Questions about these terms? <Link to="/contact">Reach out through our contact page</Link>.
+            support@optyply.com, or through the <Link to="/contact">contact page</Link>.
           </p>
         </div>
       </section>
