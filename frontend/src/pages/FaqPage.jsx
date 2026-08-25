@@ -4,36 +4,44 @@ import './FaqPage.css'
 
 const faqs = [
   {
-    q: 'Is ResumeAI free to use?',
-    a: 'Yes. The Free plan includes 3 resume optimizations a month at no cost, no credit card required. Upgrade to Pro any time you need more.',
+    q: 'Is Optyply free to use?',
+    a: 'Yes \u2014 everything on the site is free right now, no credit card, no limits. A paid plan is planned for the future; when it exists, the free features you use today will stay free or you will be told clearly before anything changes.',
   },
   {
-    q: 'How does the AI analyze my resume?',
-    a: 'It compares your resume against the job description you provide, checking for keyword overlap, formatting issues that trip up ATS software, and weak or passive phrasing.',
+    q: 'Does every job on the board sponsor visas?',
+    a: 'No, and we won\u2019t pretend otherwise. We remove postings that explicitly require US citizenship or a security clearance, or that state they won\u2019t sponsor. What remains are jobs that don\u2019t rule you out in the posting \u2014 but only the employer can confirm whether they\u2019ll actually sponsor. Always verify before investing serious time.',
   },
   {
-    q: 'Is my resume data kept private?',
-    a: 'Yes. Your resume and any job descriptions you upload are never sold or shared with third parties. You can delete your data at any time from your account.',
+    q: 'A job on the board turned out to require citizenship. What do I do?',
+    a: 'Email the link to support@optyply.com. Some postings phrase requirements in ways our filter hasn\u2019t seen yet, and every report makes it better. This genuinely helps.',
+  },
+  {
+    q: 'How does the resume optimizer work?',
+    a: 'It reads your resume against the specific job description, then rewrites your bullet points to match the role\u2019s language and requirements \u2014 using only experience you actually have. It is built not to invent anything. Still, always read the result before sending it: you are responsible for everything in your resume.',
+  },
+  {
+    q: 'Is my resume kept private?',
+    a: 'Yes. Your resume text is stored so the tool works for you, and it is never sold, never shared with employers or third parties, and never used to train AI models. Details are in our privacy policy.',
+  },
+  {
+    q: 'How do I delete my account and data?',
+    a: 'Email support@optyply.com from your account email and ask. Your account and stored resume text will be deleted within 30 days, with a confirmation reply. An in-app delete button is on the roadmap.',
   },
   {
     q: 'What file formats are supported?',
-    a: 'You can upload PDF or Word (.docx) files, and export your optimized resume as a PDF.',
+    a: 'Upload PDF or Word (.docx). Export your optimized resume as PDF or Word.',
   },
   {
     q: 'Will this guarantee me an interview?',
-    a: 'No tool can guarantee an interview \u2014 hiring decisions depend on many factors. What we can do is meaningfully improve your odds of getting past automated filters and in front of a human reviewer.',
+    a: 'No, and be suspicious of any tool that claims it can. Hiring depends on many factors we don\u2019t control. What Optyply does is stop you wasting applications on jobs that would reject you for your visa status, and make each remaining application better targeted.',
   },
   {
-    q: 'Can I cancel my subscription anytime?',
-    a: 'Yes. Pro and Team plans are billed monthly with no long-term contract, and you can cancel from your account settings at any time.',
+    q: 'Where do the job postings come from?',
+    a: 'Directly from employers\u2019 public applicant-tracking systems (Greenhouse, SmartRecruiters, and Ashby), refreshed several times a day. Postings can close or change at any time \u2014 that\u2019s in the employer\u2019s hands, not ours.',
   },
   {
-    q: 'Do you offer support if I get stuck?',
-    a: 'Yes. Reach out through the contact page and we\u2019ll get back to you \u2014 Pro and Team plans get priority response times.',
-  },
-  {
-    q: 'How is this different from a generic resume template?',
-    a: 'A template gives you a static layout. ResumeAI reads your actual resume against a specific job description and tells you exactly what to change for that role \u2014 it adapts every time, a template never does.',
+    q: 'Is this immigration advice?',
+    a: 'No. Nothing here is legal or immigration advice. For anything about your F1/CPT/OPT status, talk to your DSO or an immigration attorney.',
   },
 ]
 
@@ -86,7 +94,7 @@ export default function FaqPage() {
       <section className="cta-section">
         <div className="cta-inner">
           <h2 className="cta-title">Still have questions?</h2>
-          <p className="cta-sub">We&apos;re happy to help — reach out and we&apos;ll get back to you quickly.</p>
+          <p className="cta-sub">We&apos;re happy to help &mdash; reach out and we&apos;ll get back to you quickly.</p>
           <Link to="/contact" className="btn-primary-lg">Contact us</Link>
         </div>
       </section>

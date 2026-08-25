@@ -5,46 +5,35 @@ const tiers = [
   {
     name: 'Free',
     price: '$0',
-    period: 'forever',
-    desc: 'Try it out before you commit.',
+    period: 'today',
+    desc: 'Everything currently on the site, at no cost.',
     features: [
-      '3 resume optimizations / month',
-      'Basic ATS compatibility check',
-      'PDF export',
+      'Visa-filtered job board',
+      'Resume optimization against any posting',
+      'ATS compatibility score',
+      'PDF and Word export',
+      'Application tracker',
     ],
     cta: 'Get started',
     to: '/signup',
     featured: false,
+    available: true,
   },
   {
     name: 'Pro',
-    price: '$12',
-    period: 'per month',
-    desc: 'For an active job search.',
+    price: 'Coming soon',
+    period: null,
+    desc: 'Planned. Not available yet, and nothing to pay for today.',
     features: [
       'Unlimited resume optimizations',
-      'Advanced keyword matching',
-      'AI cover letter generator',
-      'Priority support',
+      'Cover letter generator',
+      'Sponsorship history for each company',
+      'Saved jobs and alerts',
     ],
-    cta: 'Start free trial',
+    cta: 'Join the waitlist',
     to: '/signup',
     featured: true,
-  },
-  {
-    name: 'Team',
-    price: '$39',
-    period: 'per month',
-    desc: 'For career centers and recruiting teams.',
-    features: [
-      'Everything in Pro',
-      'Up to 5 seats',
-      'Team usage analytics',
-      'Dedicated onboarding',
-    ],
-    cta: 'Contact sales',
-    to: '/contact',
-    featured: false,
+    available: false,
   },
 ]
 
@@ -55,11 +44,12 @@ export default function PricingPage() {
         <div className="page-hero-inner">
           <span className="page-hero-badge">Pricing</span>
           <h1 className="page-hero-title">
-            Simple plans for<br />
-            <span className="page-hero-title-accent">every job search</span>
+            Free while we<br />
+            <span className="page-hero-title-accent">build with you</span>
           </h1>
           <p className="page-hero-sub">
-            Start free. Upgrade when you need more. Cancel anytime.
+            Everything on the site is free right now. A paid plan is planned;
+            we will say what it costs when it exists.
           </p>
         </div>
       </header>
@@ -72,11 +62,11 @@ export default function PricingPage() {
                 className={tier.featured ? 'pricing-card pricing-card-featured' : 'pricing-card'}
                 key={tier.name}
               >
-                {tier.featured && <span className="pricing-badge">Most popular</span>}
+                {tier.featured && <span className="pricing-badge">Planned</span>}
                 <h3 className="pricing-tier">{tier.name}</h3>
                 <div className="pricing-price-row">
                   <span className="pricing-price">{tier.price}</span>
-                  <span className="pricing-period">/ {tier.period}</span>
+                  {tier.period && <span className="pricing-period">/ {tier.period}</span>}
                 </div>
                 <p className="pricing-desc">{tier.desc}</p>
                 <ul className="pricing-features">
@@ -95,8 +85,7 @@ export default function PricingPage() {
           </div>
 
           <p className="pricing-footnote">
-            No credit card required for Free &middot; Prices shown in USD &middot;{' '}
-            <Link to="/faq">Have questions? Check the FAQ</Link>
+            No credit card, no payment collected &middot; Pro features listed are plans, not promises
           </p>
         </div>
       </section>

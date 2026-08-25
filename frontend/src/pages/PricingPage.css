@@ -3,9 +3,11 @@
 
 .pricing-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1.5rem;
   align-items: stretch;
+  max-width: 760px;
+  margin: 0 auto;
 }
 
 .pricing-card {
@@ -93,11 +95,32 @@
   flex-shrink: 0;
 }
 
+/* CTA buttons — box-sizing prevents width:100% + padding overflowing the card */
 .pricing-cta {
   width: 100%;
+  box-sizing: border-box;
   justify-content: center;
   text-align: center;
 }
+
+/* Primary CTA defined locally so this page never depends on another page's CSS */
+.pricing-card .btn-primary-lg {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.875rem 2rem;
+  background: #2563EB;
+  color: #ffffff;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-weight: 700;
+  font-size: 1rem;
+  border-radius: 10px;
+  text-decoration: none;
+  border: 1.5px solid #2563EB;
+  transition: all 0.15s;
+  box-sizing: border-box;
+}
+
+.pricing-card .btn-primary-lg:hover { background: #1E40AF; border-color: #1E40AF; }
 
 .btn-ghost-dark {
   display: inline-flex;
@@ -112,6 +135,7 @@
   text-decoration: none;
   border: 1.5px solid #DBEAFE;
   transition: all 0.15s;
+  box-sizing: border-box;
 }
 
 .btn-ghost-dark:hover { background: #EFF6FF; border-color: #2563EB; }
