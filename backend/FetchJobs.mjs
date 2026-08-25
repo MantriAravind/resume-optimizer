@@ -167,6 +167,22 @@ const DISQUALIFIER_PATTERNS = [
   // "does not include relocation but sponsorship is available" — the opposite meaning —
   // so only adjacent qualifiers are allowed in between.
   /\b(does|do|will|would|can|shall)\s+not\s+include\s+(any\s+|visa\s+|work\s+|employment\s+|immigration\s+|us\s+|u\.s\.\s+)*sponsorship\b/,
+  // A LABELLED FIELD whose answer is "No".
+  //
+  //     Visa Sponsorship Available:  No
+  //     Minimum Requirements:        combination of education and experience...
+  //
+  // Flattened into plain text that becomes "visa sponsorship available no minimum
+  // requirements combination of education", which reads like "no minimum requirements" —
+  // harmless, and completely wrong. Seven Allegiant Air maintenance postings passed the
+  // filter this way, on an airline that does not sponsor.
+  //
+  // The nearby rules all expect a negated verb or "no" sitting before the noun. Here the
+  // negation is the ANSWER to a form field, after it.
+  //
+  // A full stop before "no" is deliberately not matched: "sponsorship available. No
+  // minimum experience is required" is a different sentence and means the opposite.
+  /\b(visa\s+|work\s+|employment\s+)?sponsorship\s+(available|offered|provided|eligible)\s*:?\s+no\b/,
   /\b(will\s+not|cannot|can not|unable to|not able to|does not|do not|won't|are not able to|is not able to)\s+(offer|provide|sponsor)\b/,
   /\b(unable|not able)\s+to\s+(offer|provide)\s+(work\s+)?(visa\s+)?sponsorship\b/,
   /\b(does|do)\s+not\s+(offer|provide)\s+(work\s+)?(visa\s+)?sponsorship\b/,
