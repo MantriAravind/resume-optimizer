@@ -277,7 +277,7 @@ const HOURLY = [
   // Food service and franchise store roles. "(02620)" store numbers and street
   // addresses in Domino's titles are NOT matched — the ROLE is the signal, the
   // store number is just noise around it.
-  /\b(delivery (driver|expert)|pizza (maker|delivery)|crew member|team member|shift (leader|lead|manager|supervisor)|line cook|prep cook|short order cook|dishwasher|busser|food runner|host(ess)?\b|barista|bartender|server assistant|restaurant (server|team|crew)|counter (help|service)|drive thru|fast food|sandwich (artist|maker)|fry cook|grill cook|kitchen (staff|helper|team))\b/,
+  /\b(delivery (driver|expert)|pizza (maker|delivery)|crew member|team member|shift (leader|lead|manager|supervisor)|line cook|prep cook|short order cook|dishwasher|busser|food runner|hostess\b|restaurant host\b|host stand\b|barista|bartender|server assistant|restaurant (server|team|crew)|counter (help|service)|drive thru|fast food|sandwich (artist|maker)|fry cook|grill cook|kitchen (staff|helper|team))\b/,
   // Retail floor roles
   /\b(cashier|retail (associate|clerk|team)|sales floor|store (associate|clerk|crew)|stock(er| associate| clerk)|shelf stocker|order (picker|filler)|bagger|courtesy clerk|merchandise stocker)\b/,
   // Hospitality housekeeping
@@ -318,3 +318,4 @@ export function isHourlyJob(title) {
     .trim() + ' '
   return HOURLY.some(re => re.test(t))
 }
+
