@@ -1,0 +1,35 @@
+name: Validate ATS candidates
+
+# One-off (manual) workflow: validates candidate company slugs against the
+# live ATS APIs and commits the results back to the repo. Trigger it from
+# the Actions tab -> "Validate ATS candidates" -> Run workflow.
+on:
+  workflow_dispatch:
+
+# Never run two validations at once, and don't collide with the job pipeline.
+concurrency:
+  group: validate-candidates
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate all three ATS
+        working-directory: backend/expansion
+        run: node validateCandidates.mjs
+
+      - name: Commit results back
+        run: |
+          git config user.name "validate-bot"
+          git config user.email "actions@github.com"
+          git add backend/expansion/validated_*.txt backend/expansion/.validate_progress.json
+          git diff --cached --quiet || git commit -m "Candidate validation results [skip ci]"
+          git push
