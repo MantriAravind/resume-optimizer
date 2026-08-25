@@ -26,7 +26,7 @@ const PERSONAL = [
   ['linkedin',  'LinkedIn'],
   ['github',    'GitHub'],
   ['location',   'Location'],
-  ['targetRole', 'Target role'],
+  ['targetRole', 'Target role', true],
 ]
 
 const CSS = `
@@ -394,3 +394,4 @@ export default function ProfilePage() {
     </SidebarLayout>
   )
 }
+

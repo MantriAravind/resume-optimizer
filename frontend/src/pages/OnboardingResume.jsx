@@ -21,7 +21,7 @@ const FIELDS = [
   ['linkedin',   'LinkedIn'],
   ['github',     'GitHub'],
   ['location',   'Location'],
-  ['targetRole', 'Target role'],
+  ['targetRole', 'Target role', true],
 ]
 
 const CHECK_LABELS = {
@@ -537,6 +537,7 @@ export default function OnboardingResume() {
     </div>
   )
 }
+
 
 
 
