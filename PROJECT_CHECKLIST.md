@@ -182,11 +182,11 @@ always.
   or remove — an honesty item, same class as the pricing pages.
 
 ## Phase C — Pipeline correctness & safety (verify before building)
-- [ ] **C1. VERIFY the safe-closure rule (blueprint §16).** Read what each
+- [x] **C1. VERIFIED 2026-08-25 (all 3 fetchers: failed companies skipped, okSlugs-only sweep, 0.25 cap, abort on zero-ok). Was: VERIFY the safe-closure rule (blueprint §16).** Read what each
   fetcher does when a company fetch FAILS: do existing jobs survive
   untouched? Only successful scans may mark jobs missing. If violated, fix
   before anything else in this phase — silent data loss.
-- [ ] **C2. MAX_SWEEP_SHARE back to ~0.25** (raised to 0.50 for one-time
+- [x] **C2. Already at 0.25 (verified 2026-08-25). MAX_SWEEP_SHARE back to ~0.25** (raised to 0.50 for one-time
   backlog clear; at 0.50 a future bug can delete half the board
   unchallenged).
 - [ ] **C3. Field filter end to end (was 3.3).** Fetchers already tag
@@ -316,3 +316,4 @@ processor and an entity — or an explicit written decision to stay free.
 - Honesty is the product. Every claim on the site must be literally true
   today, or labeled as a plan. When a page and reality disagree, the page
   is the bug.
+
