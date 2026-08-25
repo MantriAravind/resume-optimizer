@@ -1093,7 +1093,7 @@ export default function JobBoard() {
 
       {!isSignedIn && (
         <nav className="jb-nav">
-          <div className="jb-nav-logo" onClick={() => navigate('/')}>ResumeAI</div>
+          <div className="jb-nav-logo" onClick={() => navigate('/')}>Optyply</div>
           <div className="jb-nav-links">
             <a href="/how-it-works">How it works</a>
             <a href="/pricing">Pricing</a>

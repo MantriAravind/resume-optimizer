@@ -158,7 +158,7 @@ export default function SidebarLayout({ children }) {
         <div className="sl-header">
           <div className="sl-brand" onClick={() => navigate('/')}>
             <div className="sl-brand-mark" />
-            <span>ResumeAI</span>
+            <span>Optyply</span>
           </div>
           <button
             className="sl-toggle"
@@ -211,3 +211,4 @@ export default function SidebarLayout({ children }) {
     </div>
   )
 }
+

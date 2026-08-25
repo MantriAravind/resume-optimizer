@@ -8,7 +8,7 @@ export default function Footer() {
         <div className="footer-brand">
           <div className="footer-logo">
             <span className="footer-logo-mark">R</span>
-            <span className="footer-logo-text">ResumeAI</span>
+            <span className="footer-logo-text">Optyply</span>
           </div>
           <p className="footer-tagline">Land more interviews with AI-optimized resumes.</p>
         </div>
@@ -35,7 +35,7 @@ export default function Footer() {
       </div>
 
       <div className="footer-bottom">
-        <p>© 2026 ResumeAI. All rights reserved.</p>
+        <p>© 2026 Optyply. All rights reserved.</p>
         <p>Resume optimization, reimagined.</p>
       </div>
     </footer>

@@ -13,7 +13,7 @@ export default function AboutPage() {
             <span className="page-hero-title-accent">the interview</span>
           </h1>
           <p className="page-hero-sub">
-            ResumeAI started with a simple frustration: great candidates getting
+            Optyply started with a simple frustration: great candidates getting
             filtered out before a human ever read their resume. We're here to fix that.
           </p>
         </div>
@@ -31,7 +31,7 @@ export default function AboutPage() {
             the software couldn't parse what made them a fit.
           </p>
           <p className="about-text">
-            We built ResumeAI to level that playing field. Our optimizer reads your resume
+            We built Optyply to level that playing field. Our optimizer reads your resume
             the way a hiring system does, then shows you exactly what to change to get
             through the filter and in front of a person.
           </p>

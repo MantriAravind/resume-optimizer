@@ -129,7 +129,7 @@ export default function SharedJobPage({ jobId }) {
   const nav = (
     <div className="sj-nav">
       <div className="sj-logo" onClick={() => navigate('/')}>
-        <div className="sj-mark" />ResumeAI
+        <div className="sj-mark" />Optyply
       </div>
       <div className="sj-nav-btns">
         <button className="sj-login" onClick={() => navigate('/login')}>Log in</button>
@@ -197,3 +197,4 @@ export default function SharedJobPage({ jobId }) {
     </div>
   )
 }
+

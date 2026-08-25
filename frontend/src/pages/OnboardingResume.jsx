@@ -307,7 +307,7 @@ export default function OnboardingResume() {
 
   const chrome = (
     <div className="ob-nav">
-      <div className="ob-logo"><div className="ob-mark" />ResumeAI</div>
+      <div className="ob-logo"><div className="ob-mark" />Optyply</div>
       <div className="ob-step">One step to go</div>
     </div>
   )
@@ -537,5 +537,6 @@ export default function OnboardingResume() {
     </div>
   )
 }
+
 
 

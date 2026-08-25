@@ -306,7 +306,7 @@ const FAQS = [
   { q: 'Do these jobs sponsor visas?', a: "We can't promise that, and we won't pretend to. What we do is scan every description against 173 patterns for citizenship requirements, security clearances, export controls and explicit refusals to sponsor, then remove anything that matches. So a job here has not ruled you out — but whether a particular employer will sponsor is still a question for them. Confirm it before you invest hours in an application." },
   { q: 'Where do the job listings come from?', a: "Directly from company career pages — not aggregators like Indeed or LinkedIn. Every \"Apply\" button takes you straight to the company's official application, so you're never chasing a reposted or expired listing." },
   { q: 'What visa types is this built for?', a: "International students on F1, CPT, OPT, and STEM OPT. Every filter is tuned for people who need employer sponsorship to work in the US. One thing worth knowing: some roles need a US state licence — nursing, law, teaching, certain trades — and a posting rarely says so outright. We are working on flagging those." },
-  { q: 'Is it free?', a: "Yes — the job board is free, along with 3 resume optimizations per month. Pro ($9/month) raises that to 30 a month. Each optimization costs real money in AI compute, so there is no unlimited tier — we would rather cap it honestly than promise unlimited and quietly throttle you." },
+  { q: 'Is it free?', a: "Yes - everything on the site is free right now, no credit card. A paid plan is planned; we will say what it costs when it exists." },
   { q: 'How current are the jobs?', a: "The board refreshes regularly, and expired or filled roles are removed so you're not wasting time on listings that are already gone." },
 ]
 
@@ -332,7 +332,7 @@ export default function LandingPage() {
       <style>{CSS}</style>
 
       <nav className="pg-nav">
-        <div className="pg-logo"><div className="pg-logo-mark" />ResumeAI</div>
+        <div className="pg-logo"><div className="pg-logo-mark" />Optyply</div>
         <div className="pg-nav-links">
           <a href="#find">Job Board</a>
           <a href="#find">Resume Tool</a>
@@ -455,18 +455,18 @@ export default function LandingPage() {
             <div className="pg-price-name">Free</div>
             <div className="pg-price-amt">$0<span>/month</span></div>
             <div className="pg-price-feat"><Check />Full job board access</div>
-            <div className="pg-price-feat"><Check />3 resume optimizations / month</div>
+            <div className="pg-price-feat"><Check />Resume optimization against any posting</div>
             <div className="pg-price-feat"><Check />Word and PDF download</div>
             <button className="pg-price-btn free" onClick={() => navigate('/signup')}>Get started</button>
           </div>
           <div className="pg-price pro">
-            <div className="pg-price-tag">MOST POPULAR</div>
+            <div className="pg-price-tag">PLANNED</div>
             <div className="pg-price-name">Pro</div>
-            <div className="pg-price-amt">$9<span>/month</span></div>
+            <div className="pg-price-amt">Coming soon</div>
             <div className="pg-price-feat"><Check />Everything in Free</div>
-            <div className="pg-price-feat"><Check />30 resume optimizations / month</div>
-            <div className="pg-price-feat"><Check />Priority support</div>
-            <button className="pg-price-btn pro" onClick={() => navigate('/signup')}>Upgrade to Pro</button>
+            <div className="pg-price-feat"><Check />Unlimited resume optimizations</div>
+            <div className="pg-price-feat"><Check />Sponsorship history for each company</div>
+            <button className="pg-price-btn pro" onClick={() => navigate('/signup')}>Join the waitlist</button>
           </div>
         </div>
       </section>
@@ -482,7 +482,7 @@ export default function LandingPage() {
 
       {/* FOOTER */}
       <footer className="pg-footer">
-        <div className="pg-footer-logo"><div className="pg-logo-mark" />ResumeAI</div>
+        <div className="pg-footer-logo"><div className="pg-logo-mark" />Optyply</div>
         <div className="pg-footer-tag">Job hunting, without the dead ends.</div>
         <div className="pg-footer-links">
           <a href="/about">About</a><a href="/pricing">Pricing</a><a href="/faq">FAQ</a><a href="/contact">Contact</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a>
@@ -491,3 +491,8 @@ export default function LandingPage() {
     </div>
   );
 }
+
+
+
+
+
