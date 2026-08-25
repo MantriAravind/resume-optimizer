@@ -23,7 +23,7 @@
 }
 
 .page-hero-title {
-  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-size: clamp(2.25rem, 4.5vw, 3.25rem);
   font-weight: 800;
   color: #ffffff;
@@ -80,7 +80,7 @@
 .value-icon { font-size: 2rem; margin-bottom: 1rem; }
 
 .value-card h3 {
-  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-size: 1.0625rem;
   font-weight: 700;
   color: #111827;
@@ -103,7 +103,7 @@
 .stat { text-align: center; }
 
 .stat-num {
-  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-family: 'Space Grotesk', sans-serif;
   font-size: clamp(2.5rem, 5vw, 3.25rem);
   font-weight: 800;
   color: #2563EB;
