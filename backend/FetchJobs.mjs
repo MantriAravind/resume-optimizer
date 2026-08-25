@@ -1,5 +1,5 @@
 import mongoose from 'mongoose'
-import { categorizeJob, requiresLicense } from './jobCategory.mjs'
+import { categorizeJob, requiresLicense, isHourlyJob } from './jobCategory.mjs'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
@@ -325,7 +325,10 @@ const DISQUALIFIER_PATTERNS = [
   /\bsubject\s+to\s+(itar|ear|export[\s-]?control)/,
 ]
 
-function isDisqualified(plainText = '') {
+function isDisqualified(plainText = '', title = '') {
+  // Title-only check, never run on descriptions: half of all postings say
+  // 'as a team member you will' in the body. The title is the signal.
+  if (title && isHourlyJob(title)) return true
   const norm = normalize(plainText)
   return DISQUALIFIER_PATTERNS.some(re => re.test(norm))
 }
@@ -846,7 +849,7 @@ async function fetchAllJobs() {
         if (location !== '' && !isUSLocation(location)) { nonUS++; continue }
 
         const fullText = `${job.title || ''} ${plainText}`
-        if (isDisqualified(fullText)) { disqualified++; continue }
+        if (isDisqualified(fullText, job.title)) { disqualified++; continue }
         if (isContractOrPartTime(plainText, job.title || '')) { contractOrPartTime++; continue }
 
         // Greenhouse returns the real display name in company_name — "Movable Ink",
@@ -957,7 +960,7 @@ async function fetchAllJobs() {
           const location  = job.location?.name || ''
           if (location !== '' && !isUSLocation(location)) { nonUS++; continue }
           const fullText = `${job.title || ''} ${plainText}`
-          if (isDisqualified(fullText)) { disqualified++; continue }
+          if (isDisqualified(fullText, job.title)) { disqualified++; continue }
           if (isContractOrPartTime(plainText, job.title || '')) { contractOrPartTime++; continue }
 
           // Same as above: real display name from Greenhouse, slug as fallback.
@@ -1159,3 +1162,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     process.exit(1)
   })
 }
+
+

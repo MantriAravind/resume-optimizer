@@ -168,7 +168,7 @@ async function main() {
         // most of its work.
         const plainText = String(job.descriptionPlain || '')
         const fullText = `${job.title || ''}\n${plainText}`
-        if (isDisqualified(fullText)) { disqualified++; continue }
+        if (isDisqualified(fullText, job.title)) { disqualified++; continue }
         if (isContractOrPartTime(plainText, job.title || '')) { contractOrPartTime++; continue }
 
         // Every derived field comes from the SAME functions the Greenhouse side calls.
@@ -268,3 +268,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
 }
 
 export { fetchBoard, allLocations }
+

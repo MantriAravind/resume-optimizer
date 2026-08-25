@@ -249,3 +249,72 @@ export function requiresLicense(title) {
 
   return LICENSED.some(re => re.test(t))
 }
+
+// ── IS THIS AN HOURLY / STORE-LEVEL JOB? ────────────────────────────────────
+//
+// THIRD MECHANISM, SEPARATE FROM THE OTHER TWO, ON PURPOSE.
+//
+//   categorizeJob()   tags a field so a student can FILTER.       (reversible)
+//   requiresLicense() flags silent licence barriers.              (reversible)
+//   isHourlyJob()     says the posting should never be SAVED.     (drop at fetch)
+//
+// Why dropping is right here and nowhere else: OPT and CPT work must relate to
+// the student's degree. A pizza delivery route or a store cashier shift cannot
+// be degree-related work for anyone this board serves, so unlike a Registered
+// Nurse posting (real job, wrong audience, worth a reversible tag) these rows
+// are inventory nobody can legally use. SmartRecruiters franchise feeds dump
+// hundreds of them — four Domino's store postings were the first thing a brand
+// new user saw on the board.
+//
+// DELIBERATELY NARROW, same doctrine as LICENSED: when unsure the job stays.
+// Every pattern here names a role that is hourly store/route work wherever it
+// appears. Words that are usually-but-not-always hourly (driver, server,
+// warehouse, cook) are NOT matched bare — "driver" appears in "Device Driver
+// Engineer", "server" in "Server-Side Engineer", a "Warehouse Automation
+// Engineer" is a robotics job, and bare "cook" deletes every Cook County
+// government posting in Illinois. Compounds only.
+const HOURLY = [
+  // Food service and franchise store roles. "(02620)" store numbers and street
+  // addresses in Domino's titles are NOT matched — the ROLE is the signal, the
+  // store number is just noise around it.
+  /\b(delivery (driver|expert)|pizza (maker|delivery)|crew member|team member|shift (leader|lead|manager|supervisor)|line cook|prep cook|short order cook|dishwasher|busser|food runner|host(ess)?\b|barista|bartender|server assistant|restaurant (server|team|crew)|counter (help|service)|drive thru|fast food|sandwich (artist|maker)|fry cook|grill cook|kitchen (staff|helper|team))\b/,
+  // Retail floor roles
+  /\b(cashier|retail (associate|clerk|team)|sales floor|store (associate|clerk|crew)|stock(er| associate| clerk)|shelf stocker|order (picker|filler)|bagger|courtesy clerk|merchandise stocker)\b/,
+  // Hospitality housekeeping
+  /\b(housekeeper|room attendant|laundry attendant|dishroom|custodial worker)\b/,
+  // Franchise management-track titles that are store-level hourly work in
+  // disguise. "General Manager" alone is NOT matched — a real corporate GM
+  // posting must survive — but "in training" and "(store ####)" variants are
+  // the franchise pattern.
+  /\b(general manager in training|assistant manager in training|manager in training|shift manager)\b/,
+  // Route/gig driving. Bare "driver" is unsafe (Device Driver Engineer), so
+  // only compounds: the CDL case is already handled by requiresLicense().
+  /\b(delivery driver|route driver|van driver|shuttle driver|bus driver|courier\b|valet)\b/,
+]
+
+/**
+ * True when the TITLE names hourly store, route, or food-service work that can
+ * never be degree-related employment for an F1/OPT student. Checked at fetch;
+ * a true here means the posting is not saved at all.
+ *
+ * Errs toward false, same as requiresLicense: a missed one shows on the board
+ * and a student skips it; a wrong true silently deletes a real job.
+ */
+// Checked against the RAW title, before digits are stripped. "Customer Service
+// Rep" cannot be matched bare — a bank's call-centre CSR is a real full-time
+// job — but "Customer Service Rep(03534) - 479 w Merrick rd" carries the
+// franchise signature: the store number welded straight onto the role. Only
+// that pairing is matched, so the corporate CSR survives and the pizza-store
+// one does not.
+const FRANCHISE_STORE_ROLE = /\b(customer service rep\w*|csr)\s*\(\s*\d{3,}\s*\)/i
+
+export function isHourlyJob(title) {
+  if (!title) return false
+  if (FRANCHISE_STORE_ROLE.test(String(title))) return true
+  const t = ' ' + String(title)
+    .toLowerCase()
+    .replace(/[/(),.\-–—|:;&+#0-9]/g, ' ')   // digits stripped too: "Driver(02620)" reads "driver"
+    .replace(/\s+/g, ' ')
+    .trim() + ' '
+  return HOURLY.some(re => re.test(t))
+}

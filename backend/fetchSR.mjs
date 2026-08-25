@@ -215,7 +215,7 @@ async function main() {
 
         const text = adText(d)
         const fullText = `${s.title}\n${text}`
-        if (isDisqualified(fullText)) { disqualified++; continue }
+        if (isDisqualified(fullText, s.title)) { disqualified++; continue }
         if (isContractOrPartTime(text, s.title)) { contractOrPartTime++; continue }
 
         const salary = extractSalary(text)
@@ -314,3 +314,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
 }
 
 export { listPage, detail, adText, locationOf }
+
