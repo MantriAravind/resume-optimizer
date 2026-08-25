@@ -1,350 +1,318 @@
-# International Student Job Board — Master Project Checklist
+# Optyply — Master Project Document & Checklist
 
-**Single source of truth. One document, updated as work completes.**
+One document, end to end: what exists, what the blueprint planned, what the
+audit found, and every task from here to "finished." Replaces the previous
+PROJECT_CHECKLIST.md and absorbs the Aug 21 "International Student Job Board
+Project Blueprint v2" (audited below; original archived in Downloads, this
+file is the operational truth).
 
-Last updated: 21 August 2026
-Repo: `MantriAravind/resume-optimizer` · Latest commit: `2f401dc`
+Lives in the repo. Updated as part of every session's closing commit.
+Mark `[x]` only when the "Done when" condition is literally met.
 
----
-
-## How to use this document
-
-Every task has three parts:
-
-- **What** — the work itself
-- **Why** — what breaks or stays broken without it
-- **Done when** — an objective test, so "done" is not a judgement call
-
-Mark a task `[x]` only when the *Done when* condition is literally true. A task that
-"mostly works" is not done; half-finished work that looks finished is how a board ends up
-serving jobs nobody can apply to.
-
-Phases run in order. Within a phase, tasks can be done in any order unless noted.
+Last updated: 2026-08-25
 
 ---
 
-## Where the project stands today
+# PART I — WHAT OPTYPLY IS
 
-**The product works.** A student can search 40,241 jobs, filter out roles that would reject
-them for visa status, optimize a resume against a posting, apply, and track what they sent.
-Three job sources refresh themselves every few hours without supervision.
+A job board + AI resume optimizer for international students (F1/CPT/OPT/
+STEM OPT) at optyply.com. The honest promise: **jobs that won't reject you
+for needing a visa** — postings that explicitly require citizenship or a
+clearance, or explicitly refuse sponsorship, are removed. The filter
+confirms a job does NOT refuse sponsorship; it never claims a job WILL
+sponsor. Evidence-backed sponsorship badges come only after the
+sponsorship-data engine exists (Part IV, Phase E).
 
-**Nobody has used it.** No student has been observed using the product, and none has been
-asked whether they would pay for it.
+Stack: React/Vite on Vercel · Node/Express on Render (free tier, sleeps) ·
+MongoDB Atlas · Clerk auth (production, Google OAuth published) · Anthropic
+API (Haiku analyze / Sonnet optimize, 30-day Mongo analyze cache) ·
+Chrome/Puppeteer PDF + docx Word export · GitHub Actions pipeline every 6h
+with concurrency guard. Repo: MantriAravind/resume-optimizer (public).
+Local: C:\Users\Mantr\resume-optimizer, Windows/PowerShell.
 
-That gap — a working product with unverified demand — is what this plan is ordered around.
+---
 
-| | |
+# PART II — CURRENT STATE (verified, as of 2026-08-25)
+
+## Live product
+- optyply.com live: A record + www CNAME (Namecheap), SSL, www 308→apex.
+- Auth end to end: Clerk production (5/5 DNS), forced post-auth redirect to
+  /jobs, RequireResume guard (fails open only if backend unreachable — by
+  design, documented in App.jsx). Google OAuth on own Google Cloud client,
+  consent screen "In production," privacy/ToS links wired. Verified by an
+  external user: Google sign-in → onboarding → resume upload → extraction →
+  board.
+- Onboarding is a hard gate: signed-in users without a resume cannot reach
+  the board (Aravind's deliberate design; revisit only with A3 evidence).
+- Board: ~36,003 jobs after hourly purge. Greenhouse + SmartRecruiters +
+  Ashby. Original employer Apply URLs preserved; frontend only calls our
+  API, never ATS providers (matches blueprint §18).
+- Honesty sweep COMPLETE: landing, pricing (/pricing + landing section),
+  FAQ, privacy, terms, contact, onboarding copy all truthful. No fake
+  tiers, no fake caps, no fake support promises. Rebrand ResumeAI→Optyply
+  done everywhere incl. tab title. support@optyply.com forwards to Gmail.
+- Landing job count is dynamic (jobCount.toLocaleString()) — self-corrects.
+
+## Pipeline & filtering
+- ~98 description disqualifier patterns (citizenship, clearance, ITAR,
+  no-sponsorship; incl. labelled-field "Sponsorship Available: No").
+- US-location allow-list (fail-safe: unknown locations dropped).
+- Contract/part-time filter. Age gate at fetch, 30-day window, real
+  first_published dates.
+- Title layer in jobCategory.mjs (single shared module, three exports):
+  categorizeJob (field tag), requiresLicense (silent licence barriers,
+  reversible flag), isHourlyJob (store/route/food-service — drop at fetch,
+  wired into shared isDisqualified as title-only check across all three
+  fetchers). Documented traps: bare cook (Cook County), bare host (Airbnb
+  Host teams), driver/server/warehouse compounds only, CSR caught by
+  franchise store-number signature.
+- purgeHourly.mjs: dry-run default, 10% share cap, deletes by scanned _id
+  list. Ran once: 3,614 deleted (Domino's 3,274), 39,617 → 36,003.
+- filterCheck.mjs spot-checker (Greenhouse-only sampling; logic shared).
+
+## Validation & business
+- DSO email SENT 2026-08-25 (may an F1 student earn revenue from a
+  self-built product; does OPT/STEM OPT change it). Awaiting reply.
+- Zero students have confirmed willingness to pay. Interview questions
+  drafted (Part IV, A2). Google-test friend = candidate #1.
+- No payment processor, no legal entity, no prices anywhere on the site —
+  deliberately, until validation answers arrive.
+
+---
+
+# PART III — BLUEPRINT AUDIT (Aug 21 doc vs reality)
+
+## Adopted and already true
+| Blueprint says | Status |
 |---|---|
-| Jobs on the board | 40,241 |
-| Sources live | Greenhouse (25,752), SmartRecruiters (11,399), Ashby (3,090) |
-| Filter patterns | 97, audited weekly |
-| Registered users | 1 (the founder) |
-| Revenue | $0 |
-| Payment processor | none |
+| Direct-source first, preserve employer Apply URLs | Done since day one |
+| Frontend never calls ATS directly (§18) | True |
+| One connector per ATS, shared normalization | True (FetchJobs shared helpers) |
+| Excluded-class visa filtering with conservative rules (§17) | True — our disqualifiers ARE the Excluded class |
+| Never interpret silence as sponsorship (§3.2) | True — core honesty rule |
+| Bootstrap sources must never be runtime dependencies (§4) | True — pipeline runs on own slug files |
+| Mass-drop protection (§16.2) | Partial — MAX_SWEEP_SHARE exists; must return to ~0.25 (C2) |
+
+## Blueprint right, not yet built (the real gaps)
+| Gap | Blueprint § | Why it matters | Task |
+|---|---|---|---|
+| Company Registry (DB collection: status/confidence/evidence/lastValidated) | §10 | 36% of Greenhouse slugs confirmed dead; flat text files can't track health | D1 |
+| Safe closure rule: failed sync must never close jobs; only successful scans close | §16 | UNVERIFIED in our pipeline — if a failed fetch marks jobs stale, that's silent data loss | C1 (verify first) |
+| SyncRun metrics + anomaly alerts | §19–20 | Pipeline runs blind; a broken fetcher would be noticed by accident | D3 |
+| Content hash to skip unchanged descriptions | §13.2 | Saves compute; matters at scale, not now | D4 |
+| Discovery engine (career crawler, Wayback, urlscan, Common Crawl) | §11 | How tomorrow's new ATS customers enter the board | E2 |
+| needs_rediscovery / ATS-migration workflow | §16.3 | Dead slugs currently just rot | D1 includes |
+
+## Deferred or rejected, with reasons (decisions, not omissions)
+- **Workday, iCIMS, Oracle, SAP (§8 Tier 2–3):** rejected for solo scale.
+  Enterprise connectors are a team's quarter each. ATS expansion = Lever
+  (~864 jobs, scripts exist) + Workable only, added AFTER categorization so
+  they arrive pre-tagged. Revisit only if the business proves out.
+- **Admin dashboard (§18.1):** rejected — Aravind is the admin; scripts +
+  filter-report.md serve the need at this scale. Revisit at first hire.
+- **4-hour cadence (§13.1):** stays 6h. Zero users notice; GH Actions
+  minutes and ATS politeness win.
+- **Positive/Likely visa classes (§17):** deferred until the sponsorship
+  engine (E1) exists. Showing "likely sponsors" without stored evidence
+  violates the product's one non-negotiable: never overpromise sponsorship.
+- **Full TypeScript restructure (§28):** rejected — working .mjs modules
+  with heavy comments beat a rewrite. Adopt the *shape* (connectors/
+  discovery/ingestion separation) as files grow, not a migration project.
+- **Feashliaa CC BY-NC dataset:** never import without permission (§21).
+  MIT sources (ats-scrapers, FreeHire, OpenJobs, state-of-ats-2026) OK for
+  bootstrap AFTER licence check at import time.
+- **Blueprint's blind spot, corrected here:** it contains no validation, no
+  pricing, no user research. Part IV's Phase A (validation) outranks every
+  engineering phase. Architecture serves the business question, not the
+  other way around.
 
 ---
 
-# PHASE 0 — Already complete
+# PART IV — THE ROADMAP: EVERY REMAINING TASK
 
-Recorded so progress is visible and so nobody rebuilds it. Nothing here needs action.
+Ordered by phase; within a phase, by priority. Calendar-gated items first
+always.
 
-### Sourcing
-- [x] Greenhouse connector, 5,441 company boards, refreshing every 4 hours
-- [x] Ashby connector, 585 boards, refreshing every 2 hours
-- [x] SmartRecruiters connector, 259 companies, refreshing every 4 hours
-- [x] All three run in GitHub Actions on separate concurrency groups
-- [x] Every source writes one identical job shape using shared helper functions
-- [x] Sweeps scoped per source, so no connector can delete another's jobs
-- [x] Mass-deletion guard on every sweep (aborts above 25%)
-- [x] A failed fetch never closes jobs — only companies that answered are swept
-- [x] Lever evaluated and declined on measurement (~864 jobs, 2% gain); scripts retained
+## Phase A — Validation (HIGHEST PRIORITY; blocks pricing, gates business)
+- [x] **A1. DSO email** — sent 2026-08-25. When the reply arrives: read
+  together, record the decision verbatim in Part V.
+- [ ] **A2. Five student conversations.** Questions (drafted, tune freely):
+  1. Walk me through the last time you applied for jobs — step by step.
+  2. How do you currently figure out whether a company will sponsor you?
+  3. In the last three months, what have you spent money on for your job
+     search — anything at all?
+  4. How many hours a week on applications, and which part do you most
+     wish would disappear?
+  5. (Only after they use the product, pairs with A3:) If this cost money
+     next month, would you keep using it — and what's the most you'd
+     grudgingly pay?
+  Rules: never pitch first; product stays unexplained until Q4; write
+  answers verbatim; only BEHAVIOR counts as evidence ("I paid $40 for a
+  resume review"), not opinions ("I'd totally pay").
+  Done when: five real conversations, answers written in Part V.
+- [ ] **A3. Watch one student use the product** — say nothing, take notes.
+  Google OAuth blocker is cleared. Done when: notes in Part V.
+- [ ] **A4. Write the go/no-go pricing decision down, including the case
+  against.** Structural notes so far: board stays free (acquisition,
+  near-zero marginal cost); optimizer is the metered thing (~5¢/run, a
+  heavy student = $3–5/mo); consider a per-job-search pack over a monthly
+  subscription (students churn when the search ends); Q3's answer sets the
+  price ceiling.
+- [ ] **A5. Fabrication check** — audit Aravind's own optimized resume
+  bullets for invented specifics ("PII masking", "Datadog", "reverse ETL",
+  "billions of events"). The optimizer's no-fabrication promise is on the
+  Terms page; verify it holds on real output.
 
-### Filtering
-- [x] 97 disqualifier patterns covering citizenship, clearance, ITAR/export control,
-      no-sponsorship phrasings, and licensed-profession titles
-- [x] `filterCheck.mjs` audits the real filter against live data, not a copy
-- [x] Location allow-list — a job is US only if it shows a US signal
-- [x] Structured country codes used where the ATS provides them
+## Phase B — Close out the product shell
+- [ ] **B1. Waitlist capture (was 1.4).** Both "Join the waitlist" buttons
+  currently link to /signup. Done when: click records email + interest in
+  a Mongo collection and thanks the user. Small backend endpoint + tiny UI.
+- [ ] **B2. Site-wide font fix** — 'Plus Jakarta Sans' referenced in CSS
+  but never loaded; body text falls back to serif. One <link> in
+  index.html. Verify on /pricing and landing after.
+- [ ] **B3. "there / Free plan" sidebar bug** — name fallback renders bare
+  "there" when sign-up had no first name.
+- [ ] **B4. Clerk sign-up page theming** — default Clerk look; match Space
+  Grotesk/warm theme via Clerk appearance config.
+- [ ] **B5. In-app account deletion** — privacy page promises email
+  deletion in 30 days (keepable now); this is the roadmap button it
+  references. Includes deleting stored resume text.
+- [ ] **B6. Remove dead attachOnly code.**
+- [ ] **B7. Concise/Standard toggle is fake** (font size only). Make real
+  or remove — an honesty item, same class as the pricing pages.
 
-### Product
-- [x] Two-pane job board with ranked search, filters, duplicate grouping
-- [x] Resume optimizer with ten anti-fabrication gates
-- [x] Application tracker with the resume actually sent, and a return prompt
-- [x] Closed-posting detection surfaced in the detail pane for all three sources
-- [x] DSO confirmed monetization is permitted
+## Phase C — Pipeline correctness & safety (verify before building)
+- [ ] **C1. VERIFY the safe-closure rule (blueprint §16).** Read what each
+  fetcher does when a company fetch FAILS: do existing jobs survive
+  untouched? Only successful scans may mark jobs missing. If violated, fix
+  before anything else in this phase — silent data loss.
+- [ ] **C2. MAX_SWEEP_SHARE back to ~0.25** (raised to 0.50 for one-time
+  backlog clear; at 0.50 a future bug can delete half the board
+  unchallenged).
+- [ ] **C3. Field filter end to end (was 3.3).** Fetchers already tag
+  field + needsLicense. Verify: did backfillCategories.mjs run (check a
+  Mongo doc)? Server accepts ?field=? UI dropdown in first filter
+  position? Done when: a student picks "Tech" and sees only Tech.
+- [ ] **C4. Verify labelled-field disqualifier stays clean** in next
+  weekly filterCheck, then mark permanently done.
+- [ ] **C5. Weekly filterCheck routine** — `node filterCheck.mjs 100`
+  after any pipeline change and ~weekly. Read together: "look US" count,
+  unknown list for real US cities, "Passed but suspicious". Known noise:
+  Exadel Georgia country/state collision.
+- [ ] **C6. Extend filterCheck to sample SR + Ashby** — Greenhouse-only
+  today; SR/Ashby title mixes (franchise floods) invisible to it. Starting
+  points: srCheck.mjs, ashbyCheck.mjs.
+- [ ] **C7. Rate-limit the optimize endpoint** — any signed-in user can
+  burn API budget. Until built: check Anthropic console spend weekly.
+- [ ] **C8. Key rotation + git-history scan** — repo is PUBLIC; scan
+  history for MongoDB URI, RapidAPI, Anthropic keys; rotate anything ever
+  committed. (PDFSHIFT key already deleted from Render 2026-08-17.)
+- [ ] **C9. Group duplicate postings** — same job per location ("New York,
+  NY +2 more" + picker). Designed and previewed; needs backend change.
+  Blueprint §16 dedupe, our variant.
 
----
+## Phase D — The registry & operations (blueprint's core, right-sized)
+- [ ] **D1. Company Registry (blueprint §10, biggest structural gap).**
+  Replace flat slug files with a Mongo collection per mapping:
+  {companyName, atsType, atsIdentifier, careerUrl, status(active/
+  needs_validation/needs_rediscovery/disabled), confidence, discoveredBy,
+  evidenceUrl, lastValidatedAt, lastSuccessfulSyncAt, consecutiveFailures}.
+  Includes the migration workflow: repeated failures → needs_rediscovery
+  instead of silent rot. Migrate existing slug files in as status=active
+  with discoveredBy=legacy. Done when: fetchers read companies from the
+  registry and a dead slug flips to needs_rediscovery automatically.
+- [ ] **D2. Bootstrap import** — after D1. ats-scrapers + FreeHire +
+  OpenJobs + state-of-ats-2026 (verify MIT at import; NO CC BY-NC).
+  Import as needs_validation; a validation pass (live endpoint check,
+  response-shape match per blueprint §12.1) promotes to active. Never a
+  runtime dependency.
+- [ ] **D3. SyncRun metrics + anomaly alert (blueprint §19–20, minimum
+  viable).** Each pipeline run writes one SyncRun doc {ats, companies
+  attempted/succeeded, jobs fetched/new/closed, duration}. Alert = the GH
+  Actions job FAILS LOUDLY (non-zero exit → email) when: an ATS success
+  rate collapses, or job count swings beyond a threshold vs last run. No
+  dashboards — a failing Action IS the alert at this scale.
+- [ ] **D4. Content hashing** — skip re-processing unchanged descriptions
+  (blueprint §13.2). Do with D3; cheap once SyncRun exists.
+- [ ] **D5. ATS expansion: Lever, then Workable** — AFTER C3 so new
+  sources arrive pre-tagged. Lever scripts exist (leverCheck.mjs,
+  probeLever.mjs, lever_companies.txt, ~864 jobs). Each enters via the D1
+  registry, never new flat files.
+- [ ] **D6. Broken-Apply detection (blueprint §18)** — periodic sample
+  check that Apply URLs resolve; suppress jobs whose Apply is dead. Trust
+  item: a student's wasted click is the product breaking its one promise.
 
-# PHASE 1 — Ready for a first real user
+## Phase E — The moat (only after Phase A proves the business)
+- [ ] **E1. Sponsorship-data engine** — USCIS H-1B Employer Data Hub + DOL
+  LCA disclosure files; conservative company-name matching;
+  evidence-backed badges ONLY ("Sponsored 142 H-1B visas in FY2023"),
+  never "will sponsor you". Unlocks the parked H1B directory tab AND
+  blueprint §17's Positive/Likely classes, now with stored evidence,
+  rule versioning, and a manual audit set — as §17.1 requires.
+- [ ] **E2. Discovery engine, right-sized (blueprint §11)** — start with
+  Method A only (employer career-page crawler: domain → /careers →
+  detect ATS host → extract identifier → validate → registry) plus
+  conservative slug probing (guessSlugs.mjs exists). Wayback/urlscan/
+  Common Crawl only if coverage demands it.
+- [ ] **E3. Rewrite cost trim** — trim job descriptions before sending to
+  the AI; do NOT downgrade the model.
+- [ ] **E4. Save for later / Hide job** — persist per-user (~2–4 hrs);
+  Tracker grows into saved → applied → interviewing.
+- [ ] **E5. Usage metering** — only after A4 sets the pricing model.
+- [ ] **E6. Rename decision** — parked pending E1. Candidates:
+  SponsorBoard (honest only post-engine), OpenToSponsor, ClearToApply.
+  No "Visa" in the name (Visa Inc.). Check Interstride/MyVisaJobs first.
+- [ ] **E7. Legal review of privacy/terms by an attorney** — REQUIRED
+  before any money is charged. Pages are truthful plain-language and say
+  so.
+- [ ] **E8. Blueprint §29 stakeholder decisions, Aravind's answers on
+  record:** US-only ✓ full-time-only ✓ (both enforced). Still to decide
+  and write in Part V: internships on/off; excerpt-vs-full description
+  display (currently storing 500-char excerpt — decide consciously);
+  raw-snapshot retention if D4 adds snapshots.
 
-**Goal: a stranger can sign up, use the product, and not encounter a promise it cannot keep.**
-
-Small work, large consequence. Everything here blocks having users at all, and none of it
-takes more than a few hours.
-
-- [ ] **1.1 Buy a domain**
-  - **What:** purchase one `.com`, point DNS at Vercel
-  - **Why:** production auth cannot be enabled without a verified domain. This one $12
-    purchase has blocked the item below for over three weeks
-  - **Done when:** the site loads on the new domain over HTTPS
-
-- [ ] **1.2 Move Clerk to production keys**
-  - **What:** add the domain in Clerk, verify DNS, swap the environment keys on Vercel
-  - **Why:** the sign-in box currently says "Development mode". Dev instances are rate
-    limited and unsupported for real traffic, and login is the only door into the product
-  - **Done when:** the sign-in screen shows no development banner, and a fresh account can
-    sign up and reach the board
-  - **Blocked by:** 1.1
-
-- [ ] **1.3 Make the pricing page honest**
-  - **What:** the page advertises $12 Pro, $39 Team and "Cancel anytime", reachable from a
-    button on every page. Either remove the prices or label them clearly as planned
-  - **Why:** there is no payment processor and no entity. The page currently promises a
-    subscription that cannot be bought or cancelled
-  - **Done when:** nothing on the page states a price that can be paid today
-
-- [ ] **1.4 Capture interest instead of taking money**
-  - **What:** wire the Upgrade button to record the click and capture an email, with copy
-    saying Pro is not open yet
-  - **Why:** this is the willingness-to-pay signal that has been missing since the start.
-    It needs no processor and no entity, because asking is not charging
-  - **Done when:** clicking Upgrade stores a row (email, tier clicked, timestamp) and the
-    person sees an honest confirmation
-
-- [ ] **1.5 Remove dead code from the tracker build**
-  - **What:** the `attachOnly` path in `server.js` and its caller in `OptimizeModal.jsx`
-    can never execute while direct applies are untracked
-  - **Why:** code that cannot run is a trap for whoever reads it next, including you
-  - **Done when:** no reference to `attachOnly` remains and the tracker still works end to end
-
----
-
-# PHASE 2 — Prove someone wants this
-
-**Goal: five real conversations, and a decision made on evidence rather than assumption.**
-
-This is the phase that has not moved in four working sessions. Every task below is
-conversation, not code.
-
-- [ ] **2.1 Draft five questions**
-  - **What:** a short interview script about how students currently search, what they do
-    when a posting turns out to require citizenship, and what they would pay to avoid it
-  - **Why:** unstructured chats produce agreement, not information. People say "that sounds
-    useful" to be kind
-  - **Done when:** five questions exist, none of which can be answered "yes" out of politeness
-
-- [ ] **2.2 Talk to five F-1/OPT students**
-  - **What:** five conversations, using the script
-  - **Why:** no student has ever confirmed they would pay. Every pricing and feature
-    decision so far has been a guess
-  - **Done when:** five conversations are complete and written up
-
-- [ ] **2.3 Watch one student use the product**
-  - **What:** sit with someone, give them no instructions, and watch
-  - **Why:** every serious bug this month was found by looking at the real thing. The
-    product has never been observed in someone else's hands
-  - **Done when:** one session is complete and the friction points are written down
-
-- [ ] **2.4 Decide, in writing**
-  - **What:** based on 2.2 and 2.3, write down whether to charge, what for, and how much —
-    or whether the answer is that nobody would pay
-  - **Why:** the decision should be recorded so a bad month later does not quietly rewrite
-    what students actually said
-  - **Done when:** a short written decision exists, including the case against
-
----
-
-# PHASE 3 — Make the machine trustworthy
-
-**Goal: the board keeps working without supervision, and quietly breaking becomes impossible.**
-
-The connectors work. What is missing is knowing when they stop working.
-
-- [ ] **3.1 Build the Company Registry**
-  - **What:** replace the flat files (`greenhouse_companies.json`, `ashby_boards.txt`,
-    `sr_companies.txt`) with one database collection holding: company, ATS, identifier,
-    status (`active` / `needs_validation` / `needs_rediscovery` / `disabled`), confidence,
-    evidence URL, last validated, last successful sync
-  - **Why:** the current lists decay silently. 36% of Greenhouse slugs are dead, 20 Ashby
-    boards fail every single run, and nothing distinguishes "company left this ATS" from
-    "the request timed out". This is the single biggest structural gap in the system
-  - **Done when:** all three connectors read companies from the registry, and a failing
-    company is marked rather than silently retried forever
-
-- [ ] **3.2 Record every sync run**
-  - **What:** a `SyncRun` collection — source, start, end, companies attempted, answered,
-    jobs saved, jobs swept, errors
-  - **Why:** right now a run's outcome exists only in a GitHub Actions log that scrolls away.
-    There is no way to answer "when did SmartRecruiters start failing?"
-  - **Done when:** every scheduled run writes a row, and the last 30 runs can be listed
-
-- [ ] **3.3 Alert on anomalies**
-  - **What:** notify when a source's job count drops sharply, a connector's success rate
-    collapses, or a sweep aborts on the guard
-  - **Why:** the guards already prevent disaster, but nobody is told when one fires. A
-    source could be dead for days
-  - **Done when:** an artificial failure produces a notification you actually receive
-
-- [ ] **3.4 Two-strike closure for fragile sources**
-  - **What:** require two consecutive successful scans confirming a job's absence before
-    closing it
-  - **Why:** one flaky response currently removes real jobs. The blueprint calls this out
-    and it costs little
-  - **Done when:** a job absent from exactly one successful scan survives until the next
-
-- [ ] **3.5 Weekly filter audit as routine**
-  - **What:** `node filterCheck.mjs 100`, read both the suspicious and over-blocked lists
-  - **Why:** three real leaks were found this week and every one was found by reading
-    output, never by reading code
-  - **Done when:** the audit has been run and reviewed for two consecutive weeks
+## Definition of DONE for the whole project
+Every box above checked, and: five students interviewed with at least one
+credible payment signal (or a written no-go decision); DSO answer recorded
+and complied with; registry-driven pipeline with safe closure, SyncRun
+metrics and loud failure alerts; sponsorship badges live with evidence; a
+price on /pricing that a real person can actually pay, backed by a payment
+processor and an entity — or an explicit written decision to stay free.
 
 ---
 
-# PHASE 4 — Grow supply
-
-**Goal: more companies, not more platforms.**
-
-Ordered deliberately. Every source so far came from tech job repos, which is why the board
-is tech-heavy and why healthcare and finance companies on the same platforms were never found.
-
-- [ ] **4.1 Bootstrap import from open company lists**
-  - **What:** import company/ATS mappings from `ats-scrapers`, `FreeHire`, `OpenJobs` and
-    `state-of-ats-2026`; validate every mapping against the live API before activating
-  - **Why:** these are existing, MIT-licensed company registries — potentially thousands of
-    companies for a few hours of work. All four repos were confirmed live
-  - **Done when:** each source's license is checked and recorded, candidates are validated,
-    and the count of genuinely new companies per ATS is measured
-  - **Note:** do not import any non-commercial-licensed dataset. Check, do not assume
-
-- [ ] **4.2 Career-page discovery**
-  - **What:** from a company's own domain, follow `/careers`, detect the ATS host pattern,
-    extract the identifier, validate it
-  - **Why:** the blueprint is right that this is the strongest evidence — the mapping comes
-    from the employer themselves. It also detects migrations, which nothing currently does
-  - **Done when:** given a list of company domains, the crawler produces validated registry
-    entries with evidence URLs
-
-- [ ] **4.3 Archive and index discovery**
-  - **What:** Wayback and urlscan.io for recently seen ATS URLs; Common Crawl for bulk
-  - **Why:** these are free, and they reach companies no tech job repo covers
-  - **Done when:** at least one method adds validated companies the bootstrap import missed
-
-- [ ] **4.4 Reconsider Lever and Workable**
-  - **What:** re-measure Lever once the registry has more companies; measure Workable, which
-    is a single call with descriptions included, the same easy shape as Ashby
-  - **Why:** Lever was declined at 864 jobs because the company list was small. More
-    companies changes the arithmetic. Workable's yield has never been measured
-  - **Done when:** both are measured against the expanded registry and a written decision exists
-
-- [ ] **4.5 Workday**
-  - **What:** the largest source by volume. Needs tenant, shard and site discovered from a
-    real career URL; POST-based paginated API
-  - **Why:** it is where large-employer jobs live, and none of them are on the board today
-  - **Done when:** a measurement script reports jobs, runtime and filter behaviour, and a
-    written decision follows
-  - **Note:** hardest connector. Do this only after 4.1–4.3 have grown the registry
+# PART V — DECISION LOG (append-only; verbatim answers live here)
+- 2026-08-25: DSO email sent. Awaiting reply.
+- (A2 interview answers go here, verbatim.)
+- (A3 observation notes go here.)
+- (A4 pricing decision + case against goes here.)
+- (E8 remaining stakeholder answers go here.)
 
 ---
 
-# PHASE 5 — Visa intelligence
-
-**Goal: say something true about sponsorship that no competitor can say.**
-
-The filter currently removes jobs that refuse sponsorship. It cannot confirm that a job
-sponsors. That distinction is the product's honesty and must not blur.
-
-- [ ] **5.1 Sponsorship data engine**
-  - **What:** ingest the USCIS H-1B Employer Data Hub and DOL LCA disclosure files; match
-    employers conservatively to companies in the registry
-  - **Why:** it converts a negative promise ("won't reject you") into a factual positive
-    ("sponsored 142 H-1B visas in FY2023")
-  - **Done when:** a company page can show a sponsorship count sourced from government data,
-    with the year and source stated
-  - **Note:** verify current dataset URLs and years before starting. Name matching is the
-    hard part — "Stripe" versus "STRIPE, INC." — and a wrong match is worse than no badge
-
-- [ ] **5.2 Evidence-backed classification**
-  - **What:** store the matched pattern and text snippet alongside every filter decision
-  - **Why:** today a job is dropped with no record of why. Evidence makes audits fast and
-    mistakes correctable
-  - **Done when:** any filtered job can be explained by showing the rule and the sentence
-
-- [ ] **5.3 Never claim what cannot be proven**
-  - **What:** a standing review that no label anywhere says a job will sponsor
-  - **Why:** past sponsorship is not a promise about this role or this applicant
-  - **Done when:** every visa-related label on the site states a fact, not a prediction
-
----
-
-# PHASE 6 — Operate
-
-**Goal: run it without reading logs.**
-
-- [ ] **6.1 Admin dashboard** — job counts by source, sync success, companies needing
-      validation, mass-deactivation warnings, filter overrides
-- [ ] **6.2 Apply-link health** — detect and suppress broken Apply destinations
-- [ ] **6.3 Cost controls** — hash descriptions to skip unchanged AI work; trim job text
-      before sending to the optimizer
-- [ ] **6.4 Legal review** — ATS terms, content-republication limits, and a decision on
-      full descriptions versus excerpts
-- [ ] **6.5 Key rotation and history audit** — scan git history for committed secrets;
-      rotate MongoDB, OpenAI and any other keys
-
----
-
-# Deliberately not doing
-
-Recorded so these are not reopened without new information.
-
-| Decision | Reason |
-|---|---|
-| No job aggregators (Indeed, LinkedIn, ZipRecruiter) | They are competitors, not suppliers. APIs closed or paid, terms forbid scraping, LinkedIn has sued. A student can already search Indeed — the point is filtering it cannot do |
-| No "Sponsors visa" badge until Phase 5 | The filter proves a job does not refuse. It cannot prove a job sponsors |
-| No saved / hidden folders in the tracker | Applied only. Tabs earn their place when there is more than one thing to hold |
-| No status pipeline (applied → interviewing → offer) | A log stays true without maintenance; a pipeline does not |
-| Applied status is one-way | Removing the row is the way back, and it reads as what it is |
-| Direct applies are not tracked | Produced rows with no resume, and copy the product could not stand behind |
-| Greenhouse slug guessing | Measured at 1.3%. Exhausted |
-| iCIMS, Taleo, SuccessFactors | No public API. HTML scraping breaks unattended, and the pipeline runs unsupervised |
-
----
-
-# Working rules
-
-Earned, not theoretical. Each one comes from something that went wrong.
-
-- **Measure before building.** `ashbyCheck` and `srCheck` answered "will the filter survive
-  this source" before a line of connector code existed. `srCheck` found three real filter
-  bugs — two of which were already leaking on live sources
-- **Read the real output.** Every serious bug this month was found by looking at the board,
-  a report, or a resume. None were found by reading code
-- **Verify against the artifact, not the plan.** The Greenhouse slug guesser looked like a
-  2.3% success until the company names were checked. Then it was 0.7%
-- **Test on localhost before pushing**, and remove `VITE_BACKEND_URL` from
-  `frontend/.env.local` afterwards
-- **Complete files, never snippets**
-- **A downloadable prototype before any UI work**
-- **Restart the backend after every backend change**
-- **`node --check` does not catch ESM syntax errors** — use `new vm.SourceTextModule(src)`
-- **Filenames are case-sensitive in CI** — `FetchJobs.mjs` capital F, `fetchAshby.mjs` lower
-- **Windows** — `move` needs `-Force`; watch for `(1)` suffixes and stripped extensions
-
----
-
-# Progress
-
-| Phase | Tasks | Done |
-|---|---|---|
-| 0 — Complete | 18 | 18 |
-| 1 — First user | 5 | 0 |
-| 2 — Validation | 4 | 0 |
-| 3 — Trustworthy | 5 | 0 |
-| 4 — Supply | 5 | 0 |
-| 5 — Visa intelligence | 3 | 0 |
-| 6 — Operate | 5 | 0 |
-| **Total remaining** | **27** | **0** |
-
----
-
-**Next task: 1.1 — buy a domain.**
+# PART VI — STANDING RULES (how we work; hard-won)
+- Measure before building; preview before purging. The purge preview
+  caught the Airbnb "Host" false positive that reasoning alone missed.
+- Verify on localhost before pushing (VITE_BACKEND_URL in
+  frontend/.env.local, remove after; restart backend after every .js
+  change). The redirect fix "failed" locally purely because that env var
+  was missing — check environment before suspecting code.
+- Read the real error before patching. Read numbers together (US-look +
+  foreign-slip), never optimize one in isolation.
+- Use the actual file, never reconstruct from memory. Complete files only.
+- Fail-safe allow-lists beat blocklists for open-ended text.
+- Bare-word regexes are landmines (cook/host/driver/server/warehouse);
+  compounds only, and document each trap next to the pattern.
+- Deletion scripts: dry-run default, share cap, delete by scanned _id list.
+- Filter changes ship only after filterCheck + eyeballing the report.
+- Failed sync must never close jobs (verify: C1). Only successful scans
+  close.
+- Anything that matters lives in the repo — not Downloads, not chat
+  memory. This file updates in every session's closing commit.
+- PowerShell: no `&&`; Move-Item needs -Force; em dashes break .Replace()
+  (use -replace with [^"]* anchors or ASCII fragments); watch for "(1)"
+  download suffixes; `q` exits the git pager.
+- node --check misses ESM syntax errors; test by importing.
+- Honesty is the product. Every claim on the site must be literally true
+  today, or labeled as a plan. When a page and reality disagree, the page
+  is the bug.
