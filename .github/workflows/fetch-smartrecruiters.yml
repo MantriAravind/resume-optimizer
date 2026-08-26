@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     # A measured run is ~22 minutes. 60 leaves room for a slow day while still failing
     # rather than hanging for hours.
-    timeout-minutes: 60
+    timeout-minutes: 300
 
     steps:
       - name: Check out the repo
@@ -52,3 +52,4 @@ jobs:
         # Filename is case-sensitive on Linux. Reads sr_companies.txt and sr_names.json
         # from the same folder.
         run: node fetchSR.mjs
+
