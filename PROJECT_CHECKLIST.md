@@ -9,7 +9,7 @@ file is the operational truth).
 Lives in the repo. Updated as part of every session's closing commit.
 Mark `[x]` only when the "Done when" condition is literally met.
 
-Last updated: 2026-08-25
+Last updated: 2026-08-26
 
 ---
 
@@ -44,8 +44,9 @@ Local: C:\Users\Mantr\resume-optimizer, Windows/PowerShell.
   board.
 - Onboarding is a hard gate: signed-in users without a resume cannot reach
   the board (Aravind's deliberate design; revisit only with A3 evidence).
-- Board: ~36,003 jobs after hourly purge. Greenhouse + SmartRecruiters +
-  Ashby. Original employer Apply URLs preserved; frontend only calls our
+- Board: **61,990 jobs** after the company expansion (32,796 Greenhouse +
+  9,280 Ashby + 19,914 SmartRecruiters; companies 7,693 / 3,794 / 4,158).
+  Full expansion story: PLAN_company_expansion.md. Original employer Apply URLs preserved; frontend only calls our
   API, never ATS providers (matches blueprint §18).
 - Honesty sweep COMPLETE: landing, pricing (/pricing + landing section),
   FAQ, privacy, terms, contact, onboarding copy all truthful. No fake
@@ -158,10 +159,20 @@ always.
   heavy student = $3–5/mo); consider a per-job-search pack over a monthly
   subscription (students churn when the search ends); Q3's answer sets the
   price ceiling.
-- [ ] **A5. Fabrication check** — audit Aravind's own optimized resume
-  bullets for invented specifics ("PII masking", "Datadog", "reverse ETL",
-  "billions of events"). The optimizer's no-fabrication promise is on the
-  Terms page; verify it holds on real output.
+- [x] **A5. Fabrication check** — RESOLVED 2026-08-26. First audit looked
+  like fabrication; Aravind's testimony established every flagged skill
+  (PHI/PII, Redshift, healthcare) was user-confirmed in the wizard, and
+  reading /optimize showed a 10-rule prompt + code gate (inventedBullets,
+  inventedSections, cert stripping) already enforcing honesty. Shipped on
+  top: aggressive-but-honest weaving (scan every bullet before skills-list
+  fallback), gap-naming feedback, EXACTLY-ONE-skills-section rule (Rule 4/
+  Rule 10 collision produced duplicates), and all-green review highlighting
+  of every AI-introduced word in every section (word-boundary matching —
+  "RDS" no longer marks inside "standards"). Decision on record: invented
+  bullets REFUSED even as an option; skills-list fallback + named gap is
+  the honest ceiling. Known small gap: the "where they went" feedback prose
+  is model-written and once claimed bullet placement that didn't happen —
+  compute it in code someday (see Phase C add-ons).
 
 ## Phase B — Close out the product shell
 - [ ] **B1. Waitlist capture (was 1.4).** Both "Join the waitlist" buttons
@@ -182,19 +193,19 @@ always.
   or remove — an honesty item, same class as the pricing pages.
 
 ## Phase C — Pipeline correctness & safety (verify before building)
-- [x] **C1. VERIFIED 2026-08-25 (all 3 fetchers: failed companies skipped, okSlugs-only sweep, 0.25 cap, abort on zero-ok). Was: VERIFY the safe-closure rule (blueprint §16).** Read what each
+- [ ] **C1. VERIFY the safe-closure rule (blueprint §16).** Read what each
   fetcher does when a company fetch FAILS: do existing jobs survive
   untouched? Only successful scans may mark jobs missing. If violated, fix
   before anything else in this phase — silent data loss.
-- [x] **C2. Already at 0.25 (verified 2026-08-25). MAX_SWEEP_SHARE back to ~0.25** (raised to 0.50 for one-time
+- [ ] **C2. MAX_SWEEP_SHARE back to ~0.25** (raised to 0.50 for one-time
   backlog clear; at 0.50 a future bug can delete half the board
   unchallenged).
 - [ ] **C3. Field filter end to end (was 3.3).** Fetchers already tag
   field + needsLicense. Verify: did backfillCategories.mjs run (check a
   Mongo doc)? Server accepts ?field=? UI dropdown in first filter
   position? Done when: a student picks "Tech" and sees only Tech.
-- [ ] **C4. Verify labelled-field disqualifier stays clean** in next
-  weekly filterCheck, then mark permanently done.
+- [x] **C4. Labelled-field disqualifier verified clean** across three
+  filterChecks at 36k→62k scale. Done 2026-08-26.
 - [ ] **C5. Weekly filterCheck routine** — `node filterCheck.mjs 100`
   after any pipeline change and ~weekly. Read together: "look US" count,
   unknown list for real US cities, "Passed but suspicious". Known noise:
@@ -207,6 +218,18 @@ always.
 - [ ] **C8. Key rotation + git-history scan** — repo is PUBLIC; scan
   history for MongoDB URI, RapidAPI, Anthropic keys; rotate anything ever
   committed. (PDFSHIFT key already deleted from Render 2026-08-17.)
+- [ ] **C9a. Zero-yield SR company prune** — the SR run lists 277k
+  postings to save 19.9k (7% yield); the freight-LLC / home-care tail
+  burns most of the runtime. Measure jobs-per-company from the DB, drop
+  the zero-yield tail, shrink the 6-hourly cron. Also watch the scheduled
+  SR cron duration (timeout now 300 min).
+- [ ] **C9b. Compute "where they went" in code** — the optimize feedback
+  prose is model-written and has claimed bullet placement that didn't
+  happen; derive each landed skill's section programmatically.
+- [ ] **C9c. License-flag hiding** — Aravind decided HIDE (not badge) for
+  needsLicense jobs after reading live titles. Pending: measure flagged
+  count + eyeball 20, then one-line filter in the /jobs query. Held
+  mid-discussion; server.js route paste still owed.
 - [ ] **C9. Group duplicate postings** — same job per location ("New York,
   NY +2 more" + picker). Designed and previewed; needs backend change.
   Blueprint §16 dedupe, our variant.
@@ -221,11 +244,13 @@ always.
   instead of silent rot. Migrate existing slug files in as status=active
   with discoveredBy=legacy. Done when: fetchers read companies from the
   registry and a dead slug flips to needs_rediscovery automatically.
-- [ ] **D2. Bootstrap import** — after D1. ats-scrapers + FreeHire +
-  OpenJobs + state-of-ats-2026 (verify MIT at import; NO CC BY-NC).
-  Import as needs_validation; a validation pass (live endpoint check,
-  response-shape match per blueprint §12.1) promotes to active. Never a
-  runtime dependency.
+- [x] **D2. Bootstrap import** — DONE 2026-08-25/26 in flat-file form
+  (registry doesn't exist yet): 5 MIT repos → extractCandidates.mjs →
+  validateCandidates.mjs (live 200+jobs check, cloud-run via
+  validate-candidates.yml) → staged merges → board 31,398→61,990.
+  9,434 companies added; 74 dead GH slugs pruned via dead_slugs.json.
+  Full story: PLAN_company_expansion.md. When D1 (registry) is built,
+  migrate these lists in as discoveredBy=bootstrap.
 - [ ] **D3. SyncRun metrics + anomaly alert (blueprint §19–20, minimum
   viable).** Each pipeline run writes one SyncRun doc {ats, companies
   attempted/succeeded, jobs fetched/new/closed, duration}. Alert = the GH
@@ -283,6 +308,18 @@ processor and an entity — or an explicit written decision to stay free.
 
 # PART V — DECISION LOG (append-only; verbatim answers live here)
 - 2026-08-25: DSO email sent. Awaiting reply.
+- 2026-08-25/26: Company expansion executed end to end; board doubled to
+  61,990. Details + lessons in PLAN_company_expansion.md.
+- 2026-08-26: A5 resolved (see A5). Aravind proposed allowing fully
+  invented bullets for confirmed skills to maximize match; Claude refused
+  on fabrication grounds; agreed alternative shipped: honest aggressive
+  weaving + gap-naming feedback. "100% match" goal dropped as not
+  legitimate (Aravind's words) — maximize honestly, show the gap.
+- 2026-08-26: needsLicense jobs to be HIDDEN, not badged (Aravind, after
+  reading live titles). Implementation pending (C9c).
+- 2026-08-26: Field dropdown NOT built (Aravind: keywords over
+  segregation; field tags stay in data). Target role made mandatory at
+  onboarding + profile instead; board pre-ranks by it.
 - (A2 interview answers go here, verbatim.)
 - (A3 observation notes go here.)
 - (A4 pricing decision + case against goes here.)
@@ -316,4 +353,3 @@ processor and an entity — or an explicit written decision to stay free.
 - Honesty is the product. Every claim on the site must be literally true
   today, or labeled as a plan. When a page and reality disagree, the page
   is the bug.
-
