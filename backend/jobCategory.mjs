@@ -239,6 +239,16 @@ export function requiresLicense(title) {
     .trim() + ' '
   const [head, context] = splitTitle(title)
 
+  // 0. The employer said it themselves. A title that leads with "Licensed ..."
+  // is the employer's own statement that a licence gates the role: Licensed
+  // Psychologist, Licensed Optician, Licensed Loan Consultant, Licensed
+  // Massage Therapist. The profession list below can never enumerate every
+  // licensed trade, and it does not need to when the title starts with the
+  // word. HEAD only, so "Software Engineer, Licensed Products" (working ON
+  // licensed IP) stays unflagged, and "licensed" only — "Licensing Manager"
+  // is a commercial role and does not match \blicensed\b.
+  if (/\blicensed\b/i.test(head)) return true
+
   // 1. The job itself is commercial. A Nurse Recruiter recruits nurses.
   if (COMMERCIAL_NOUN.test(head.trim())) return false
 
@@ -290,6 +300,12 @@ const HOURLY = [
   // Route/gig driving. Bare "driver" is unsafe (Device Driver Engineer), so
   // only compounds: the CDL case is already handled by requiresLicense().
   /\b(delivery driver|route driver|van driver|shuttle driver|bus driver|courier\b|valet)\b/,
+  // Gym, spa, and wellness floor roles — the Equinox pattern. A brand whose whole
+  // board is spa desks, style advisors, and membership sales, none of it degree
+  // work. Compounds only, and the traps here are the worst in the file:
+  // bare "trainer" is an AI Model Trainer, bare "coach" is an Agile Coach, bare
+  // "membership" is a growth PM. Every pattern names the floor role explicitly.
+  /\b(spa (desk|manager|associate|attendant|coordinator)|front desk (associate|attendant|agent|coordinator)|membership (sales )?(advisor|consultant|associate|representative)|personal train(er|ing)|fitness (instructor|trainer|coach|manager)|group fitness|pilates instructor|yoga instructor|swim instructor|lifeguard|style advisors?|beauty advisors?|salon (manager|coordinator|receptionist)|spa therapist|massage therap\w*|esthetician|nail technician|club manager in training|coaching foundations)\b/,
 ]
 
 /**
@@ -318,4 +334,3 @@ export function isHourlyJob(title) {
     .trim() + ' '
   return HOURLY.some(re => re.test(t))
 }
-

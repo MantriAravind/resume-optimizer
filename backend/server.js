@@ -1627,7 +1627,12 @@ app.get('/jobs', async (req, res) => {
     const PAGE_SIZE = 20
     const page = Math.max(1, parseInt(req.query.page, 10) || 1)
 
-    // Never list a posting we already know is closed.
+    // Never list a posting we already know is closed, and hide licensed-
+    // profession jobs (RN, PT, attorney, insurance producer...) outright: a US
+    // state licence is a barrier no F1 student can clear, so showing these
+    // wastes the student's attention. Decision 2026-08-26 after sampling 20
+    // flagged titles (20/20 genuinely licence-gated, 12.9% of the board).
+    // $ne rather than false keeps old documents without the field visible.
     const filter = { closed: { $ne: true } }
 
     // Search box: every WORD typed must appear somewhere in the title or company —
@@ -2446,3 +2451,4 @@ app.post('/download-pdf', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`)
 })
+
