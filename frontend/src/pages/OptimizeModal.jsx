@@ -57,27 +57,64 @@ function ScoreBar({ before, after, animate }) {
   )
 }
 
-// render resume text with the added skills highlighted once each
-function ResumeView({ text, skills }) {
-  if (!skills?.length) return <pre className="om-resume">{text}</pre>
-  const ordered = [...skills].sort((a, b) => b.length - a.length)
-  const seen = new Set()
-  // build a regex that matches any skill, longest first
-  const escaped = ordered.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  const re = new RegExp(`(${escaped.join('|')})`, 'gi')
-  const nodes = []
-  let last = 0
-  let m
-  while ((m = re.exec(text)) !== null) {
-    const matched = m[0]
-    const key = matched.toLowerCase()
-    if (seen.has(key)) continue
-    seen.add(key)
-    if (m.index > last) nodes.push(text.slice(last, m.index))
-    nodes.push(<mark key={m.index} className="om-mark">{matched}</mark>)
-    last = m.index + matched.length
+// Render the optimized resume with everything the AI introduced made visible,
+// in every section, so the student can review before downloading:
+//   GREEN  = a skill they explicitly confirmed, every occurrence, whole words
+//            only ("RDS" no longer lights up inside "standards").
+//   AMBER  = any other word that appears NOWHERE in their original resume —
+//            a term the AI introduced. Check it before sending.
+// Rewording that reuses the student's own vocabulary is deliberately unmarked:
+// nearly every line is reworded by design, and marking all of it would turn
+// the whole page green and hide the signal in the noise.
+const STOP = new Set(('a an and are as at be by for from has have in into is it of on or that the their this to was were '
+  + 'will with within who whose you your our we they i').split(' '))
+const wordsOf = t => String(t || '').toLowerCase().match(/[a-z0-9][a-z0-9./#+-]*/g) || []
+
+function ResumeView({ text, skills, originalText }) {
+  const skillList = Array.isArray(skills) ? skills.filter(Boolean) : []
+  const origVocab = new Set(wordsOf(originalText))
+  const haveOrig = origVocab.size > 0
+
+  // Split by confirmed skills first (longest first, whole words only) — green.
+  let segments = [{ t: text, mark: null }]
+  if (skillList.length) {
+    const escaped = [...skillList].sort((a, b) => b.length - a.length)
+      .map(s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    const re = new RegExp(`\\b(${escaped.join('|')})\\b`, 'gi')
+    const next = []
+    for (const seg of segments) {
+      let last = 0, m
+      re.lastIndex = 0
+      while ((m = re.exec(seg.t)) !== null) {
+        if (m.index > last) next.push({ t: seg.t.slice(last, m.index), mark: null })
+        next.push({ t: m[0], mark: 'skill' })
+        last = m.index + m[0].length
+      }
+      if (last < seg.t.length) next.push({ t: seg.t.slice(last), mark: null })
+    }
+    segments = next
   }
-  if (last < text.length) nodes.push(text.slice(last))
+
+  // Inside unmarked text, amber any word the original resume never used.
+  const nodes = []
+  let key = 0
+  for (const seg of segments) {
+    if (seg.mark === 'skill') {
+      nodes.push(<mark key={key++} className="om-mark">{seg.t}</mark>)
+      continue
+    }
+    if (!haveOrig) { nodes.push(seg.t); continue }
+    const parts = seg.t.split(/([a-zA-Z0-9][a-zA-Z0-9./#+-]*)/)
+    for (const p of parts) {
+      const w = p.toLowerCase()
+      const isWord = /^[a-z0-9]/.test(w)
+      if (isWord && w.length > 2 && !STOP.has(w) && !origVocab.has(w)) {
+        nodes.push(<mark key={key++} className="om-mark-new" title="Introduced by the optimizer — not in your original resume. Review before sending.">{p}</mark>)
+      } else {
+        nodes.push(p)
+      }
+    }
+  }
   return <pre className="om-resume">{nodes}</pre>
 }
 
@@ -593,7 +630,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                     suppressContentEditableWarning
                     spellCheck={false}
                   >
-                    <ResumeView text={optimized} skills={added} />
+                    <ResumeView text={optimized} skills={added} originalText={resumeText} />
                   </pre>
                 </div>
               </div>
@@ -699,6 +736,7 @@ const CSS = `
 .om-resume { font-family: 'SF Mono', Menlo, monospace; font-size: 11px; line-height: 1.7;
   color: #374151; padding: 14px 15px; margin: 0; white-space: pre-wrap; word-wrap: break-word; }
 .om-mark { background: #D1FAE5; color: #047857; font-weight: 700; padding: 0 3px; border-radius: 3px; }
+.om-mark-new { background: #D1FAE5; color: #047857; font-weight: 700; padding: 0 3px; border-radius: 3px; }
 
 .om-feedback { font-size: 12px; color: #6B7280; line-height: 1.55; margin-top: 12px;
   padding: 11px 13px; background: #F9FAFB; border-radius: 8px; border: 1px solid #F3F4F6; }
@@ -782,3 +820,4 @@ const CSS = `
   border-radius: 9px; font-size: 12.5px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
 .om-apply:hover { background: #1D4ED8; }
 `
+

@@ -1064,7 +1064,8 @@ ${confirmedBlock}
 ═══ RULE 1 — EVERY CONFIRMED SKILL MUST APPEAR, HONESTLY ═══
 Every confirmed skill must end up in the resume. There is an order of preference for how:
 (a) Attach it to an EXISTING bullet, but only when the work that bullet already describes genuinely involved this skill. You are naming a tool inside work they already did, not writing new work. This is the best outcome.
-(b) Otherwise, list it in the skills section as a plain category-line entry. This is honest and expected. A skills-list entry claims "I know this tool", nothing more, and that is a true, defensible claim.
+    WORK FOR THIS OUTCOME. Before sending any confirmed skill to the skills list, scan EVERY existing bullet, the summary, and every project description for a genuine home. The candidate confirmed they have used this skill, so in most resumes some described work plausibly involved it: an orchestration tool fits a bullet about scheduling or pipelines; a warehouse fits a bullet about reporting tables; a data-quality tool fits a bullet about validation checks. Attach it there, in their wording. A resume where every confirmed skill sits only in the skills list reads weak and is almost always the result of not looking hard enough.
+(b) Only when a genuine home truly does not exist, list it in the skills section as a plain category-line entry. This is honest and expected. A skills-list entry claims "I know this tool", nothing more, and that is a true, defensible claim.
    - Fine: their resume says "Built ETL pipelines in Python", they confirmed Databricks, and those pipelines actually ran in Databricks, so it becomes "Built ETL pipelines in Python, running in Databricks." The work was already there; you only added the tool.
    - Not fine: writing a brand-new bullet such as "Built a customer-facing recommendation system using LLM scoring and retrieval-augmented generation." If that accomplishment is not already on their resume, it is invented, and it ends their interview the moment someone asks. That skill goes in the skills list instead.
 NEVER write a NEW experience bullet to make a confirmed skill appear. If a skill has no existing bullet whose real work involved it, it goes in the skills section. Full stop. There is no third option and no exception.
@@ -1085,7 +1086,8 @@ HARD LINE: no four consecutive words from the job description may appear in the 
 
 ═══ RULE 4 — PRESERVE THE RESUME'S STRUCTURE EXACTLY ═══
 You are rewriting wording. You are not editing, curating, or shortening the document.
-- SAME SECTIONS. Every section in the original appears in your output, and NO section that is not in the original. If the original has no PROJECTS section, you do not create one. If it has no CERTIFICATIONS section, you do not add the header. Inventing a section is the single worst thing you can do here.
+- SAME SECTIONS. Every section in the original appears in your output, and NO section that is not in the original.
+- EXACTLY ONE SKILLS SECTION. If the original names it differently (TECHNICAL PROFICIENCY, TECHNICAL SKILLS, CORE COMPETENCIES), that is the same section: output it ONCE, under the header SKILLS, in the position Rule 10 gives it. Never leave a second copy under the old name at the old position. A resume with two skills sections is a structural defect, not extra coverage. If the original has no PROJECTS section, you do not create one. If it has no CERTIFICATIONS section, you do not add the header. Inventing a section is the single worst thing you can do here.
 - SAME BULLETS, ONE FOR ONE. If a role has 28 bullets, your output has 28 bullets for that role. Never drop one. Never merge two into one. Never decide a bullet is weak and cut it — that judgement is not yours to make, and the work you would be deleting is real work the candidate actually did.
 - SAME SUMMARY LENGTH. If the summary is three sentences, yours is three sentences. Rewrite the wording; never drop a sentence. A dropped summary sentence deletes real experience — one draft cut "developing AI-ready data products and integrating Generative AI use cases using Vertex AI" and replaced it with a list of tools from the posting. That is trading the candidate's true work for the employer's wish list, and it is forbidden.
 - KEEP EVERY "Environment:" LINE VERBATIM. Some resumes end a role with "Environment: GCP, BigQuery, Airflow, ...". Reproduce that line exactly as written, under the same role. It is not filler — it is the densest keyword line in the document and an ATS reads every word of it. Never delete it, never reword it, never merge it into a bullet.
@@ -1169,7 +1171,7 @@ ${jobText}
 
 Respond in this exact JSON format with no extra text:
 {
-  "feedback": "<2-3 sentences: what you added, where, and what still isn't covered>",
+  "feedback": "<2-3 sentences: what you added and where. If any confirmed skill ended up in the skills section ONLY, name it and say plainly: be ready to speak to where you used it, because your experience bullets do not show it.>",
   "optimizedResume": "<the full rewritten resume>"
 }`
 
