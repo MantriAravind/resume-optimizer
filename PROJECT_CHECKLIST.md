@@ -9,7 +9,7 @@ file is the operational truth).
 Lives in the repo. Updated as part of every session's closing commit.
 Mark `[x]` only when the "Done when" condition is literally met.
 
-Last updated: 2026-08-27
+Last updated: 2026-08-27 (late)
 
 ---
 
@@ -218,14 +218,32 @@ always.
 - [ ] **C8. Key rotation + git-history scan** — repo is PUBLIC; scan
   history for MongoDB URI, RapidAPI, Anthropic keys; rotate anything ever
   committed. (PDFSHIFT key already deleted from Render 2026-08-17.)
-- [ ] **C9a. Zero-yield SR company prune — NOW URGENT.** Measured
-  2026-08-26: the SCHEDULED SR cron takes 2h42m of every 6h cycle (45%
-  duty), creeping toward the 300-min timeout. Most of the 4,158 companies
-  are freight-LLC/home-care zero-yield. Plan: jobs-per-company from Mongo
-  → keep-rule (≥1 saved job, with care for companies whose jobs merely
-  aged out this week) → preview removal list → eyeball → apply → verify
-  next cron under ~1h. CAUTION: least-reversible operation in the system —
-  a wrongly removed company is silently never fetched again.
+- [x] **C9a. Zero-yield SR company prune — EXECUTED 2026-08-27.**
+  measureSRYield.mjs: 3,620 of 4,158 companies (87%) contribute zero jobs;
+  538 supply all ~17.4k SR jobs. pruneSRCompanies.mjs (preview→apply):
+  live list cut to 538; removed 3,620 SAVED to sr_pruned_companies.txt for
+  re-audition + sr_companies.backup.txt committed — reversibility built in.
+  Drop-sample eyeball found grab/fartherfinance/lely (real companies, zero
+  filtered yield — overseas or dead boards; restorable by one line if they
+  revive). VERIFIED by the next manual run: 55m30s (was 2h42m — a third),
+  538/538 answered, 0 failed, SR jobs 17,385 vs 17,408 pre-prune (the
+  3,620 cut companies contributed ~23 jobs), listings 277k → 111k.
+  Remaining runtime is the ~29.7k detail calls for REAL jobs — the future
+  lever there is E3 description handling, not more pruning. Board 59,530.
+- [x] **C9f. Domino's pattern war — CONCLUDED 2026-08-27.** SR expansion
+  re-imported 2,439 Domino's store jobs that dodged the original patterns.
+  Five hardening rounds against REAL titles: plural pizza makers; franchise
+  store-number signature generalized to managers/supervisors/team leads;
+  restaurant-leadership compounds (Raising Cane's); wage-in-title
+  ("$17.50 Hourly Pay"); dash/prefix/suffix number shapes; two-tier role
+  anchoring after the preview caught "(711) Senior Manager, Talent
+  Acquisition" (Arlo — req number, not store number: loose roles now
+  glued-only); Domino's-brand-adjacent managers ("Dominos General Manager -
+  North Everett"). Purged 2,380 + 143. Accepted residue: bare "Assistant
+  Manager"/"CSR" titles indistinguishable from corporate (~200 jobs) —
+  matching them would hide real jobs. KEY FACT: the Dominos slug also
+  carries REAL corporate roles (Platform Engineer, Marketing Technology) —
+  company-level bans are wrong; title patterns are the right tool.
 - [ ] **C9b. Compute "where they went" in code** — the optimize feedback
   prose is model-written and has claimed bullet placement that didn't
   happen; derive each landed skill's section programmatically.
@@ -300,6 +318,19 @@ always.
   detect ATS host → extract identifier → validate → registry) plus
   conservative slug probing (guessSlugs.mjs exists). Wayback/urlscan/
   Common Crawl only if coverage demands it.
+- [ ] **E-logo. Company logos on job cards** — Aravind's blueprint
+  (Company_Logo_Integration_Blueprint.docx) audited 2026-08-27: right
+  architecture (company-level branding record, domain as key, provider
+  adapter, initials fallback). Right-sized v1 = its Phase 1 only:
+  companies collection (registry-LITE — the first real slice of D1),
+  Brandfetch as single provider (free 500k/mo; its brand-search also
+  solves name→domain per the blueprint's no-guessing rule), enrichment
+  script preview-first for the ~1,600 companies WITH jobs, company object
+  in /jobs API, fixed-size logo container + deterministic initials
+  fallback. needs_review for ambiguous domains; eyeball top ~100 by job
+  count. Blueprint Phases 2-3 (workers, revalidation crons, SSRF crawler,
+  dashboards) deferred. $0 at current scale. NEXT ACTION (Aravind):
+  create Brandfetch account, get client ID into Render env.
 - [ ] **E3. Rewrite cost trim** — trim job descriptions before sending to
   the AI; do NOT downgrade the model.
 - [ ] **E4. Save for later / Hide job** — persist per-user (~2–4 hrs);
@@ -338,6 +369,13 @@ processor and an entity — or an explicit written decision to stay free.
   legitimate (Aravind's words) — maximize honestly, show the gap.
 - 2026-08-26: needsLicense jobs to be HIDDEN, not badged (Aravind, after
   reading live titles). Implementation pending (C9c).
+- 2026-08-27 (close): SR prune VERIFIED — 55m30s vs 2h42m. Logo feature
+  scoped from Aravind's blueprint (see E-logo); Brandfetch chosen; $0.
+  Optyply brand-logo concepts drafted (aperture-O + wordmark), parked.
+- 2026-08-27: SR prune executed (C9a) + Domino's pattern war concluded
+  (C9f). Board ~59,400. Purge preview caught the Arlo false positive that
+  reasoning missed — third time the preview-eyeball protocol earned its
+  keep (Airbnb host, Cook County, Arlo).
 - 2026-08-26 (evening): License hiding + wellness patterns shipped (C9c,
   C9d above). Visible board ~53,750 of ~61,966.
 - 2026-08-26: SR scheduled cron measured at 2h42m → C9a promoted to
