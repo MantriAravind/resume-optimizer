@@ -9,7 +9,7 @@ file is the operational truth).
 Lives in the repo. Updated as part of every session's closing commit.
 Mark `[x]` only when the "Done when" condition is literally met.
 
-Last updated: 2026-08-26
+Last updated: 2026-08-27
 
 ---
 
@@ -44,8 +44,8 @@ Local: C:\Users\Mantr\resume-optimizer, Windows/PowerShell.
   board.
 - Onboarding is a hard gate: signed-in users without a resume cannot reach
   the board (Aravind's deliberate design; revisit only with A3 evidence).
-- Board: **61,990 jobs** after the company expansion (32,796 Greenhouse +
-  9,280 Ashby + 19,914 SmartRecruiters; companies 7,693 / 3,794 / 4,158).
+- Board: ~61,966 jobs total; **~53,750 visible to students** after licensed-
+  profession hiding (companies GH 7,693 / Ashby 3,794 / SR 4,158).
   Full expansion story: PLAN_company_expansion.md. Original employer Apply URLs preserved; frontend only calls our
   API, never ATS providers (matches blueprint §18).
 - Honesty sweep COMPLETE: landing, pricing (/pricing + landing section),
@@ -218,18 +218,39 @@ always.
 - [ ] **C8. Key rotation + git-history scan** — repo is PUBLIC; scan
   history for MongoDB URI, RapidAPI, Anthropic keys; rotate anything ever
   committed. (PDFSHIFT key already deleted from Render 2026-08-17.)
-- [ ] **C9a. Zero-yield SR company prune** — the SR run lists 277k
-  postings to save 19.9k (7% yield); the freight-LLC / home-care tail
-  burns most of the runtime. Measure jobs-per-company from the DB, drop
-  the zero-yield tail, shrink the 6-hourly cron. Also watch the scheduled
-  SR cron duration (timeout now 300 min).
+- [ ] **C9a. Zero-yield SR company prune — NOW URGENT.** Measured
+  2026-08-26: the SCHEDULED SR cron takes 2h42m of every 6h cycle (45%
+  duty), creeping toward the 300-min timeout. Most of the 4,158 companies
+  are freight-LLC/home-care zero-yield. Plan: jobs-per-company from Mongo
+  → keep-rule (≥1 saved job, with care for companies whose jobs merely
+  aged out this week) → preview removal list → eyeball → apply → verify
+  next cron under ~1h. CAUTION: least-reversible operation in the system —
+  a wrongly removed company is silently never fetched again.
 - [ ] **C9b. Compute "where they went" in code** — the optimize feedback
   prose is model-written and has claimed bullet placement that didn't
   happen; derive each landed skill's section programmatically.
-- [ ] **C9c. License-flag hiding** — Aravind decided HIDE (not badge) for
-  needsLicense jobs after reading live titles. Pending: measure flagged
-  count + eyeball 20, then one-line filter in the /jobs query. Held
-  mid-discussion; server.js route paste still owed.
+- [x] **C9c. License-flag hiding** — SHIPPED 2026-08-26. Protocol run in
+  full: measured (8,042 flagged, 12.9%), sampled 20/20 genuinely gated,
+  discovered the /jobs query filter + compound index ALREADY existed in
+  server.js but had never behaved on prod (deploy lag). Added rule 0 to
+  requiresLicense: a title whose HEAD contains \blicensed\b is gated
+  (Licensed Psychologist/Optician/Loan Consultant were all false before);
+  head-only so "Software Engineer, Licensed Products" survives. Backfilled
+  with preview→write (8,217 hidden; the 10 Tech/E&S hits eyeballed = PLS
+  surveyors + PE civil engineers, all correct). Board search "licensed":
+  hundreds → 20 residual mid-title cases (accepted; minor item below).
+- [x] **C9d. Gym/spa/wellness floor titles** — SHIPPED 2026-08-26 after
+  Aravind found Equinox's entire board (spa desk, style advisor,
+  membership sales, personal trainer) on the site. New isHourlyJob
+  pattern group, 26 tests incl. traps (AI Model Trainer, Agile Coach,
+  Membership Growth PM all survive) + regression sweep (host/cook/
+  Domino's/licensed). purgeHourly preview eyeballed (40/40 hourly),
+  213 deleted. NOTE: Claude's working copy nearly regressed the bare-host
+  fix — caught by grep before staging; lesson logged in Part VI.
+- [ ] **C9e. Mid-title licensed residue (minor)** — ~20 titles like
+  "Neurology - CA Licensed", "Assistant GM, Licensed Cosmetologist"
+  survive the head-only rule. Possible pattern: licensed + profession
+  noun anywhere. Low value; only if it grows.
 - [ ] **C9. Group duplicate postings** — same job per location ("New York,
   NY +2 more" + picker). Designed and previewed; needs backend change.
   Blueprint §16 dedupe, our variant.
@@ -317,6 +338,15 @@ processor and an entity — or an explicit written decision to stay free.
   legitimate (Aravind's words) — maximize honestly, show the gap.
 - 2026-08-26: needsLicense jobs to be HIDDEN, not badged (Aravind, after
   reading live titles). Implementation pending (C9c).
+- 2026-08-26 (evening): License hiding + wellness patterns shipped (C9c,
+  C9d above). Visible board ~53,750 of ~61,966.
+- 2026-08-26: SR scheduled cron measured at 2h42m → C9a promoted to
+  urgent. Ashby 14m, Greenhouse 33m — both healthy.
+- 2026-08-26: Rollback capability confirmed for Aravind: git revert +
+  Vercel "Promote to Production" / Render "Rollback" are the tools; never
+  git reset --hard on pushed commits. Gap noted: no error tracking — a
+  user's optimize failure is invisible unless they email support@ (future
+  item: basic error visibility).
 - 2026-08-26: Field dropdown NOT built (Aravind: keywords over
   segregation; field tags stay in data). Target role made mandatory at
   onboarding + profile instead; board pre-ranks by it.
@@ -344,6 +374,10 @@ processor and an entity — or an explicit written decision to stay free.
 - Filter changes ship only after filterCheck + eyeballing the report.
 - Failed sync must never close jobs (verify: C1). Only successful scans
   close.
+- Claude's working copies drift: a staged file nearly resurrected the
+  bare-host bug because it predated a fix applied only in Aravind's repo.
+  Before staging any regenerated file, grep it for every fix applied
+  since it was uploaded.
 - Anything that matters lives in the repo — not Downloads, not chat
   memory. This file updates in every session's closing commit.
 - PowerShell: no `&&`; Move-Item needs -Force; em dashes break .Replace()
