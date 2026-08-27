@@ -297,6 +297,11 @@ const HOURLY = [
   // posting must survive — but "in training" and "(store ####)" variants are
   // the franchise pattern.
   /\b(general manager in training|assistant manager in training|manager in training|shift manager)\b/,
+  // The pizza brand welded to a manager title is store work by definition:
+  // 'Dominos General Manager - North Everett', 'Domino's Pizza Assistant
+  // Manager Richton Park'. Adjacency protects corporate: 'Dominos Product
+  // Manager' does not match because 'product' is not in the allowed set.
+  /\bdomino'?s\b[\s:-]*(pizza\s+)?(general |assistant |store )?manager\b/,
   // A wage advertised in the title is an hourly job announcing itself:
   // 'Assistant Manager - 3817, $17.50 to $19.00 Hourly Pay'. No salaried
   // corporate posting puts 'hourly pay' or 'per hour' in its title.
@@ -331,7 +336,24 @@ const HOURLY = [
 // "Customer Service Rep(03534)". Bare "General Manager" must never match —
 // corporate GM postings are real jobs — but no corporate title carries a
 // parenthesised store number.
-const FRANCHISE_STORE_ROLE = /\b(customer service rep\w*|csr|general manager|assistant (general )?manager|manager|team lead(er)?|shift (lead(er)?|runner|manager)|crew member)\s*\(\s*\d{3,}\s*\)/i
+// Three shapes, all anchored on the parenthesised store number so corporate
+// titles can never match: role(1234), role - (1234), and (1234) City: role.
+// "Software Engineer (L4)" and "Program Manager (2026 Start)" stay safe: the
+// role list is store roles only, and (2026 Start) is not a bare number.
+// Two tiers. TIGHT roles are unambiguous store work and may match in any
+// shape, including "(1234) City: role" where the number could be a req id.
+// LOOSE roles (bare manager, supervisor) are common corporate words —
+// "(711) Senior Manager, Talent Acquisition" is a real recruiting job with a
+// req number — so they may only match when GLUED to the store number
+// (role(1234) / role - (1234) / 1132-role), never in the loose suffix shape.
+const TIGHT_ROLES = 'customer service rep\\w*|csr|general store manager|assistant (general )?manager|store manager|shift (lead(er)?|runner|manager)|crew member|pizza chef|key turner( closer)?|hourly management'
+const LOOSE_ROLES = TIGHT_ROLES + '|general manager|manager|supervisor|team lead(er)?|closer'
+const FRANCHISE_STORE_ROLE = new RegExp(
+  '\\b(' + LOOSE_ROLES + ')\\s*[-\u2013\u2014:]?\\s*\\(\\s*\\d{3,}\\s*\\)' + // role(1234) / role - (1234): glued
+  '|\\b(' + TIGHT_ROLES + ')[^|()]{0,40}\\(\\s*\\d{3,}\\s*\\)' +          // tight role ... (1234)
+  '|\\(\\s*\\d{3,}\\s*\\)[^|]{0,30}\\b(' + TIGHT_ROLES + ')\\b' +       // (1234) Tucson: tight role
+  '|\\b\\d{3,}\\s*-\\s*(' + LOOSE_ROLES + ')\\b',                           // 1132-Assistant Manager
+  'i')
 
 export function isHourlyJob(title) {
   if (!title) return false
