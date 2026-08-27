@@ -287,7 +287,7 @@ const HOURLY = [
   // Food service and franchise store roles. "(02620)" store numbers and street
   // addresses in Domino's titles are NOT matched — the ROLE is the signal, the
   // store number is just noise around it.
-  /\b(delivery (driver|expert)|pizza (maker|delivery)|crew member|team member|shift (leader|lead|manager|supervisor)|line cook|prep cook|short order cook|dishwasher|busser|food runner|hostess\b|restaurant host\b|host stand\b|barista|bartender|server assistant|restaurant (server|team|crew)|counter (help|service)|drive thru|fast food|sandwich (artist|maker)|fry cook|grill cook|kitchen (staff|helper|team))\b/,
+  /\b(delivery (driver|expert)|pizza (makers?|delivery)|crew member|team member|shift (leader|lead|manager|supervisor)|line cook|prep cook|short order cook|dishwasher|busser|food runner|hostess\b|restaurant host\b|host stand\b|barista|bartender|server assistant|restaurant (server|team|crew)|counter (help|service)|restaurant (manager|leader|salary leader)|(assistant|general) restaurant (leader|manager)|assistant restaurant leader|drive thru|fast food|sandwich (artist|maker)|fry cook|grill cook|kitchen (staff|helper|team))\b/,
   // Retail floor roles
   /\b(cashier|retail (associate|clerk|team)|sales floor|store (associate|clerk|crew)|stock(er| associate| clerk)|shelf stocker|order (picker|filler)|bagger|courtesy clerk|merchandise stocker)\b/,
   // Hospitality housekeeping
@@ -297,6 +297,10 @@ const HOURLY = [
   // posting must survive — but "in training" and "(store ####)" variants are
   // the franchise pattern.
   /\b(general manager in training|assistant manager in training|manager in training|shift manager)\b/,
+  // A wage advertised in the title is an hourly job announcing itself:
+  // 'Assistant Manager - 3817, $17.50 to $19.00 Hourly Pay'. No salaried
+  // corporate posting puts 'hourly pay' or 'per hour' in its title.
+  /\b(hourly (pay|rate|wage)|per hour)\b/,
   // Route/gig driving. Bare "driver" is unsafe (Device Driver Engineer), so
   // only compounds: the CDL case is already handled by requiresLicense().
   /\b(delivery driver|route driver|van driver|shuttle driver|bus driver|courier\b|valet)\b/,
@@ -322,7 +326,12 @@ const HOURLY = [
 // franchise signature: the store number welded straight onto the role. Only
 // that pairing is matched, so the corporate CSR survives and the pizza-store
 // one does not.
-const FRANCHISE_STORE_ROLE = /\b(customer service rep\w*|csr)\s*\(\s*\d{3,}\s*\)/i
+// Any role welded straight to a store number is franchise floor work:
+// "General Manager(09707)", "Assistant Manager(02404)", "Team Lead(02037)",
+// "Customer Service Rep(03534)". Bare "General Manager" must never match —
+// corporate GM postings are real jobs — but no corporate title carries a
+// parenthesised store number.
+const FRANCHISE_STORE_ROLE = /\b(customer service rep\w*|csr|general manager|assistant (general )?manager|manager|team lead(er)?|shift (lead(er)?|runner|manager)|crew member)\s*\(\s*\d{3,}\s*\)/i
 
 export function isHourlyJob(title) {
   if (!title) return false
