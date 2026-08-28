@@ -31,6 +31,7 @@ import path from 'path'
 import { pathToFileURL } from 'url'
 import {
   isUSLocation,
+  classifyLocation,
   isDisqualified,
   isContractOrPartTime,
   detectExperienceLevel,
@@ -85,6 +86,27 @@ const Job = mongoose.models.Job || mongoose.model('Job', jobSchema)
 function allLocations(job) {
   const parts = [job.location, ...(job.secondaryLocations || []).map(s => s?.location)]
   return parts.filter(Boolean).join(', ')
+}
+
+/**
+ * The location the CARD shows. The gate judges the JOINED string, so a posting
+ * whose primary office is foreign can legitimately pass via a US secondary —
+ * and then the board displayed "United Kingdom · Onsite" on a US-only job
+ * board (seen live: ElevenLabs research roles, primary UK + US secondary).
+ * When the primary reads foreign/unknown, display the first part that reads
+ * US instead. If no single part reads US (the job passed on the joined string
+ * as a whole), the primary stays — rare, and the honest fallback.
+ */
+function displayLocation(job) {
+  const parts = [job.location, ...(job.secondaryLocations || []).map(s => s?.location)].filter(Boolean)
+  const primary = parts[0] || ''
+  const k = classifyLocation(primary)
+  if (k === 'us' || k === 'weak-us' || k === 'ambiguous') return primary
+  const us = parts.find(p => {
+    const pk = classifyLocation(p)
+    return pk === 'us' || pk === 'weak-us'
+  })
+  return us || primary
 }
 
 async function fetchBoard(name) {
@@ -183,7 +205,7 @@ async function main() {
           title:        job.title || '',
           company:      displayName(r.name),
           companySlug:  r.name,
-          location:     job.location || location,
+          location:     displayLocation(job) || location,
           isRemote:     job.isRemote === true || /remote/i.test(location),
           description:  plainText.slice(0, 500),
           applyUrl:     job.applyUrl || job.jobUrl || '',
