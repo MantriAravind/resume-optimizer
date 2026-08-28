@@ -425,3 +425,14 @@ processor and an entity â€” or an explicit written decision to stay free.
 - Honesty is the product. Every claim on the site must be literally true
   today, or labeled as a plan. When a page and reality disagree, the page
   is the bug.
+
+---
+## Session log 2026-08-28
+- FIXED+PUSHED: location filter — Georgia state/country collision, 16 missing post-Soviet/Balkan countries, Panama City FL, British Columbia/Columbia SC, European code-first postal format (JD Sports leak), Vancouver WA shield. Commits e864d5f, 36e9755, 01c5279.
+- PURGED: 212 foreign jobs closed reversibly across two sweeps (179 + 33) via purgeForeign.mjs. Decision reaffirmed: never delete records for filter bugs — fix at source, purge via tooling.
+- FIXED+PUSHED: fetchAshby displays US location on dual-location jobs (48f6178). server.js/JobBoard.jsx (19ba983): card logos, duplicate folding w/ company-name normalization, stable pagination (id sort tiebreaker). Verified on optyply.com production.
+- LOGOS: coverage 83.7% -> ~89.5%. enrichCompanies gained --retry/--dry + whole-domain scoring (6bf3bc5). 46 overrides in branding_overrides.json. applyOverride.mjs added (5654229). Zipline squatter fixed (flyzipline.com vs Retail Zipline).
+- C2 DONE: MAX_SWEEP_SHARE verified 0.25 all three fetchers, local + origin/main.
+- ACCEPTED RESIDUALS: dark-variant logos (Equinox, Horizon3ai, Ready) — revisit only if users mention. filterCheck "looks US" heuristic misreads ", IN" as Indiana — report polish, low priority.
+- OPEN POLICY QUESTION: contract-to-hire jobs on a "full-time only" board — ask students before deciding.
+- VALIDATION: messaged friends re: student conversation #1. NEXT SESSION PRIORITY: schedule + hold it. After that: optimizer fabrication fix (A5 findings, still top engineering priority).
