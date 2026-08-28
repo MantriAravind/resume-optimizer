@@ -528,6 +528,9 @@ const FOREIGN_MARKERS = [
   // give-away that a bare 'Georgia' means the country, not the state.
   'tbilisi','yerevan','baku','tashkent','almaty','astana','minsk','kyiv','kiev','chisinau',
   'british columbia',
+  // major French cities the JD Sports leak proved were missing
+  'strasbourg','metz','lille','nantes','grenoble','limoges','caen','rennes','dijon',
+  'montpellier','reims','le havre','saint-etienne','angers','nimes','clermont-ferrand',
 ]
 
 // Vague-but-plausibly-US phrasings. Kept (never silently deleted) and reported as
@@ -576,6 +579,12 @@ function hasUSCountryOrState(lower) {
 // A 5-digit postal code only means "US" once an explicit foreign country has been ruled
 // out — France, Germany and Spain all use 5-digit codes too.
 function hasUSZip(lower) {
+  // European addresses put the postal code FIRST ("67000 Strasbourg"); US
+  // addresses put it LAST ("Portland, OR 97201"). A leading 5-digit code
+  // followed by a word is European format — 26 French JD Sports jobs reached
+  // the live board through exactly this hole, because none of their cities
+  // were in the marker list and the bare ZIP then read as US.
+  if (/^\s*\d{5}\s+[a-z]/.test(lower)) return false
   return /(^|[^\d])\d{5}(-\d{4})?([^\d]|$)/.test(lower) && /[a-z]/.test(lower)
 }
 // City names that exist BOTH abroad and in the US. For these, a US state code wins
@@ -591,6 +600,8 @@ const ALSO_US_CITY_NAMES = new Set([
   // it (filterCheck caught 2 live examples). "Panama City, Panama" still drops via
   // the later hasForeign() pass, which this set does not shield.
   'panama',
+  // Vancouver, WA (pop. ~200k) was dropping as Vancouver BC — filterCheck caught it.
+  'vancouver',
 ])
 // Returns the matched foreign city name, or null.
 function foreignCityMatch(lower) {
