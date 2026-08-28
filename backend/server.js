@@ -413,6 +413,41 @@ app.delete('/applications/:id', requireUser, async (req, res) => {
   }
 })
 
+// ── COMPANY BRANDING ─────────────────────────────────────────────────────────
+// Logos live in the `companies` collection (built by enrichCompanies.mjs).
+// ~5,900 small records, so the whole thing is held in memory and refreshed
+// every 10 minutes — one query per TTL instead of a join on every board page.
+// A job whose company has no record (brand-new company, or needs_review)
+// gets no `brand` and the card renders its initials fallback; nothing breaks.
+const Company = mongoose.models.Company || mongoose.model('Company', new mongoose.Schema({}, { strict: false, collection: 'companies' }))
+let brandCache = { map: new Map(), at: 0 }
+const BRAND_TTL_MS = 10 * 60 * 1000
+async function getBrandMap() {
+  if (Date.now() - brandCache.at > BRAND_TTL_MS) {
+    const rows = await Company.find(
+      { logoStatus: 'provider' },
+      { ats: 1, slug: 1, officialDomain: 1, 'branding.logoUrl': 1, fallbackInitials: 1 }
+    ).lean()
+    const map = new Map()
+    for (const r of rows) {
+      map.set(`${r.ats}|${r.slug}`, {
+        logoUrl: r.branding?.logoUrl || null,
+        domain: r.officialDomain || null,
+        initials: r.fallbackInitials || null,
+      })
+    }
+    brandCache = { map, at: Date.now() }
+  }
+  return brandCache.map
+}
+function attachBrand(jobList, map) {
+  for (const j of jobList) {
+    const b = map.get(`${j.ats}|${j.companySlug}`)
+    if (b) j.brand = b
+  }
+  return jobList
+}
+
 app.get('/', (req, res) => {
   res.json({ message: 'Resume Optimizer backend is running.' })
 })
@@ -1627,12 +1662,7 @@ app.get('/jobs', async (req, res) => {
     const PAGE_SIZE = 20
     const page = Math.max(1, parseInt(req.query.page, 10) || 1)
 
-    // Never list a posting we already know is closed, and hide licensed-
-    // profession jobs (RN, PT, attorney, insurance producer...) outright: a US
-    // state licence is a barrier no F1 student can clear, so showing these
-    // wastes the student's attention. Decision 2026-08-26 after sampling 20
-    // flagged titles (20/20 genuinely licence-gated, 12.9% of the board).
-    // $ne rather than false keeps old documents without the field visible.
+    // Never list a posting we already know is closed.
     const filter = { closed: { $ne: true } }
 
     // Search box: every WORD typed must appear somewhere in the title or company —
@@ -1721,7 +1751,7 @@ app.get('/jobs', async (req, res) => {
     const CARD_FIELDS = {
       id: 1, title: 1, company: 1, companySlug: 1, location: 1, applyUrl: 1,
       postedAt: 1, workType: 1, experienceLevel: 1, state: 1, isRemote: 1,
-      salaryMin: 1, salaryMax: 1, yearsMin: 1, yearsMax: 1, closed: 1,
+      salaryMin: 1, salaryMax: 1, yearsMin: 1, yearsMax: 1, closed: 1, ats: 1,
     }
 
     // Grouping is done in Node (see groupDuplicates below) rather than with a $group
@@ -1730,11 +1760,28 @@ app.get('/jobs', async (req, res) => {
     // next to each other (same company, same title, same timestamp), so folding them
     // within the fetched page catches effectively all of them at a fraction of the cost.
     // Trade-off: a job whose locations straddle a page boundary can still appear twice.
+    // Company names arrive in variants — "Exadel" vs "Exadel Inc (Website)" — and
+    // titles arrive with stray whitespace ("Senior Data Engineer " vs no trailing
+    // space). Raw-lowercase keys treated all of these as different jobs, so the
+    // fold missed exactly the postings most likely to be duplicates. The key now
+    // strips parentheticals, legal suffixes (Inc/LLC/Ltd/...), punctuation, and
+    // collapses whitespace. Display still shows the ORIGINAL name — only the
+    // grouping key is normalized.
+    function normalizeCompanyKey(name = '') {
+      return name
+        .toLowerCase()
+        .replace(/\([^)]*\)/g, ' ')
+        .replace(/\b(inc|incorporated|llc|ltd|limited|corp|corporation|co|gmbh|plc|website)\b\.?/g, ' ')
+        .replace(/[^a-z0-9 ]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+    }
     function groupDuplicates(rows) {
       const out = []
       const byKey = new Map()
       for (const j of rows) {
-        const key = `${(j.title || '').toLowerCase()}|||${(j.company || '').toLowerCase()}`
+        const title = (j.title || '').toLowerCase().replace(/\s+/g, ' ').trim()
+        const key = `${title}|||${normalizeCompanyKey(j.company)}`
         const variant = {
           id: j.id, location: j.location, applyUrl: j.applyUrl,
           state: j.state, workType: j.workType, closed: j.closed,
@@ -1844,6 +1891,7 @@ app.get('/jobs', async (req, res) => {
     const total = await Job.countDocuments(filter)
     const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
+    attachBrand(jobs, await getBrandMap())
     res.json({ jobs, total, pages })
 
   } catch (error) {
@@ -1973,6 +2021,7 @@ app.get('/jobs/:id', async (req, res) => {
       }
     }
 
+    attachBrand([job], await getBrandMap())
     res.json({ ...job, description: fullDescription, closed })
 
   } catch (error) {
@@ -2451,4 +2500,3 @@ app.post('/download-pdf', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`)
 })
-

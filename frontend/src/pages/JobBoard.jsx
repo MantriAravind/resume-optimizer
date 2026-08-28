@@ -163,6 +163,8 @@ const CSS = `
   color: #fff; font-weight: 700; font-size: 18px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.25);
 }
+.jb-logo--img { background: #fff; border: 1px solid var(--line, #E5E7EB); padding: 5px; box-shadow: none; }
+.jb-logo--img img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .jb-card-head { flex: 1; min-width: 0; display: flex; justify-content: space-between; gap: 10px; }
 .jb-card h3 { font-size: 16.5px; font-weight: 700; letter-spacing: -.01em; line-height: 1.3; }
 .jb-card .co { font-size: 13.5px; color: var(--muted); margin-top: 2px; font-weight: 500; }
@@ -467,6 +469,27 @@ function locLabel(job) {
   return extra > 0 ? `${shortLoc(job.location)} +${extra} more` : shortLoc(job.location)
 }
 
+// Company logo with a hard fallback chain: real logo (from the enrichment
+// pipeline, hotlinked from the provider CDN) → the same gradient initials
+// circle the board always had. The container is fixed-size either way, so a
+// missing or slow logo never shifts the card layout. onError covers dead
+// domains, blocked hotlinks, and provider outages — the render can fail,
+// the card cannot.
+function CompanyLogo({ job, closed }) {
+  const [broken, setBroken] = useState(false)
+  const url = job.brand?.logoUrl
+  if (url && !broken && !closed) {
+    return (
+      <div className="jb-logo jb-logo--img">
+        <img src={url} alt="" loading="lazy" onError={() => setBroken(true)} />
+      </div>
+    )
+  }
+  const initial = job.brand?.initials || (job.company ? job.company[0] : '?')
+  if (closed) return <div className="jb-logo jb-logo--closed">{initial}</div>
+  return <div className="jb-logo" style={{ background: gradientFor(job.company) }}>{initial}</div>
+}
+
 function JobCard({ job, onOpen, selected, tracked }) {
   const salary = formatSalary(job.salaryMin, job.salaryMax)
   const years = formatYears(job.yearsMin, job.yearsMax)
@@ -478,7 +501,7 @@ function JobCard({ job, onOpen, selected, tracked }) {
     return (
       <div className="jb-card jb-card--closed">
         <div className="jb-card-top">
-          <div className="jb-logo jb-logo--closed">{job.company ? job.company[0] : '?'}</div>
+          <CompanyLogo job={job} closed />
           <div className="jb-card-head">
             <div>
               <h3>{job.title}</h3>
@@ -511,9 +534,7 @@ function JobCard({ job, onOpen, selected, tracked }) {
   return (
     <div className={`jb-card ${selected ? 'sel' : ''}`} onClick={() => onOpen(job)}>
       <div className="jb-card-top">
-        <div className="jb-logo" style={{ background: gradientFor(job.company) }}>
-          {job.company ? job.company[0] : '?'}
-        </div>
+        <CompanyLogo job={job} />
         <div className="jb-card-head">
           <div>
             <h3>{job.title}</h3>
