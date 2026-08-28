@@ -481,6 +481,10 @@ const FOREIGN_COUNTRIES = [
   'uzbekistan','kazakhstan','kyrgyzstan','tajikistan','turkmenistan','armenia',
   'azerbaijan','belarus','moldova','russia','albania','bosnia','montenegro','kosovo',
   'north macedonia','cyprus',
+  // 'columbia' (Columbia, SC) word-matches inside "British Columbia", which let
+  // Canada-only jobs read as US (caught live: Ignition, Toronto + BC offices).
+  // The full province name is unambiguous, so it outranks the city match here.
+  'british columbia',
   'europe','asia','africa','oceania','latin america','middle east','worldwide',
 ]
 
@@ -523,6 +527,7 @@ const FOREIGN_MARKERS = [
   // Capitals of the post-Soviet additions above. 'tbilisi' matters most: it is the
   // give-away that a bare 'Georgia' means the country, not the state.
   'tbilisi','yerevan','baku','tashkent','almaty','astana','minsk','kyiv','kiev','chisinau',
+  'british columbia',
 ]
 
 // Vague-but-plausibly-US phrasings. Kept (never silently deleted) and reported as
@@ -582,6 +587,10 @@ const ALSO_US_CITY_NAMES = new Set([
   'naples','rome','vienna','milan','toledo','manchester','lima','hamburg','odessa','york',
   'glasgow','oxford','windsor','richmond','florence','madrid','lebanon','versailles',
   'st. petersburg','london','bristol','dover','plymouth','belfast','geneva','warsaw',
+  // Panama City, FL is a real US job market; 'panama' as a bare marker was dropping
+  // it (filterCheck caught 2 live examples). "Panama City, Panama" still drops via
+  // the later hasForeign() pass, which this set does not shield.
+  'panama',
 ])
 // Returns the matched foreign city name, or null.
 function foreignCityMatch(lower) {
