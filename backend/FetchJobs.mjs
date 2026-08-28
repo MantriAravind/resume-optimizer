@@ -474,6 +474,13 @@ const FOREIGN_COUNTRIES = [
   'kenya','egypt','brazil','brasil','mexico','argentina','chile','colombia','peru','uruguay',
   'united arab emirates','saudi arabia','qatar','morocco','bulgaria','serbia','croatia',
   'slovakia','slovenia','lithuania','latvia','estonia','iceland','luxembourg','malta',
+  // Post-Soviet + Balkan states that were missing — 'Uzbekistan' fell to `unknown`,
+  // which fails safe, but explicit is better than lucky. 'georgia' CANNOT go here:
+  // it collides with the US state and is handled by the disambiguation block in
+  // classifyLocation() instead.
+  'uzbekistan','kazakhstan','kyrgyzstan','tajikistan','turkmenistan','armenia',
+  'azerbaijan','belarus','moldova','russia','albania','bosnia','montenegro','kosovo',
+  'north macedonia','cyprus',
   'europe','asia','africa','oceania','latin america','middle east','worldwide',
 ]
 
@@ -513,6 +520,9 @@ const FOREIGN_MARKERS = [
   'accra','kampala','dar es salaam','addis ababa','casablanca','tunis','algiers','durban',
   'cape town','johannesburg','pretoria',
   'middle east','remote international',
+  // Capitals of the post-Soviet additions above. 'tbilisi' matters most: it is the
+  // give-away that a bare 'Georgia' means the country, not the state.
+  'tbilisi','yerevan','baku','tashkent','almaty','astana','minsk','kyiv','kiev','chisinau',
 ]
 
 // Vague-but-plausibly-US phrasings. Kept (never silently deleted) and reported as
@@ -607,6 +617,26 @@ function hasForeign(lower) {
 function classifyLocation(location = '') {
   if (!location) return 'unknown'
   const lower = deaccent(location.toLowerCase())
+  // ── GEORGIA DISAMBIGUATION ─────────────────────────────────────────────────
+  // 'Georgia' is both a US state and a country. Because the US-state check runs
+  // FIRST (by design, to keep dual-location jobs), the country reading leaked:
+  // "Bulgaria, Georgia, Poland, Romania, Uzbekistan" and "Tbilisi, Georgia" both
+  // classified as 'us' — 15 Exadel postings on the live board proved it.
+  // Resolution: strip the word 'georgia' and let the REST of the string decide.
+  //   - any other US signal            → the state  → 'us'
+  //   - Tbilisi / 'georgia (country)' / any foreign country in the remainder
+  //                                    → the country → 'foreign'
+  //   - nothing else recognisable      → the state  → 'us' (matches old behaviour
+  //     for bare "Georgia" / "Georgia - Remote"; the checker surfaces these)
+  // Accepted residual: "Georgia; United Kingdom" now drops even if Georgia meant
+  // the state — fail-safe, and rare.
+  if (hasWord(lower, 'georgia')) {
+    if (/\bgeorgia\s*\(\s*country\s*\)|\brepublic\s+of\s+georgia\b/.test(lower)) return 'foreign'
+    const noGa = lower.replace(/\bgeorgia\b/g, ' ')
+    if (hasUSCountryOrState(noGa) || hasStrongUS(noGa)) return 'us'
+    if (hasWord(lower, 'tbilisi') || hasForeignCountry(noGa)) return 'foreign'
+    return 'us'
+  }
   // Precedence: US country/state  >  foreign country  >  US city  >  foreign city.
   // Keeps dual-location US jobs while dropping "Cambridge, UK" and "Birmingham, UK".
   if (hasUSCountryOrState(lower)) return 'us'
