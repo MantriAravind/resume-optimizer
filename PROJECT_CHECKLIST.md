@@ -436,3 +436,11 @@ processor and an entity â€” or an explicit written decision to stay free.
 - ACCEPTED RESIDUALS: dark-variant logos (Equinox, Horizon3ai, Ready) — revisit only if users mention. filterCheck "looks US" heuristic misreads ", IN" as Indiana — report polish, low priority.
 - OPEN POLICY QUESTION: contract-to-hire jobs on a "full-time only" board — ask students before deciding.
 - VALIDATION: messaged friends re: student conversation #1. NEXT SESSION PRIORITY: schedule + hold it. After that: optimizer fabrication fix (A5 findings, still top engineering priority).
+
+---
+## Session log 2026-08-28 (evening)
+- SHIPPED (54e76ed, verified on production): E4 save/hide jobs — JobMark model + /me/job-marks endpoints (snapshot fields survive 30-day prune; one row per user+job, saved/hidden mutually exclusive). Board: x -> Hide menu on cards, Save-for-later beside Share in detail head, hidden jobs filtered from list. Tracker: Applied/Saved/Hidden tabs with Unsave/Unhide, layout fixes (width 1400, heading aligned with Profile).
+- SHIPPED same commit: card redesign — logo 72px base/56px two-pane inline, chips full width, list column 37% -> 45%.
+- SHIPPED same commit: Support page at /support + sidebar item. Gmail-compose primary button (mailto is dead on machines with no mail app — observed), mailto secondary, clipboard fallback. support@optyply.com verified end-to-end: redirect works, Gmail filter created (never-spam + important).
+- NOTE: "Upgrade to Pro" button audited — routes to /pricing (honesty-swept). No fake claim.
+- E4 DONE. Mark [x] when checklist next open.
