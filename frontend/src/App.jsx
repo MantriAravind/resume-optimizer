@@ -1,7 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate, useSearchParams } from 'react-router-dom'
 import { SignedIn, SignedOut, RedirectToSignIn } from '@clerk/clerk-react'
 import { useHasResume } from './hooks/useHasResume'
-import ToolPage from './pages/ToolPage'
 import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/LoginPage'
 import SignupPage from './pages/SignupPage'
@@ -110,9 +109,11 @@ export default function App() {
             reached to add one. */}
         <Route path="/onboarding/resume" element={<ProtectedRoute><OnboardingResume /></ProtectedRoute>} />
 
-        {/* Needs a resume: both of these are useless without one. */}
+        {/* Needs a resume: useless without one. The standalone /app optimizer was
+            removed 2026-08-28 — the board's "Optimize my resume" modal is the one
+            path, so the fabrication fix only has one door to guard. ToolPage.jsx
+            lives in git history if it is ever wanted back. */}
         <Route path="/jobs" element={<JobsRoute />} />
-        <Route path="/app" element={<ProtectedRoute><RequireResume><ToolPage /></RequireResume></ProtectedRoute>} />
 
         {/* Signed in only. Deliberately NOT behind RequireResume: a student who removed
             their resume should still be able to see, and download from, what they already

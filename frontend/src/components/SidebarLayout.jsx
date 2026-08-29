@@ -149,7 +149,16 @@ export default function SidebarLayout({ children }) {
     })
   }
 
-  const firstName = user?.firstName || user?.username || 'there'
+  // Fallback chain for accounts created before first/last name became required
+  // at signup. The literal string 'there' was reaching the sidebar as if it were
+  // the user's name ("there / Free plan") — it was written for a greeting, not a
+  // name slot. Email prefix beats a placeholder; a neutral label beats both
+  // pretending and 'there'.
+  const firstName =
+    user?.firstName ||
+    user?.username ||
+    user?.primaryEmailAddress?.emailAddress?.split('@')[0] ||
+    'Your account'
 
   return (
     <div className={`sl-root ${collapsed ? 'sl-collapsed' : ''}`}>

@@ -444,3 +444,5 @@ processor and an entity â€” or an explicit written decision to stay free.
 - SHIPPED same commit: Support page at /support + sidebar item. Gmail-compose primary button (mailto is dead on machines with no mail app — observed), mailto secondary, clipboard fallback. support@optyply.com verified end-to-end: redirect works, Gmail filter created (never-spam + important).
 - NOTE: "Upgrade to Pro" button audited — routes to /pricing (honesty-swept). No fake claim.
 - E4 DONE. Mark [x] when checklist next open.
+
+- 2026-08-28 late: B3 DONE — first/last name Required in Clerk (production) + display-name fallback chain in SidebarLayout; literal 'there' can no longer render as a name. B7 CLOSED by removal — /app standalone optimizer route deleted entirely (decision: board's Optimize modal is the one path; ToolPage.jsx recoverable from git history). Fabrication fix now has a single door to guard.
