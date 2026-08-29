@@ -18,6 +18,7 @@ import ProfilePage from './pages/ProfilePage'
 import OnboardingResume from './pages/OnboardingResume'
 import SharedJobPage from './pages/SharedJobPage'
 import TrackerPage from './pages/TrackerPage'
+import SupportPage from './pages/SupportPage'
 
 /** Signed in, or bounced to sign-in. No resume check. */
 function ProtectedRoute({ children }) {
@@ -117,6 +118,10 @@ export default function App() {
             their resume should still be able to see, and download from, what they already
             sent. Locking history behind a current file would lose real work. */}
         <Route path="/tracker" element={<ProtectedRoute><TrackerPage /></ProtectedRoute>} />
+
+        {/* Signed in only, no resume needed — a student locked out of everything else
+            still needs a way to ask for help. */}
+        <Route path="/support" element={<ProtectedRoute><SupportPage /></ProtectedRoute>} />
 
         {/* Reachable without a resume — this is where a wrong or missing one gets fixed. */}
         <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />

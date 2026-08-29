@@ -23,10 +23,10 @@ const CSS = `
   --blue:#2563EB; --blue-dark:#1D4ED8; --soft:#EFF6FF; --ink:#0A0A0B; --body:#374151;
   --muted:#6B7280; --border:#EEF2F6; --green:#059669; --amber:#B45309; --bg:#F8FAFC;
   font-family:'Space Grotesk',-apple-system,sans-serif; color:var(--ink);
-  -webkit-font-smoothing:antialiased; padding:30px 26px 70px; max-width:1040px;
+  -webkit-font-smoothing:antialiased; padding:16px 32px 70px; max-width:1400px;
 }
 .tk * { box-sizing:border-box; }
-.tk h1 { font-size:25px; font-weight:700; letter-spacing:-.02em; }
+.tk h1 { font-size:25px; font-weight:700; letter-spacing:-.02em; margin:0; }
 .tk-sub { font-size:13px; color:var(--muted); margin-top:5px; }
 
 .tk-list { border:1px solid var(--border); border-radius:14px; overflow:hidden; margin-top:22px; }
@@ -89,6 +89,18 @@ const CSS = `
   background:#FFFBEB; border:1px solid #FDE68A; border-radius:10px; padding:12px 14px;
   font-size:12px; color:#78350F; line-height:1.6; margin-top:14px;
 }
+.tk-tabs { display:flex; gap:6px; margin-top:18px; }
+.tk-tab {
+  font-family:inherit; font-size:12.5px; font-weight:700; padding:7px 14px; border-radius:8px;
+  border:none; background:transparent; color:var(--muted); cursor:pointer;
+  display:inline-flex; align-items:center; gap:6px;
+}
+.tk-tab .n { font-weight:600; opacity:.75; }
+.tk-tab.on { background:var(--soft); color:var(--blue); }
+.tk-mk-main {
+  display:grid; grid-template-columns:1fr 190px; gap:12px; padding:13px 16px; align-items:center;
+}
+.tk-mk-note { font-size:11.5px; color:var(--muted); margin-top:10px; line-height:1.6; }
 .tk-empty { border:1px dashed var(--border); border-radius:14px; padding:52px 24px; text-align:center; margin-top:22px; }
 .tk-empty h3 { font-size:16px; font-weight:600; margin-bottom:7px; }
 .tk-empty p { font-size:13px; color:var(--muted); max-width:390px; margin:0 auto 18px; line-height:1.6; }
@@ -109,23 +121,54 @@ export default function TrackerPage() {
   const [loading, setLoading] = useState(true)
   const [open, setOpen] = useState({})
   const [busy, setBusy] = useState('')
+  // Saved-for-later and hidden jobs. Rows are SNAPSHOTS taken when the job was
+  // marked, so they stay readable after the pipeline prunes the posting.
+  const [saved, setSaved] = useState([])
+  const [hidden, setHidden] = useState([])
+  const [section, setSection] = useState('applied')
 
   const load = useCallback(async () => {
     try {
       const token = await getToken()
-      const r = await fetch(`${BACKEND}/applications`, { headers: { Authorization: `Bearer ${token}` } })
+      const [r, rm] = await Promise.all([
+        fetch(`${BACKEND}/applications`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${BACKEND}/me/job-marks`, { headers: { Authorization: `Bearer ${token}` } }),
+      ])
       if (r.ok) {
         const { applications = [] } = await r.json()
         setRows(applications)
       }
+      if (rm.ok) {
+        const data = await rm.json()
+        setSaved(data.saved || [])
+        setHidden(data.hidden || [])
+      }
     } catch (err) {
-      console.warn('Could not load applications:', err)
+      console.warn('Could not load tracker:', err)
     } finally {
       setLoading(false)
     }
   }, [getToken])
 
   useEffect(() => { load() }, [load])
+
+  // Unsave / unhide. Optimistic; a failed delete restores the row.
+  async function unmark(row) {
+    const wasSaved = row.state === 'saved'
+    const restoreS = saved, restoreH = hidden
+    if (wasSaved) setSaved(list => list.filter(r => r.jobId !== row.jobId))
+    else setHidden(list => list.filter(r => r.jobId !== row.jobId))
+    try {
+      const token = await getToken()
+      const r = await fetch(`${BACKEND}/me/job-marks/${row.jobId}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!r.ok) throw new Error()
+    } catch {
+      setSaved(restoreS); setHidden(restoreH)
+      alert('Could not update that. Please try again.')
+    }
+  }
 
   async function toggle(row) {
     if (row.status === 'applied') return      // one-way; see the pill above
@@ -205,12 +248,22 @@ export default function TrackerPage() {
         <h1>Tracker</h1>
         <p className="tk-sub">
           {loading ? 'Loading…'
-            : rows.length
-              ? `${rows.length} job${rows.length > 1 ? 's' : ''} · ${marked} marked applied`
-              : 'Nothing here yet'}
+            : `${rows.length} applied · ${saved.length} saved · ${hidden.length} hidden`}
         </p>
 
-        {!loading && !rows.length && (
+        <div className="tk-tabs">
+          <button className={`tk-tab ${section === 'applied' ? 'on' : ''}`} onClick={() => setSection('applied')}>
+            Applied {rows.length ? <span className="n">{rows.length}</span> : null}
+          </button>
+          <button className={`tk-tab ${section === 'saved' ? 'on' : ''}`} onClick={() => setSection('saved')}>
+            Saved for later {saved.length ? <span className="n">{saved.length}</span> : null}
+          </button>
+          <button className={`tk-tab ${section === 'hidden' ? 'on' : ''}`} onClick={() => setSection('hidden')}>
+            Hidden {hidden.length ? <span className="n">{hidden.length}</span> : null}
+          </button>
+        </div>
+
+        {section === 'applied' && !loading && !rows.length && (
           <div className="tk-empty">
             <h3>Nothing here yet</h3>
             <p>
@@ -223,7 +276,7 @@ export default function TrackerPage() {
           </div>
         )}
 
-        {!!rows.length && (
+        {section === 'applied' && !!rows.length && (
           <>
             <div className="tk-list">
               <div className="tk-hd">
@@ -321,6 +374,83 @@ export default function TrackerPage() {
             {/* Stated rather than hidden. A tracker that quietly implies every row has a
                 downloadable resume would be making a claim it cannot keep. */}
           </>
+        )}
+
+        {section === 'saved' && !loading && (
+          !saved.length ? (
+            <div className="tk-empty">
+              <h3>No saved jobs yet</h3>
+              <p>Use “Save for later” on any job card and it lands here — details kept even after the posting leaves the board.</p>
+              <button className="tk-btn p" onClick={() => navigate('/jobs')}>
+                <Briefcase size={12} /> Browse jobs
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="tk-list">
+                <div className="tk-hd" style={{ gridTemplateColumns: '1fr 190px' }}>
+                  <div>Role</div><div />
+                </div>
+                {saved.map(row => (
+                  <div key={row.jobId} className="tk-row">
+                    <div className="tk-mk-main">
+                      <div>
+                        <div className="tk-t">{row.title}</div>
+                        <div className="tk-c">
+                          {row.company}{row.location ? ` · ${row.location}` : ''} · saved {when(row.markedAt)}
+                        </div>
+                      </div>
+                      <div className="tk-acts">
+                        {row.applyUrl && (
+                          <a className="tk-btn p" href={row.applyUrl} target="_blank" rel="noreferrer">
+                            <ExternalLink size={11} /> Apply
+                          </a>
+                        )}
+                        <button className="tk-btn" onClick={() => unmark({ ...row, state: 'saved' })}>Unsave</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="tk-mk-note">
+                Saved jobs keep their details even after the employer’s posting expires — the
+                Apply link may stop working once the employer closes it.
+              </div>
+            </>
+          )
+        )}
+
+        {section === 'hidden' && !loading && (
+          !hidden.length ? (
+            <div className="tk-empty">
+              <h3>No hidden jobs</h3>
+              <p>Use the ✕ on any job card to hide it. Hidden jobs never appear on your board; Unhide brings one back.</p>
+            </div>
+          ) : (
+            <>
+              <div className="tk-list">
+                <div className="tk-hd" style={{ gridTemplateColumns: '1fr 190px' }}>
+                  <div>Role</div><div />
+                </div>
+                {hidden.map(row => (
+                  <div key={row.jobId} className="tk-row">
+                    <div className="tk-mk-main">
+                      <div>
+                        <div className="tk-t">{row.title}</div>
+                        <div className="tk-c">
+                          {row.company}{row.location ? ` · ${row.location}` : ''} · hidden {when(row.markedAt)}
+                        </div>
+                      </div>
+                      <div className="tk-acts">
+                        <button className="tk-btn" onClick={() => unmark({ ...row, state: 'hidden' })}>Unhide</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="tk-mk-note">Unhidden jobs reappear on your board on the next reload.</div>
+            </>
+          )
         )}
       </div>
     </SidebarLayout>

@@ -155,15 +155,50 @@ const CSS = `
   background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 22px;
   cursor: pointer; transition: box-shadow .16s, border-color .16s, transform .16s;
 }
+.jb-card { position: relative; }
+.jb-card-savedtag {
+  display: inline-flex; align-items: center; gap: 5px; margin-top: 10px;
+  font-size: 11.5px; font-weight: 700; color: #2563EB;
+  background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 7px; padding: 4px 9px;
+}
 .jb-card:hover { border-color: #BFDBFE; box-shadow: 0 6px 20px rgba(37,99,235,.09); transform: translateY(-1px); }
+.jb-x {
+  position: absolute; top: 8px; right: 8px; width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 8px; background: transparent; color: #9CA3AF;
+  font-size: 16px; line-height: 1; cursor: pointer;
+}
+.jb-x:hover { background: #F3F4F6; color: #374151; }
+.jb-hide-menu {
+  position: absolute; top: 36px; right: 8px; z-index: 6;
+  background: #fff; border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 4px;
+}
+.jb-hide-menu button {
+  border: none; background: none; font: inherit; font-size: 13px; font-weight: 600;
+  color: #B91C1C; padding: 7px 12px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+}
+.jb-hide-menu button:hover { background: #FEF2F2; }
+.jb-save-row { display: flex; justify-content: flex-end; margin-top: 10px; }
+.jb-save-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); background: #fff; border-radius: 8px;
+  padding: 6px 12px; font: inherit; font-size: 12.5px; font-weight: 600;
+  color: #374151; cursor: pointer;
+}
+.jb-save-btn:hover { border-color: #BFDBFE; color: #2563EB; }
+.jb-save-btn.on { background: #EFF6FF; border-color: #BFDBFE; color: #2563EB; }
 .jb-card-top { display: flex; gap: 14px; }
 .jb-logo {
-  width: 46px; height: 46px; border-radius: 11px; flex-shrink: 0;
+  width: 72px; height: 72px; border-radius: 15px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  color: #fff; font-weight: 700; font-size: 18px;
+  color: #fff; font-weight: 700; font-size: 28px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.25);
 }
-.jb-logo--img { background: #fff; border: 1px solid var(--line, #E5E7EB); padding: 5px; box-shadow: none; }
+.jb-logo--img { background: #fff; border: 1px solid var(--line, #E5E7EB); padding: 8px; box-shadow: none; }
+@media (max-width: 640px) {
+  .jb-logo { width: 56px; height: 56px; font-size: 22px; border-radius: 13px; }
+}
 .jb-logo--img img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .jb-card-head { flex: 1; min-width: 0; display: flex; justify-content: space-between; gap: 10px; }
 .jb-card h3 { font-size: 16.5px; font-weight: 700; letter-spacing: -.01em; line-height: 1.3; }
@@ -302,6 +337,7 @@ const CSS = `
 .jb-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
 .jb-head-text { min-width: 0; }
 .jb-head-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.jb-btn-ghost--on { background: #EFF6FF; border-color: #BFDBFE; color: #2563EB; }
 .jb-btn-ghost {
   border: 1px solid var(--border); background: #fff; color: var(--body);
   border-radius: 8px; padding: 7px 12px; font-size: 12px; font-weight: 600;
@@ -369,13 +405,13 @@ const CSS = `
   .jb-panes { flex: 1; min-height: 0; display: flex; gap: 18px;
     width: 100%; max-width: 1500px; margin: 0 auto; padding: 4px 26px 0; }
 
-  .jb-list-col { flex: 0 0 37%; min-width: 0; overflow-y: auto; padding-right: 6px; }
+  .jb-list-col { flex: 0 0 45%; min-width: 0; overflow-y: auto; padding-right: 6px; }
   .jb-list { max-width: none; margin: 0; padding: 4px 0 12px; }
   /* compact job cards so more fit on screen */
   .jb-card { padding: 11px 13px; border-radius: 11px; margin-bottom: 8px; }
   .jb-card h3 { font-size: 13.5px; line-height: 1.3; }
   .jb-card .co { font-size: 11.5px; }
-  .jb-logo { width: 34px; height: 34px; font-size: 14px; border-radius: 9px; }
+  .jb-logo { width: 56px; height: 56px; font-size: 22px; border-radius: 13px; }
   .jb-card-top { gap: 10px; }
   .jb-pills { gap: 5px; margin: 8px 0 0; padding-left: 44px; }
   .jb-pill { font-size: 10.5px; padding: 3px 8px; }
@@ -490,7 +526,11 @@ function CompanyLogo({ job, closed }) {
   return <div className="jb-logo" style={{ background: gradientFor(job.company) }}>{initial}</div>
 }
 
-function JobCard({ job, onOpen, selected, tracked }) {
+function JobCard({ job, onOpen, selected, tracked, marked, onSave, onHide }) {
+  // The x opens a one-item menu rather than hiding immediately: hiding is
+  // destructive-ish (the job leaves the board), so it gets a deliberate second
+  // click. Menu state is per-card and resets when the card unmounts.
+  const [hideMenu, setHideMenu] = useState(false)
   const salary = formatSalary(job.salaryMin, job.salaryMax)
   const years = formatYears(job.yearsMin, job.yearsMax)
 
@@ -533,6 +573,15 @@ function JobCard({ job, onOpen, selected, tracked }) {
 
   return (
     <div className={`jb-card ${selected ? 'sel' : ''}`} onClick={() => onOpen(job)}>
+      <button
+        className="jb-x" title="Hide options" aria-label="Hide options"
+        onClick={(e) => { e.stopPropagation(); setHideMenu(v => !v) }}
+      >×</button>
+      {hideMenu && (
+        <div className="jb-hide-menu" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => { setHideMenu(false); onHide(job) }}>Hide job</button>
+        </div>
+      )}
       <div className="jb-card-top">
         <CompanyLogo job={job} />
         <div className="jb-card-head">
@@ -569,6 +618,9 @@ function JobCard({ job, onOpen, selected, tracked }) {
             ? <span className="jb-tr jb-tr--yes"><Check size={11} /> Applied</span>
             : <span className="jb-tr">Opened — not marked applied</span>}
         </div>
+      )}
+      {marked === 'saved' && (
+        <div className="jb-card-savedtag"><Check size={11} /> Saved for later</div>
       )}
     </div>
   )
@@ -645,6 +697,61 @@ export default function JobBoard() {
   }, [isSignedIn, getToken])
 
   useEffect(() => { loadApplications() }, [loadApplications])
+
+  // ── Saved / hidden marks. jobId -> 'saved' | 'hidden'. Same contract as apps:
+  // the board must work fully with no marks — a failed fetch costs nothing.
+  const [marks, setMarks] = useState({})
+  const loadMarks = useCallback(async () => {
+    if (!isSignedIn) { setMarks({}); return }
+    try {
+      const token = await getToken()
+      const r = await fetch(`${BACKEND}/me/job-marks`, { headers: { Authorization: `Bearer ${token}` } })
+      if (!r.ok) return
+      const data = await r.json()
+      const m = {}
+      for (const row of data.saved  || []) m[row.jobId] = 'saved'
+      for (const row of data.hidden || []) m[row.jobId] = 'hidden'
+      setMarks(m)
+    } catch (err) {
+      console.warn('Could not load job marks:', err)
+    }
+  }, [isSignedIn, getToken])
+  useEffect(() => { loadMarks() }, [loadMarks])
+
+  // Optimistic in both directions; the server write follows. On failure the
+  // previous state is restored, so a dead network never eats a card silently.
+  async function setJobMark(job, state) {
+    if (!isSignedIn) { navigate('/login'); return }
+    const prev = marks[job.id]
+    // Second tap on Save = unsave.
+    const removing = state === 'saved' && prev === 'saved'
+    setMarks(m => {
+      const n = { ...m }
+      if (removing) delete n[job.id]
+      else n[job.id] = state
+      return n
+    })
+    try {
+      const token = await getToken()
+      if (removing) {
+        await fetch(`${BACKEND}/me/job-marks/${job.id}`, {
+          method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+        })
+      } else {
+        await fetch(`${BACKEND}/me/job-marks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ jobId: job.id, state }),
+        })
+      }
+    } catch {
+      setMarks(m => {
+        const n = { ...m }
+        if (prev) n[job.id] = prev; else delete n[job.id]
+        return n
+      })
+    }
+  }
 
   // Records an apply made straight from the board, with no optimize step. The row has
   // no resume attached, and the tracker says so rather than pretending otherwise.
@@ -894,7 +1001,7 @@ export default function JobBoard() {
     if (!isTwoPane() || !jobs.length) return
     // Don't clobber a job opened from a shared link with the first search result.
     if (cameFromSharedLink.current) { cameFromSharedLink.current = false; return }
-    const visible = jobs.filter(j => apps[j.id]?.status !== 'applied')
+    const visible = jobs.filter(j => apps[j.id]?.status !== 'applied' && marks[j.id] !== 'hidden')
     const stillListed = selected && visible.some(j => j.id === selected.id)
     if (!stillListed && visible.length) openJob(visible.find(j => !j.closed) || visible[0])
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1032,6 +1139,12 @@ export default function JobBoard() {
             <div className="loc">{shortLoc(shownLocation)} · {timeAgo(selected.postedAt)}</div>
           </div>
           <div className="jb-head-actions">
+            <button
+              className={`jb-btn-ghost ${marks[selected.id] === 'saved' ? 'jb-btn-ghost--on' : ''}`}
+              onClick={() => setJobMark(selected, 'saved')}
+            >
+              {marks[selected.id] === 'saved' ? '✓ Saved' : 'Save for later'}
+            </button>
             <button className="jb-btn-ghost" onClick={shareJob}>
               {copiedShare ? '✓ Copied' : '↗ Share'}
             </button>
@@ -1202,6 +1315,9 @@ export default function JobBoard() {
                     job={sharedJob}
                     onOpen={openJob}
                     selected={selected?.id === sharedJob.id}
+                    marked={marks[sharedJob.id]}
+                    onSave={(j) => setJobMark(j, 'saved')}
+                    onHide={(j) => setJobMark(j, 'hidden')}
                   />
                   <div className="jb-shared-divider">All jobs</div>
                 </>
@@ -1215,12 +1331,16 @@ export default function JobBoard() {
               {jobs
                 .filter(job => job.id !== sharedJob?.id)
                 .filter(job => apps[job.id]?.status !== 'applied')
+                .filter(job => marks[job.id] !== 'hidden')
                 .map(job => (
                 <JobCard
                   tracked={apps[job.id]} key={job.id}
                   job={job}
                   onOpen={openJob}
                   selected={selected?.id === job.id}
+                  marked={marks[job.id]}
+                  onSave={(j) => setJobMark(j, 'saved')}
+                  onHide={(j) => setJobMark(j, 'hidden')}
                 />
               ))}
             </div>

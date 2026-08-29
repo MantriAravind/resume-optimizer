@@ -295,6 +295,81 @@ const Application = mongoose.models.Application || mongoose.model('Application',
 // trace. Set back to true to record those again — nothing else needs changing.
 const TRACK_DIRECT_APPLIES = false
 
+// ── SAVED / HIDDEN JOBS (Tracker sections)
+//
+// Same snapshot principle as applications: the pipeline prunes postings on a
+// 30-day window, so a saved job stored as a bare jobId would silently vanish
+// from the tracker — the one thing a tracker must never do. The few snapshot
+// fields keep the row readable (and the apply link clickable) after the prune.
+//
+// One row per (user, job): saving a hidden job un-hides it and vice versa.
+// The two states are mutually exclusive on purpose — a job cannot sensibly be
+// both "I want this later" and "never show me this".
+const jobMarkSchema = new mongoose.Schema({
+  clerkUserId: { type: String, index: true, required: true },
+  jobId:       { type: String, required: true },
+  state:       { type: String, enum: ['saved', 'hidden'], required: true },
+  // Snapshot — must survive the job being pruned.
+  title:       String,
+  company:     String,
+  location:    String,
+  applyUrl:    String,
+  postedAt:    Date,
+  markedAt:    { type: Date, default: Date.now },
+})
+jobMarkSchema.index({ clerkUserId: 1, jobId: 1 }, { unique: true })
+const JobMark = mongoose.models.JobMark || mongoose.model('JobMark', jobMarkSchema)
+
+app.get('/me/job-marks', requireUser, async (req, res) => {
+  try {
+    const rows = await JobMark.find({ clerkUserId: req.userId }).sort({ markedAt: -1 }).lean()
+    res.json({
+      saved:  rows.filter(r => r.state === 'saved'),
+      hidden: rows.filter(r => r.state === 'hidden'),
+    })
+  } catch (err) {
+    console.error('GET /me/job-marks failed:', err)
+    res.status(500).json({ error: 'Could not load your saved jobs.' })
+  }
+})
+
+app.post('/me/job-marks', requireUser, async (req, res) => {
+  try {
+    const { jobId, state } = req.body || {}
+    if (!jobId || !['saved', 'hidden'].includes(state)) {
+      return res.status(400).json({ error: 'jobId and a valid state are required.' })
+    }
+    // Snapshot is taken server-side from the live posting — the client is not
+    // trusted to describe the job it is saving.
+    const job = await Job.findOne({ id: String(jobId) }).lean()
+    if (!job) return res.status(404).json({ error: 'Job not found.' })
+    await JobMark.updateOne(
+      { clerkUserId: req.userId, jobId: String(jobId) },
+      { $set: {
+          state,
+          title: job.title, company: job.company, location: job.location,
+          applyUrl: job.applyUrl, postedAt: job.postedAt,
+          markedAt: new Date(),
+      } },
+      { upsert: true }
+    )
+    res.json({ ok: true, state })
+  } catch (err) {
+    console.error('POST /me/job-marks failed:', err)
+    res.status(500).json({ error: 'Could not save that job.' })
+  }
+})
+
+app.delete('/me/job-marks/:jobId', requireUser, async (req, res) => {
+  try {
+    await JobMark.deleteOne({ clerkUserId: req.userId, jobId: String(req.params.jobId) })
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('DELETE /me/job-marks failed:', err)
+    res.status(500).json({ error: 'Could not update that job.' })
+  }
+})
+
 // ── TRACKER: record an application
 app.post('/applications', requireUser, async (req, res) => {
   try {
@@ -1842,7 +1917,12 @@ app.get('/jobs', async (req, res) => {
       // an OPT clock — fresh listings first, best match at the top of each day — rather
       // than a month-old exact match camping above everything posted today.
       // Jobs with no postedAt sort last (null is lowest in a descending sort).
-      sortStage = { _tier: -1, _day: -1, _score: -1, postedAt: -1 }
+      // `id` last: jobs batch-posted in one fetch tie on every other key, and MongoDB
+      // returns ties in UNSTABLE order across page requests — the same job appeared
+      // on page 1 AND page 2 of the board (seen live: Ramp "TLM, Production
+      // Engineering", one row in Mongo, two cards on screen). A unique tiebreaker
+      // makes skip/limit pagination deterministic.
+      sortStage = { _tier: -1, _day: -1, _score: -1, postedAt: -1, id: 1 }
       jobs = await Job.aggregate([
         { $match: filter },
         { $project: CARD_FIELDS },
@@ -1874,7 +1954,7 @@ app.get('/jobs', async (req, res) => {
       ])
     } else {
       // No search term: newest first.
-      sortStage = { postedAt: -1 }
+      sortStage = { postedAt: -1, id: 1 }
       jobs = await Job.find(filter)
         .select('-description')
         .sort({ postedAt: -1 })

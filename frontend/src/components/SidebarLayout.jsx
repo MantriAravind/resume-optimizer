@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { UserButton, useUser } from '@clerk/clerk-react'
-import { Briefcase, User, FileText, Calendar, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { Briefcase, User, FileText, Calendar, ChevronsLeft, ChevronsRight, HelpCircle } from 'lucide-react'
 
 const NAV_ITEMS = [
   { icon: Briefcase, label: 'Job Board',   path: '/jobs', available: true },
@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   // The board's own "Optimize my resume" button opens a modal and is unaffected.
   // { icon: FileText,  label: 'Resume Tool', path: '/app', available: true },
   { icon: Calendar,  label: 'Tracker',     path: '/tracker', available: true },
+  { icon: HelpCircle, label: 'Support',     path: '/support', available: true },
   // Settings removed, not hidden. Every field it would have held already has a home:
   // account, email, devices and account deletion are Clerk's UserButton menu (Manage
   // account); the resume lives on Profile; role, work type and state are the board's
