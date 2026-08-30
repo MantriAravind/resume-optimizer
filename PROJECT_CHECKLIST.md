@@ -446,3 +446,5 @@ processor and an entity â€” or an explicit written decision to stay free.
 - E4 DONE. Mark [x] when checklist next open.
 
 - 2026-08-28 late: B3 DONE — first/last name Required in Clerk (production) + display-name fallback chain in SidebarLayout; literal 'there' can no longer render as a name. B7 CLOSED by removal — /app standalone optimizer route deleted entirely (decision: board's Optimize modal is the one path; ToolPage.jsx recoverable from git history). Fabrication fix now has a single door to guard.
+
+- 2026-08-28 late: B3 DONE — first/last name Required in Clerk (production) + display-name fallback chain in SidebarLayout; literal 'there' can no longer render as a name. B7 CLOSED by removal — /app standalone optimizer route deleted entirely (decision: board's Optimize modal is the one path; ToolPage.jsx recoverable from git history). Fabrication fix now has a single door to guard. Teaser story posted on Instagram — reveal post due within ~1 week.
