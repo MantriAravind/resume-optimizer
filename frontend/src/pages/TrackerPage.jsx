@@ -280,7 +280,7 @@ export default function TrackerPage() {
           <>
             <div className="tk-list">
               <div className="tk-hd">
-                <div>Role</div><div>Status</div><div>Match</div><div />
+                <div>Role</div><div>Status</div><div>Coverage</div><div />
               </div>
 
               {rows.map(row => {
