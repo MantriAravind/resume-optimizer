@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 import {
-  X, Check, CheckCheck, ArrowRight, ArrowUp, Download, FileText,
+  X, Check, CheckCheck, ArrowRight, ArrowLeft, ArrowUp, Download, FileText,
   ExternalLink, Sparkles, BookOpen, AlertCircle, Ban,
 } from 'lucide-react'
 
@@ -41,7 +41,10 @@ function ScoreBar({ before, after, animate }) {
   return () => clearInterval(t)
   }, [before, after, animate])
   const color = shown >= 80 ? '#059669' : shown >= 60 ? '#D97706' : '#DC2626'
-  const verdict = shown >= 80 ? 'Strong match.' : shown >= 60 ? 'Decent match.' : 'Weak match.'
+  // Coverage, not match. This number is keyword overlap and it rises with every box the
+  // student ticks, so calling it a "match" tells them they are a strong candidate on the
+  // strength of their own checkboxes. Same wording as the result screen.
+  const verdict = shown >= 80 ? 'Strong coverage.' : shown >= 60 ? 'Partial coverage.' : 'Low coverage.'
   const vColor = shown >= 80 ? '#047857' : shown >= 60 ? '#92400E' : '#991B1B'
   return (
     <div className="om-score">
@@ -109,7 +112,7 @@ function ResumeView({ text, skills, originalText }) {
       const w = p.toLowerCase()
       const isWord = /^[a-z0-9]/.test(w)
       if (isWord && w.length > 2 && !STOP.has(w) && !origVocab.has(w)) {
-        nodes.push(<mark key={key++} className="om-mark-new" title="Introduced by the optimizer — not in your original resume. Review before sending.">{p}</mark>)
+        nodes.push(<mark key={key++} className="om-mark-new" title="Changed or added by the optimizer. Review before sending.">{p}</mark>)
       } else {
         nodes.push(p)
       }
@@ -341,6 +344,18 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   }
   function addAll() {
     setChecked(Object.fromEntries(missing.map(k => [k, true])))
+  }
+
+  // Back to the checkboxes. Nothing needs refetching: matched, missing, checked,
+  // resumeText and jobText all live here and are never cleared, and the loader effect is
+  // keyed on [job, getToken], so returning costs no API call. Re-optimizing does.
+  //
+  // Edits made in the document are only in the DOM. Re-optimizing overwrites them, so ask
+  // first rather than throwing away work silently.
+  function backToSkills() {
+    const edited = docRef.current && docRef.current.innerText.trim() !== optimized.trim()
+    if (edited && !window.confirm('Your edits to this resume will be lost when you optimize again. Go back anyway?')) return
+    setPhase('pick')
   }
 
   // ── step 2: rewrite
@@ -585,6 +600,12 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                 a scrolling rail, so the buttons that finish the job were invisible
                 until you scrolled — on the screen whose whole purpose is finishing. */}
             <div className="om-actionbar">
+              {/* The only way back to the checkboxes. Without it, a student who ticked a
+                  skill they cannot defend had to close the modal and start over, or hand-
+                  delete the word while the rail still claimed it was added. */}
+              <button className="om-dl" onClick={backToSkills}>
+                <ArrowLeft size={13} />Edit skills
+              </button>
               <div className="om-ringrow">
                 <div className="om-ring" style={{ background: `conic-gradient(#059669 ${scoreAfter}%, #E5E7EB 0)` }}>
                   <div>{scoreAfter}</div>
@@ -736,6 +757,11 @@ const CSS = `
 .om-resume { font-family: 'SF Mono', Menlo, monospace; font-size: 11px; line-height: 1.7;
   color: #374151; padding: 14px 15px; margin: 0; white-space: pre-wrap; word-wrap: break-word; }
 .om-mark { background: #D1FAE5; color: #047857; font-weight: 700; padding: 0 3px; border-radius: 3px; }
+/* Decision (2026-08-30): one colour. Green marks every change the optimizer made,
+   whether or not the student ticked it. The two-colour version was built and rejected:
+   amber fired on ordinary rewording ("throughout", "spearheaded"), which would have lit
+   up half the page and trained students to ignore the colour entirely. Cost of the
+   single colour: the page shows WHAT changed but not WHO vouched for it. Accepted. */
 .om-mark-new { background: #D1FAE5; color: #047857; font-weight: 700; padding: 0 3px; border-radius: 3px; }
 
 .om-feedback { font-size: 12px; color: #6B7280; line-height: 1.55; margin-top: 12px;
