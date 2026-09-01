@@ -1881,10 +1881,14 @@ app.get('/jobs', async (req, res) => {
     if (words.length) {
       // Ranked search. Score is title-focused, because a student scanning results cares
       // about the ROLE matching, not the company name happening to contain a word:
+      //   +400  title is exactly the phrase
+      //   +300  company name contains the whole phrase (a company search)
+      //   +250  every core word in the title as a whole word
+      //   +200  every core word in the title in any form
       //   +100  title contains the whole phrase ("Data Engineer")
       //   +60   title STARTS with the phrase (the most on-the-nose match)
       //   +10   per individual word found in the title
-      // Everything that merely matched on company scores 0 and sinks to the bottom.
+      // A company matching only a single word scores 0 and sinks to the bottom.
       // Ties break on postedAt, so within equally-relevant jobs the newest come first.
       const phrase = esc(q)
       const titleHas = w => ({ $regexMatch: { input: '$title', regex: esc(w), options: 'i' } })
@@ -1903,6 +1907,13 @@ app.get('/jobs', async (req, res) => {
       const score = [
         // Exact title, nothing else: "Data Engineer" for "data engineer".
         { $cond: [{ $regexMatch: { input: '$title', regex: '^' + phrase + '$', options: 'i' } }, 400, 0] },
+        // The whole query is a company name. Sits above every partial title match and
+        // below an exact title: a student who typed "Bridgeway Benefit Technologies" was
+        // seeing that company's one job at the bottom, under a Surgery Scheduler that
+        // matched the word "benefits". Whole-word bounded so "Asana" does not fire on
+        // "Asanaworks". Single-word company hits still score 0 — "data" appearing in a
+        // company name is not what anyone searching "data engineer" is after.
+        { $cond: [{ $regexMatch: { input: { $ifNull: ['$company', ''] }, regex: '(^|[^a-z0-9])' + phrase + '([^a-z0-9]|$)', options: 'i' } }, 300, 0] },
         // Every word present as a WHOLE word — separates "Data Engineer II" from
         // "Data Engineering Manager".
         { $cond: [{ $and: words.map(titleHasWord) }, 250, 0] },
@@ -1972,7 +1983,41 @@ app.get('/jobs', async (req, res) => {
     const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
     attachBrand(jobs, await getBrandMap())
-    res.json({ jobs, total, pages })
+
+    // Whether anything on this page actually matched what they typed.
+    //
+    // The $or built from `words` admits a job that matched a SINGLE word, which is what
+    // makes "data engineer" also find "Data Platform Engineer" — worth keeping. The cost
+    // shows up on a search with no real match: "Bridgeway Benefit Technologies" returned
+    // a Surgery Scheduler role (title contains "benefits") and a Benefits Manager at
+    // Asana, presented as though they were results for that company.
+    //
+    // The test is the SAME one the ranking uses for tier 2 — every core word present in
+    // the title as a whole word — plus the full phrase in a company name, which covers a
+    // company search. It has to be the same rule: a first attempt required the literal
+    // phrase in the title, and "senior data engineer" then had no match at all and lit
+    // the banner on an ordinary search. `tierWords` already has seniority words stripped,
+    // so "senior" is not required to appear anywhere.
+    //
+    // Whole-word, not substring: "benefits" must not satisfy "benefit", or the Surgery
+    // Scheduler row counts as a match and nothing is caught.
+    //
+    // Costs one extra count per typed search, and only a typed one — the target-role
+    // ranking hint (`role`) is not a search and must never trigger this.
+    let weakMatch = false
+    if (searched && jobs.length) {
+      const bounded = t => new RegExp('(^|[^a-z0-9])' + esc(t) + '([^a-z0-9]|$)', 'i')
+      const strong = await Job.countDocuments({
+        ...filter,
+        $and: [{ $or: [
+          { $and: tierWords.map(w => ({ title: bounded(w) })) },
+          { company: bounded(searched) },
+        ] }],
+      })
+      weakMatch = strong === 0
+    }
+
+    res.json({ jobs, total, pages, weakMatch })
 
   } catch (error) {
     console.error('Job list error:', error)

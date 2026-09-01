@@ -94,6 +94,15 @@ const CSS = `
 .jb-hero p { font-size: 11.5px; color: var(--muted); max-width: none; line-height: 1.4; }
 
 .jb-filters { max-width: 900px; margin: 14px auto 0; padding: 0 28px; }
+.jb-weak {
+  background: #F8F6F2; border: 1px solid #F1EDE7; border-radius: 10px;
+  padding: 11px 13px; margin-bottom: 10px;
+}
+.jb-weak h4 { margin: 0; font-size: 13.5px; font-weight: 600; color: #111827; }
+.jb-weak p {
+  margin: 5px 0 0; font-size: 10.5px; font-weight: 600; color: #6B7280;
+  text-transform: uppercase; letter-spacing: .06em;
+}
 .jb-search { display: flex; gap: 10px; margin-bottom: 12px; }
 .jb-search input {
   flex: 1; padding: 13px 17px; border: 1px solid var(--border); border-radius: 11px;
@@ -649,6 +658,9 @@ export default function JobBoard() {
 
   const [searchInput, setSearchInput] = useState(searchParams.get('query') || '')
   const [query, setQuery] = useState(searchParams.get('query') || '')
+  // True when the server found nothing matching the whole query and the list is made up
+  // of jobs that share a single word with it. Drives the banner, nothing else.
+  const [weakMatch, setWeakMatch] = useState(false)
   const [workType, setWorkType] = useState(searchParams.get('workType') || '')
   const [experienceLevel, setExperienceLevel] = useState(searchParams.get('experienceLevel') || '')
   const [timePosted, setTimePosted] = useState(searchParams.get('timePosted') || '')
@@ -930,6 +942,7 @@ export default function JobBoard() {
       setJobs(prev => (page === 1 ? (data.jobs || []) : [...prev, ...(data.jobs || [])]))
       setTotal(data.total || 0)
       setPages(data.pages || 1)
+      setWeakMatch(Boolean(data.weakMatch))
     } catch {
       setError("Couldn't load jobs. The server may be waking up — try again in a few seconds.")
       if (page === 1) setJobs([])
@@ -1306,6 +1319,15 @@ export default function JobBoard() {
       ) : (
         <div className="jb-panes">
           <div className="jb-list-col">
+            {/* Nothing matched the query as a whole. The jobs below are the best the
+                board has, but calling them results for what was typed would be false —
+                so the list gets a heading that says what it actually is. */}
+            {weakMatch && query && !sharedJob && (
+              <div className="jb-weak">
+                <h4>No exact matches for “{query}” right now.</h4>
+                <p>Roles that share words with your search</p>
+              </div>
+            )}
             <div className="jb-list">
               {sharedJob && (
                 <>
