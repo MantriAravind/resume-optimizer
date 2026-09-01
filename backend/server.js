@@ -1222,6 +1222,26 @@ They told us this directly. Treat it as fact.`
       : 'SUMMARY, SKILLS, EXPERIENCE, PROJECTS, EDUCATION, CERTIFICATIONS'
     const skillsHeader = originalSections.find(s => canonicalSection(s) === 'SKILLS') || 'SKILLS'
 
+    // The student's own skill category labels, in order, from the lines under their
+    // skills header. "Programming Languages", "Streaming & Messaging", whatever they
+    // wrote. Rule 8 used to merge these down to 5-6 and rename them, so a student with
+    // six carefully named categories got back four with different names. Same
+    // principle as section order: their layout, not ours. Empty when the skills section
+    // is a flat list with no labels, in which case Rule 8 asks for a flat list back.
+    const skillLabels = []
+    {
+      let inSkills = false
+      for (const line of parsedOriginal.bodyLines) {
+        if (parsedOriginal.isSection(line)) {
+          inSkills = canonicalSection(line.toUpperCase().replace(/[:：]\s*$/, '').trim()) === 'SKILLS'
+          continue
+        }
+        if (!inSkills || !line) continue
+        const sk = parsedOriginal.isSkillLine(line)
+        if (sk) skillLabels.push(sk.label)
+      }
+    }
+
     const basePrompt = `You are an expert resume editor and ATS specialist. Rewrite the resume below so it is targeted at this specific job.
 
 ${confirmedBlock}
@@ -1289,21 +1309,14 @@ Reframe an existing bullet to carry it, joining only facts the candidate has giv
 The test: every part of the sentence must trace back to something they told you. The tool came from their checkbox. The work came from their resume. Nothing else gets added.
 ORDER OF PREFERENCE: (a) reframe an existing bullet, (b) failing that, place it under a category header in the skills section, (c) never drop it silently. If a skill ends up in the skills section only, say so plainly in the feedback.
 
-═══ RULE 8 — SKILLS: INLINE CATEGORIES, ONE LINE EACH, 5-6 MAX ═══
-Format the skills section as category lines. Each category is ONE line: the label, a colon, then the skills. Like this, exactly:
+═══ RULE 8 — SKILLS: THE STUDENT'S OWN CATEGORIES, UNCHANGED ═══
+${skillLabels.length
+  ? `The original organises its skills under these category labels, in this order: ${skillLabels.map(l => `"${l}"`).join(', ')}.
+Reproduce EXACTLY these labels, in EXACTLY this order, with EXACTLY this wording and capitalisation. Do not merge two categories into one. Do not split one into two. Do not rename "Streaming & Messaging" to "Streaming and messaging". Do not reorder them by relevance. The student chose these names and this order; keeping them is the whole point.
+A confirmed skill that belongs in the skills list goes into the EXISTING category it fits best. Only if none of their categories can honestly hold it do you add ONE new category line at the END, after all of theirs, with a plain label.`
+  : `The original lists its skills without category labels. Output them the same way: a flat list, no labels added. Add confirmed skills to that list.`}
 
-Languages: Python, SQL, Java, Scala
-Data platforms: Databricks, Spark, Snowflake, BigQuery, Azure Synapse
-Cloud and DevOps: Azure, AWS, GCP, Terraform, Docker, Kubernetes, CI/CD
-Orchestration and streaming: Airflow, Kafka, Structured Streaming
-BI and reporting: Power BI, Tableau
-
-HARD RULES for this section, they matter for layout:
-- Each category is a SINGLE line. Never put the label on one line and the skills on the next line. Label, colon, skills, all on one line.
-- MAXIMUM 5-6 categories. Not nine. Merge related ones: languages together, all cloud/devops together, all orchestration/streaming together. A resume with nine skill categories looks bloated and runs onto extra pages.
-- Put the most job-relevant category first.
-- Do not write the category labels in ALL CAPS. Write them like "Data platforms", not "DATA PLATFORMS".
-A flat comma dump has no shape and a recruiter's eye slides past it. But nine stacked headers is the opposite problem: it wastes half a page. Five tight inline lines is the target.
+Each category is ONE line: the label, a colon, then the skills. Never split the label from its skills across lines. Keep every skill already listed under each label; add to them, never remove.
 
 ═══ RULE 9 — VOICE. THIS IS HALF THE JOB ═══
 It must read like the candidate wrote it. Recruiters screen hundreds of resumes and AI-written ones are obvious on sight.
