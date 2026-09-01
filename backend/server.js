@@ -1167,6 +1167,23 @@ They told us this directly. Treat it as fact.`
       ? '- YEARS OF EXPERIENCE. The work history could not be read reliably, so do NOT state a number of years in the summary. Describe the experience without counting it.'
       : `- YEARS OF EXPERIENCE. This candidate has ${expYears}+ years of experience. That number is calculated from the dates in their resume and is correct. If the summary states a number of years it MUST say "${expYears}+ years". Do not recalculate it and do not copy a different number from the original resume, which may be out of date.`
 
+    // The student's own section names, in the student's own order. Until this existed,
+    // Rule 10 imposed a fixed layout (SUMMARY, SKILLS, EXPERIENCE, PROJECTS, EDUCATION)
+    // and renamed every header to match, so a resume that led with EDUCATION and called
+    // its skills TECHNICAL SKILLS came back rearranged into ours. Rule 4 said "preserve
+    // the structure exactly" three paragraphs above, and Rule 10 overrode it every time.
+    //
+    // parseResume is the same detector the renderer uses, so the order asked for here is
+    // an order the renderer can follow. Falls back to the old fixed layout only when
+    // nothing is detected, which means the extraction gave us something unreadable.
+    const parsedOriginal = parseResume(resumeText)
+    const originalSections = parsedOriginal.bodyLines.filter(parsedOriginal.isSection)
+      .map(s => s.toUpperCase().replace(/[:：]\s*$/, '').trim())
+    const sectionOrder = originalSections.length
+      ? originalSections.join(', ')
+      : 'SUMMARY, SKILLS, EXPERIENCE, PROJECTS, EDUCATION, CERTIFICATIONS'
+    const skillsHeader = originalSections.find(s => canonicalSection(s) === 'SKILLS') || 'SKILLS'
+
     const basePrompt = `You are an expert resume editor and ATS specialist. Rewrite the resume below so it is targeted at this specific job.
 
 ${confirmedBlock}
@@ -1197,7 +1214,7 @@ HARD LINE: no four consecutive words from the job description may appear in the 
 ═══ RULE 4 — PRESERVE THE RESUME'S STRUCTURE EXACTLY ═══
 You are rewriting wording. You are not editing, curating, or shortening the document.
 - SAME SECTIONS. Every section in the original appears in your output, and NO section that is not in the original.
-- EXACTLY ONE SKILLS SECTION. If the original names it differently (TECHNICAL PROFICIENCY, TECHNICAL SKILLS, CORE COMPETENCIES), that is the same section: output it ONCE, under the header SKILLS, in the position Rule 10 gives it. Never leave a second copy under the old name at the old position. A resume with two skills sections is a structural defect, not extra coverage. If the original has no PROJECTS section, you do not create one. If it has no CERTIFICATIONS section, you do not add the header. Inventing a section is the single worst thing you can do here.
+- EXACTLY ONE SKILLS SECTION. The original calls it "${skillsHeader}". Keep that exact header, in its original position. Never rename it, never move it, never leave a second copy under another name. A resume with two skills sections is a structural defect, not extra coverage. If the original has no PROJECTS section, you do not create one. If it has no CERTIFICATIONS section, you do not add the header. Inventing a section is the single worst thing you can do here.
 - SAME BULLETS, ONE FOR ONE. If a role has 28 bullets, your output has 28 bullets for that role. Never drop one. Never merge two into one. Never decide a bullet is weak and cut it — that judgement is not yours to make, and the work you would be deleting is real work the candidate actually did.
 - SAME SUMMARY LENGTH. If the summary is three sentences, yours is three sentences. Rewrite the wording; never drop a sentence. A dropped summary sentence deletes real experience — one draft cut "developing AI-ready data products and integrating Generative AI use cases using Vertex AI" and replaced it with a list of tools from the posting. That is trading the candidate's true work for the employer's wish list, and it is forbidden.
 - KEEP EVERY "Environment:" LINE VERBATIM. Some resumes end a role with "Environment: GCP, BigQuery, Airflow, ...". Reproduce that line exactly as written, under the same role. It is not filler — it is the densest keyword line in the document and an ATS reads every word of it. Never delete it, never reword it, never merge it into a bullet.
@@ -1265,8 +1282,8 @@ It must read like the candidate wrote it. Recruiters screen hundreds of resumes 
 
 ═══ RULE 10 — STRUCTURE THE OUTPUT CONSISTENTLY (a downstream parser reads this) ═══
 The rewritten resume is parsed by formatting code. Follow this structure exactly so it renders correctly every time:
-- Section headers on their own line, in ALL CAPS, short: SUMMARY, SKILLS, EXPERIENCE, PROJECTS, EDUCATION, CERTIFICATIONS. Nothing else on that line. No punctuation.
-- Keep sections in this order: SUMMARY, then SKILLS, then EXPERIENCE, then PROJECTS, then EDUCATION, then CERTIFICATIONS. Put SKILLS near the top, not at the bottom.
+- Section headers on their own line, in ALL CAPS, exactly as the original names them. Nothing else on that line. No punctuation.
+- THE ORIGINAL'S SECTIONS, IN THE ORIGINAL'S ORDER, WITH THE ORIGINAL'S NAMES: ${sectionOrder}. Output them in that order and no other. If the original puts EDUCATION second, EDUCATION is second. If it calls the skills section "${skillsHeader}", that is its name. The candidate chose this layout and it is not yours to improve.
 - A job title goes on its own line in Title Case (e.g. "Senior Azure Data Engineer"). Do NOT put it in ALL CAPS — ALL CAPS is only for section headers.
 - The line under a job title is the company, location, and dates joined with " | ", exactly: "Company Name | City, ST | Jan 2024 - Present".
 - Bullets start with "- " (a hyphen and a space). One bullet per line.
