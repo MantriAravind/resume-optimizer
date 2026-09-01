@@ -1317,6 +1317,7 @@ A confirmed skill that belongs in the skills list goes into the EXISTING categor
   : `The original lists its skills without category labels. Output them the same way: a flat list, no labels added. Add confirmed skills to that list.`}
 
 Each category is ONE line: the label, a colon, then the skills. Never split the label from its skills across lines. Keep every skill already listed under each label; add to them, never remove.
+WITHIN each line, put the skills this posting asks for first, then the rest. The categories do not move and the labels do not change; only the order of the words after the colon. "Cloud Platforms: Azure, AWS, GCP" for an Azure role, "Cloud Platforms: AWS, Azure, GCP" for an AWS one. Same list, first thing the eye lands on is the relevant one.
 
 ═══ RULE 9 — VOICE. THIS IS HALF THE JOB ═══
 It must read like the candidate wrote it. Recruiters screen hundreds of resumes and AI-written ones are obvious on sight.
