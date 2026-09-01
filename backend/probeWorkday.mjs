@@ -115,15 +115,34 @@ async function listJobs(cfg) {
   return { ok: true, jobs, total: total ?? jobs.length }
 }
 
+// externalPath already begins with "/job/...", so the detail endpoint is
+// {site}{externalPath}. The guide wrote {site}/job{externalPath}, which doubles
+// "job" and 404s — the first probe run checked 0 descriptions because of it and
+// reported a yield of 0%, silently. Both shapes are tried in order and the one
+// that works is remembered per tenant; every failure now reports its status so a
+// wrong URL can never again read as "no disqualified jobs".
+const detailShape = new Map()   // tenant -> 'plain' | 'jobPrefix'
+let detailFailNote = null
 async function detail(cfg, externalPath) {
-  const res = await paced(`${cfg.origin}/wday/cxs/${cfg.tenant}/${cfg.site}/job${externalPath}`, {
-    headers: { accept: 'application/json', 'user-agent': UA, referer: `${cfg.origin}/${cfg.locale ? cfg.locale + '/' : ''}${cfg.site}${externalPath}` },
-  })
-  if (!res || !res.ok) return null
-  try {
-    const d = await res.json()
-    return d?.jobPostingInfo || null
-  } catch { return null }
+  const referer = `${cfg.origin}/${cfg.locale ? cfg.locale + '/' : ''}${cfg.site}${externalPath}`
+  const shapes = detailShape.has(cfg.tenant)
+    ? [detailShape.get(cfg.tenant)]
+    : ['plain', 'jobPrefix']
+  for (const shape of shapes) {
+    const path = shape === 'plain' ? externalPath : `/job${externalPath}`
+    const res = await paced(`${cfg.origin}/wday/cxs/${cfg.tenant}/${cfg.site}${path}`, {
+      headers: { accept: 'application/json', 'user-agent': UA, referer },
+    })
+    if (!res) return null
+    if (!res.ok) { detailFailNote = detailFailNote || `HTTP ${res.status} on ${shape} shape`; continue }
+    try {
+      const d = await res.json()
+      const info = d?.jobPostingInfo
+      if (info) { detailShape.set(cfg.tenant, shape); return info }
+      detailFailNote = detailFailNote || `no jobPostingInfo on ${shape} shape (keys: ${Object.keys(d || {}).join(',')})`
+    } catch { detailFailNote = detailFailNote || 'bad json' }
+  }
+  return null
 }
 
 const urls = fs.readFileSync(CANDIDATES_PATH, 'utf-8').split('\n').map(s => s.trim()).filter(Boolean)
@@ -154,10 +173,10 @@ for (const cfg of picked) {
     usJobs.push(j)
   }
 
-  let dSampled = 0, dDisq = 0, dContract = 0
+  let dSampled = 0, dDisq = 0, dContract = 0, dFailed = 0
   for (const j of usJobs.slice(0, DETAIL_SAMPLE)) {
     const info = await detail(cfg, j.externalPath)
-    if (!info) continue
+    if (!info) { dFailed++; continue }
     dSampled++
     const plain = stripHtml(String(info.jobDescription || ''))
     const title = info.title || j.title || ''
@@ -167,7 +186,7 @@ for (const cfg of picked) {
 
   g.boardTotal += r.total; g.listed += r.jobs.length; g.in30d += in30; g.us += us
   g.dSampled += dSampled; g.dDisq += dDisq; g.dContract += dContract
-  rows.push([cfg.tenant, `board ${String(r.total).padStart(5)} · sampled ${String(r.jobs.length).padStart(3)} · ≤30d ${String(in30).padStart(3)} · US ${String(us).padStart(3)} · details ${dSampled}: ${dDisq} disqualified, ${dContract} contract/PT`])
+  rows.push([cfg.tenant, `board ${String(r.total).padStart(5)} · sampled ${String(r.jobs.length).padStart(3)} · ≤30d ${String(in30).padStart(3)} · US ${String(us).padStart(3)} · details ${dSampled}: ${dDisq} disqualified, ${dContract} contract/PT${dFailed ? ` (${dFailed} FAILED)` : ''}`])
 }
 
 console.log('Per tenant:')
@@ -181,6 +200,8 @@ console.log(`   Sampled listings:      ${g.listed}  (boards claim ${g.boardTotal
 console.log(`   Within 30 days:        ${g.in30d}  (${pct(g.in30d, g.listed)} of sampled)`)
 console.log(`   ...and US:             ${g.us}  (${pct(g.us, g.listed)} of sampled)`)
 console.log(`   Descriptions checked:  ${g.dSampled}`)
+if (detailFailNote) console.log(`   First detail failure:  ${detailFailNote}`)
+if (g.dSampled === 0) console.log('   ⚠️  ZERO descriptions checked — the yield below is meaningless. Fix the detail endpoint first.')
 console.log(`   ...disqualified:       ${g.dDisq}  (${pct(g.dDisq, g.dSampled)})   citizen/clearance/sponsorship`)
 console.log(`   ...contract/part-time: ${g.dContract}  (${pct(g.dContract, g.dSampled)})`)
 const surviveShare = g.dSampled ? (g.dSampled - g.dDisq - g.dContract) / g.dSampled : 0
