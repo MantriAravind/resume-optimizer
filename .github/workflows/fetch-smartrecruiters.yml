@@ -70,11 +70,11 @@ jobs:
           Failed at: $(date -u '+%Y-%m-%d %H:%M UTC')
 
           The board stops getting this source's jobs until this is fixed. The sweep guard prevents deletions, so nothing is lost - but nothing is fresh either."
-          EXISTING=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number' || true)
+          EXISTING=$(gh issue list -R ${{ github.repository }} --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number' || true)
           if [ -n "$EXISTING" ]; then
-            gh issue comment "$EXISTING" --body "Failed again: $RUN_URL"
+            gh issue comment -R ${{ github.repository }} "$EXISTING" --body "Failed again: $RUN_URL"
           else
-            gh issue create --title "$TITLE" --body "$BODY"
+            gh issue create -R ${{ github.repository }} --title "$TITLE" --body "$BODY"
           fi
 
 # The alarm step opens issues; without this the token is read-only and the alarm
