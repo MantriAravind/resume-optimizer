@@ -1,0 +1,21 @@
+name: Probe Workable (manual)
+
+# One-off, by hand only. Runs the Workable probe from GitHub's runner — a different
+# IP from the laptop, which Workable throttled after the first attempts on
+# 2026-09-01. No schedule, no database, writes nothing that persists: the runner is
+# thrown away when the job ends. Read the output in the job log.
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Probe Workable accounts
+        working-directory: backend
+        run: node probeWorkable.mjs --dry
