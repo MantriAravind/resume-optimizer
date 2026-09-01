@@ -1,0 +1,23 @@
+name: Dry-run Workable (manual)
+
+# By hand only. Runs the Workable fetcher in --dry mode from GitHub's runner, which
+# has a different IP from the laptop (throttled by Workable on 2026-09-01). Judges
+# every job, writes nothing, prints a random sample for a hand check. No database.
+on:
+  workflow_dispatch:
+
+jobs:
+  dry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci || npm install
+      - name: Dry-run the Workable fetcher
+        working-directory: backend
+        run: node fetchWorkable.mjs --dry
