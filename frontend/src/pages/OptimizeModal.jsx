@@ -772,9 +772,6 @@ const CSS = `
   padding: 9px 20px; font-size: 13px; font-weight: 600; color: #0A0A0B; cursor: pointer; font-family: inherit; }
 .om-closed-btn:hover { background: #F7F7F8; }
 
-  padding: 8px 15px; border-radius: 9px; font-size: 12.5px; font-weight: 700; color: #6B7280; font-family: inherit; }
-  background: #E5E7EB; color: #6B7280; padding: 2px 6px; border-radius: 20px; margin-left: 3px; }
-
 /* Action bar: score plus every button, above the fold and never scrolled past. */
 
 .om-actionbar-sp { flex: 1; }
@@ -821,11 +818,6 @@ const CSS = `
 .om-ring-l { font-size: 12px; font-weight: 700; color: #0A0A0B; }
 .om-ring-d { font-size: 11.5px; color: #059669; font-weight: 700; margin-top: 1px; }
 .om-rail-lbl { font-size: 10px; font-weight: 800; color: #A1A1A6; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
-
-  border: 1.5px solid #ECE8E2; border-radius: 10px; padding: 9px 12px; font-family: inherit; transition: border-color .12s; }
-
-  font-size: 11.5px; color: #3A3A3C; font-family: inherit; transition: all .14s; }
-
 
 @media (max-width: 720px) {
   .om-split { flex-direction: column; }
