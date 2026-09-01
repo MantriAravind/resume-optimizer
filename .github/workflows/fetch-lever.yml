@@ -1,0 +1,54 @@
+name: Refresh Lever jobs
+
+# The Lever quarter of the board. Separate from the other three workflows for the
+# same reason they are separate from each other: every sweep is scoped by `ats`, so
+# this run only ever deletes `ats: 'lever'` rows. A failure here stops nothing else,
+# and a 26-minute Greenhouse run never blocks this one.
+#
+# WHAT THE DRY RUN SAID BEFORE THIS WAS SCHEDULED (2026-09-01)
+#   303 boards, ~18,000 postings seen, ~1,200 kept. 83% fall to the 30-day age gate —
+#   Lever boards keep old postings up indefinitely. The load is light: 303 requests
+#   at 6 concurrent takes about a minute.
+on:
+  schedule:
+    # Every 2 hours, offset 45 minutes so it does not land on the Greenhouse (:00)
+    # or Ashby (:30) runs. Best-effort scheduling means the minute drifts; the offset
+    # is a nudge, nothing depends on it. Two-hourly for the same reason Ashby is:
+    # it is a tenth of the Greenhouse load and can absorb the faster cycle.
+    - cron: '45 */2 * * *'
+  workflow_dispatch:
+
+# One Lever run at a time. The run ends by DELETING Lever jobs it did not see at the
+# source; two at once means one can delete rows the other just saved.
+# cancel-in-progress stays false — killing a run mid-delete is worse than waiting.
+concurrency:
+  group: refresh-lever
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # About a minute in practice. 20 fails fast if Lever starts hanging.
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        # Same fallback as the other workflows: `npm ci` needs a lockfile.
+        run: npm ci || npm install
+
+      - name: Fetch and sweep Lever jobs
+        working-directory: backend
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        # Filename is case-sensitive on Linux — lowercase f, matching the repo.
+        # Reads lever_boards.txt and lever_names.json from the same folder.
+        run: node fetchLever.mjs

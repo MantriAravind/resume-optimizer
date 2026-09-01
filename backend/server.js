@@ -2237,6 +2237,48 @@ app.get('/jobs/:id', async (req, res) => {
       }
     }
 
+    if (job.ats === 'lever' && job.companySlug) {
+      // Lever, like Ashby, publishes a whole board per request, so the board is
+      // fetched and the posting found inside it. Absence from a board that answered
+      // is the closed signal, same authority as an Ashby absence or a Greenhouse 404.
+      //
+      // The description arrives in pieces: an opening (HTML), a `lists` array of
+      // {text, content} where content is HTML, and a closing `additional` (HTML). The
+      // fetcher only ever stored 500 characters of the plain opening, which is why a
+      // Lever job's detail pane ended mid-sentence before this existed. All three
+      // pieces are assembled here as HTML so the frontend styles headings and lists
+      // the same way it does for the other sources.
+      try {
+        const boardUrl = `https://api.lever.co/v0/postings/${encodeURIComponent(job.companySlug)}?mode=json`
+        const lRes = await fetch(boardUrl, { signal: AbortSignal.timeout(8000) })
+
+        if (lRes.ok) {
+          const data = await lRes.json()
+          const rawId = String(id).replace(/^lever_/, '')
+          const posting = (Array.isArray(data) ? data : []).find(p => String(p.id) === rawId)
+
+          if (posting) {
+            const lists = (Array.isArray(posting.lists) ? posting.lists : [])
+              .map(l => `<h3>${escapeHtml(l?.text || '')}</h3>${l?.content || ''}`)
+              .join('')
+            const assembled = [posting.description || '', lists, posting.additional || '']
+              .filter(Boolean).join('')
+            fullDescription = assembled || posting.descriptionPlain || fullDescription
+            if (closed) {
+              closed = false
+              await Job.updateOne({ id }, { closed: false })
+            }
+          } else {
+            closed = true
+            if (!job.closed) await Job.updateOne({ id }, { closed: true })
+          }
+        }
+        // A non-OK response says nothing about this posting.
+      } catch {
+        // Network failure. Fall back to the stored description, leave closed as it was.
+      }
+    }
+
     if (job.ats === 'smartrecruiters' && job.companySlug) {
       // SmartRecruiters is the one source with a real per-posting endpoint — Greenhouse
       // needs the job id and Ashby makes you pull the whole board — so this is a single
@@ -2284,6 +2326,13 @@ app.get('/jobs/:id', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch job details. Please try again.' })
   }
 })
+
+// List headings from Lever ("Requirements", "What you'll do") are plain text going
+// into an HTML string; the four characters that would break or inject markup are
+// escaped and nothing else.
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
 
 // ── PARSE resume text
 function parseResume(text) {
