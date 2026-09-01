@@ -35,7 +35,7 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Resume text</strong> — when you upload a resume, we extract the text
-              and store that text. The uploaded file itself is not kept.
+              and store that text. The uploaded file is kept too, so a tailored resume can be returned in your own layout.
             </li>
             <li>
               <strong>Your activity in the app</strong> — jobs you track and resumes you

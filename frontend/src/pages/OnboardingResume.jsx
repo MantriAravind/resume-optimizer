@@ -323,12 +323,17 @@ export default function OnboardingResume() {
     </>
   )
 
+  // Says what is actually stored. An earlier version said "the file itself is not
+  // kept", which was true until the original file started being saved so the
+  // optimized resume can come back in the student's own layout. A privacy line that
+  // is out of date is a lie on the page every new student reads first.
   const privacy = (
     <div className="ob-priv">
       <Shield />
       <span>
-        We read the text and store that. The file itself is not kept, and your resume is
-        never sent to employers or third parties without you choosing to.
+        We keep the text and the file, so your tailored resume can come back in your own
+        layout. Your resume is never sent to employers or third parties without you
+        choosing to.
       </span>
     </div>
   )
