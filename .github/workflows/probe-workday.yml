@@ -1,0 +1,33 @@
+name: Probe Workday (manual)
+
+# MEASUREMENT ONLY, by hand only. Answers one question before any Workday fetcher
+# exists: what fraction of Workday postings would survive this board's gates?
+# Workday hosts the most jobs of any ATS and also the most citizenship-gated ones;
+# if the yield is a few percent, a fetcher is not worth its maintenance. No
+# database, nothing persists. Read the output in the job log.
+#
+# ~20 tenants × (up to 10 list pages + 5 detail requests) at one request per
+# second is roughly 10-15 minutes.
+on:
+  workflow_dispatch:
+    inputs:
+      tenants:
+        description: 'How many tenants to measure'
+        default: '20'
+        required: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci || npm install
+      - name: Measure Workday yield
+        working-directory: backend
+        run: node probeWorkday.mjs ${{ inputs.tenants }}
