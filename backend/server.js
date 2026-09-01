@@ -200,6 +200,39 @@ const userSchema = new mongoose.Schema({
   resumeText:     { type: String, default: '' },
   resumeFileName: { type: String, default: '' },
 
+  // The file the student actually uploaded, bytes and all. Until this existed the PDF
+  // or Word document lived in memory for one request, had its text pulled out, and was
+  // gone. Everything downstream — the optimizer, both download endpoints — worked from
+  // that text, so every optimized resume came back in our template, and a student who
+  // spent hours on their layout got it replaced. Keeping the file is what makes
+  // giving it back in their own format possible at all.
+  //
+  // Two slots, because upload and save are separate steps. The upload endpoint reads
+  // the file and returns the text for the student to check; nothing is saved until
+  // they approve it in /me/profile. So the upload parks the file in `pending`, and
+  // /me/profile promotes it to `resumeFile` only when the approved text came from that
+  // same file. The guarantee that buys: `resumeFile` always matches `resumeText`.
+  // A student who uploads, abandons, and later pastes text instead never ends up with
+  // last month's PDF sitting next to this month's words.
+  //
+  // Stored in the document rather than object storage on purpose. Free tier is 512MB,
+  // the jobs use ~36MB, a resume is 100-300KB: roughly 2,000 students before this is
+  // a question worth revisiting. Excluded from every read that does not need it.
+  resumeFile: {
+    data:       { type: Buffer },
+    name:       { type: String, default: '' },
+    mime:       { type: String, default: '' },
+    size:       { type: Number, default: 0 },
+    uploadedAt: { type: Date },
+  },
+  pendingResumeFile: {
+    data:       { type: Buffer },
+    name:       { type: String, default: '' },
+    mime:       { type: String, default: '' },
+    size:       { type: Number, default: 0 },
+    uploadedAt: { type: Date },
+  },
+
   // Read out of the resume by Haiku at upload time, not on every page load.
   // Every one of these may be empty — a resume states some and not others.
   //
@@ -531,11 +564,16 @@ app.get('/', (req, res) => {
 app.get('/me/resume', requireUser, async (req, res) => {
   try {
     const userId = req.userId
-    const user = await User.findOne({ clerkUserId: userId }).lean()
+    // The file buffers are excluded: this is called on every board load and a resume
+    // PDF is a few hundred KB. There is a separate endpoint for the file itself.
+    const user = await User.findOne({ clerkUserId: userId })
+      .select('-resumeFile.data -pendingResumeFile.data')
+      .lean()
     res.json({
       hasResume:      Boolean(user?.resumeText),
       resumeText:     user?.resumeText     || '',
       resumeFileName: user?.resumeFileName || '',
+      hasResumeFile:  Boolean(user?.resumeFile?.size),
       updatedAt:      user?.updatedAt      || null,
       // The board reads profile.field from here to decide which jobs to show, so
       // it must come back on the same call the resume gate already makes — a
@@ -1559,6 +1597,21 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file received.' })
 
     try {
+      // Park the file before reading it. If extraction fails the student may retry with
+      // a different file, and this is simply overwritten. It is promoted to resumeFile
+      // only when /me/profile receives approved text carrying this same file name.
+      await User.updateOne(
+        { clerkUserId: req.userId },
+        { $set: { pendingResumeFile: {
+          data:       req.file.buffer,
+          name:       req.file.originalname,
+          mime:       req.file.mimetype || '',
+          size:       req.file.size,
+          uploadedAt: new Date(),
+        } } },
+        { upsert: true },
+      )
+
       const { text, pages, method } = await extractText(req.file.buffer, req.file.originalname)
       const assessment = assessExtraction(text)
 
@@ -1598,6 +1651,28 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
       res.status(500).json({ error: 'Could not read that file. Please try another, or paste the text instead.' })
     }
   })
+})
+
+// ── ME / RESUME FILE — the original upload, bytes intact
+// Separate from /me/resume so the board's every-load call stays small. This is only
+// hit when something needs the actual document: a "download my original" button, or
+// the formatting path that rebuilds the optimized resume inside the student's own file.
+app.get('/me/resume-file', requireUser, async (req, res) => {
+  try {
+    const user = await User.findOne({ clerkUserId: req.userId })
+      .select('resumeFile')
+      .lean()
+    const f = user?.resumeFile
+    if (!f?.data) return res.status(404).json({ error: 'No original file on record.' })
+    const buf = Buffer.isBuffer(f.data) ? f.data : Buffer.from(f.data.buffer || f.data)
+    res.setHeader('Content-Type', f.mime || 'application/octet-stream')
+    res.setHeader('Content-Length', buf.length)
+    res.setHeader('Content-Disposition', `attachment; filename="${(f.name || 'resume').replace(/"/g, '')}"`)
+    res.send(buf)
+  } catch (error) {
+    console.error('Get resume file error:', error)
+    res.status(500).json({ error: 'Failed to load your file. Please try again.' })
+  }
 })
 
 // ── ANALYSE PASTED TEXT ──────────────────────────────────────
@@ -1693,7 +1768,31 @@ app.post('/me/profile', requireUser, async (req, res) => {
       { clerkUserId: req.userId },
       update,
       { upsert: true, new: true, setDefaultsOnInsert: true },
-    ).lean()
+    ).select('-resumeFile.data -pendingResumeFile.data').lean()
+
+    // Promote the parked file if the text being saved came from it. The client sends
+    // resumeFileName from the upload response, so a match means "this text is what we
+    // extracted from that file". No match — they pasted text, or uploaded twice and
+    // approved the first — and the stored file would not correspond to the stored
+    // text, so it is cleared rather than kept wrong. A file we cannot trust to match
+    // the words is worse than no file: the formatting path would rebuild their
+    // resume from the wrong layout.
+    const fileName = str(resumeFileName)
+    const pending = await User.findOne({ clerkUserId: req.userId })
+      .select('pendingResumeFile')
+      .lean()
+    const parked = pending?.pendingResumeFile
+    if (fileName && parked?.data && parked.name === fileName) {
+      await User.updateOne(
+        { clerkUserId: req.userId },
+        { $set: { resumeFile: parked }, $unset: { pendingResumeFile: 1 } },
+      )
+    } else {
+      await User.updateOne(
+        { clerkUserId: req.userId },
+        { $unset: { resumeFile: 1, pendingResumeFile: 1 } },
+      )
+    }
 
     // Drives the board banner. These are things a resume DOES normally state, so an
     // empty one means extraction went wrong — a scrambled two-column PDF, say — not
