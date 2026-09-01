@@ -187,6 +187,9 @@ const LICENSED = [
   /\b(teachers?|substitute teachers?|special education teachers?|classroom teachers?|educators?)\b/,
   // Trades and driving where a state licence or CDL applies
   /\b(electricians?|journeymen|journeyman|master plumbers?|plumbers?|cdl|commercial drivers?|air traffic controllers?)\b/,
+  // A CDL class named without the letters "CDL": "Class A Driver", "Class B
+  // Driver - Medical Waste". The class letter IS the licence.
+  /\bclass [abc] (cdl|drivers?|licen[cs]e)\b/,
   /\bhvac\b.*\b(technicians?|installers?|mechanics?|repair|service tech)\b|\b(technicians?|installers?|mechanics?)\b.*\bhvac\b/,
   // Regulated financial and property roles requiring a state licence
   /\b(insurance producers?|insurance agents?|real estate agents?|realtors?|mortgage loan officers?|licensed appraisers?)\b/,
@@ -309,6 +312,21 @@ const HOURLY = [
   // Route/gig driving. Bare "driver" is unsafe (Device Driver Engineer), so
   // only compounds: the CDL case is already handled by requiresLicense().
   /\b(delivery driver|route driver|van driver|shuttle driver|bus driver|courier\b|valet)\b/,
+  // Truck and CDL-class driving. Added 2026-09-01 after a random Lever sample put
+  // three box-truck drivers in twenty passed jobs, and a check against the live
+  // board (hourlyPatternCheck.mjs) found 119 more from every source. "Non CDL Box
+  // Truck Driver" is still a truck driver. "Class A Driver" is a CDL class named
+  // without the letters CDL.
+  /\b((box |semi |dump |tow |straight )?truck drivers?|class [abc] drivers?|cdl drivers?)\b/,
+  // Warehouse and manufacturing floor. Each is a compound that names floor work
+  // wherever it appears; the bare words are NOT matched ("Warehouse Automation
+  // Engineer" is a robotics job, "Production Engineer" is an engineer). Checked
+  // against 58,413 live titles before going in: forklift 40, machine operator 109,
+  // production floor ~150, warehouse floor 133, assembler 49, material handler ~30.
+  // Every title read was hourly. "Production Technician" was deliberately left
+  // OUT: in biotech that title sometimes wants a life-sciences degree, and a QC
+  // lab role is real OPT work for a biology graduate.
+  /\b(forklift( operators?| drivers?)?|machine operators?|production (operators?|associates?|workers?)|warehouse (associates?|workers?|team members?)|material handlers?|line workers?|assembly line|assemblers?)\b/,
   // Gym, spa, and wellness floor roles — the Equinox pattern. A brand whose whole
   // board is spa desks, style advisors, and membership sales, none of it degree
   // work. Compounds only, and the traps here are the worst in the file:
