@@ -2279,6 +2279,41 @@ app.get('/jobs/:id', async (req, res) => {
       }
     }
 
+    if (job.ats === 'workable' && job.companySlug) {
+      // Workable's documented public endpoint returns the whole account with every
+      // job's description inline, so the account is fetched and the posting found by
+      // shortcode. Absence from an account that answered is the closed signal.
+      // Identifies itself with a User-Agent, same as the fetcher: Workable throttles
+      // by IP and a named, contactable crawler is the polite shape.
+      try {
+        const url = `https://www.workable.com/api/accounts/${encodeURIComponent(job.companySlug)}?details=true`
+        const wRes = await fetch(url, {
+          headers: { accept: 'application/json', 'user-agent': 'Optyply/1.0 (job board for international students; support@optyply.com)' },
+          signal: AbortSignal.timeout(8000),
+        })
+
+        if (wRes.ok) {
+          const data = await wRes.json()
+          const rawId = String(id).replace(/^workable_/, '')
+          const posting = (Array.isArray(data?.jobs) ? data.jobs : []).find(p => String(p.shortcode) === rawId)
+
+          if (posting) {
+            fullDescription = posting.description || fullDescription
+            if (closed) {
+              closed = false
+              await Job.updateOne({ id }, { closed: false })
+            }
+          } else {
+            closed = true
+            if (!job.closed) await Job.updateOne({ id }, { closed: true })
+          }
+        }
+        // A 429 or any other non-OK says nothing about this posting.
+      } catch {
+        // Network failure. Fall back to the stored description, leave closed as it was.
+      }
+    }
+
     if (job.ats === 'smartrecruiters' && job.companySlug) {
       // SmartRecruiters is the one source with a real per-posting endpoint — Greenhouse
       // needs the job id and Ashby makes you pull the whole board — so this is a single

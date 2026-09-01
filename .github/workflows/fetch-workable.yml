@@ -1,0 +1,51 @@
+name: Refresh Workable jobs
+
+# The Workable slice of the board. Separate workflow, same reasons as the others:
+# the sweep is scoped by `ats`, so this run only ever deletes `ats: 'workable'` rows.
+#
+# WHAT THE DRY RUN SAID BEFORE THIS WAS SCHEDULED (run on GitHub, 2026-09-01)
+#   131 accounts, 4,791 postings seen, 597 kept. 58% fall to the 30-day age gate.
+#   131 requests, one per second, about two and a half minutes.
+#
+# Workable throttles by IP and the ban lasts over an hour: the laptop was cut off
+# after ~500 requests in half an hour during development. The fetcher is strictly
+# serial with a one-second pace and stops itself on a second 429. GitHub's runner
+# gets a fresh IP each run, which is the other reason this lives here and not on
+# a laptop.
+on:
+  schedule:
+    # Every 4 hours, offset 15 minutes from the Greenhouse run at :00. Four-hourly
+    # rather than two: Workable has shown it throttles, and there is no reason to
+    # find out where its daily limit sits.
+    - cron: '15 */4 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: refresh-workable
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # ~3 minutes normally. A 429 adds a 60-second pause; 15 leaves room for two.
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci || npm install
+
+      - name: Fetch and sweep Workable jobs
+        working-directory: backend
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        # Lowercase f, matching the repo. Reads workable_boards.txt from the same folder.
+        run: node fetchWorkable.mjs
