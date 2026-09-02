@@ -11,3 +11,14 @@
 # staffing agency; ~600 of 1,354 passed jobs in the 10-tenant dry run. Hourly
 # store-floor work throughout.
 2020companies
+
+# 2026-09-03: full-board dry run, 420 listings seen, ZERO passed. Every recent US
+# posting's description failed the citizenship/export-control gate. The probe's
+# 5/5-disqualified sample understated nothing.
+3m
+
+# 2026-09-03: 992 listings seen, 4 passed, ~800 detail requests spent finding
+# them (~13 min/run). Hospital system: nearly everything is PRN/per-diem, which
+# the round-2 gate correctly rejects — at a price not worth 4 jobs. Reconsider
+# if a rejected-jobs cache ever makes re-judging free.
+aah
