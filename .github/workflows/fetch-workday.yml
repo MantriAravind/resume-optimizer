@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     # 20 tenants ≈ 15-25 min at one request per second with details. 'all' will
     # need this raised — deliberately, at step 7, with numbers from the stages.
-    timeout-minutes: 60
+    timeout-minutes: 180
 
     steps:
       - name: Check out the repo
