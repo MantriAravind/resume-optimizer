@@ -1,0 +1,88 @@
+name: Refresh Workday jobs
+
+# MANUAL ONLY for now — no schedule. The rollout plan (Part V, 2026-09-01) gates a
+# schedule on a clean dry run and a watched 20-tenant real run. The schedule gets
+# added here at step 6, not before.
+#
+# Inputs:
+#   tenants  how many tenants from workday_boards.txt (default 20 — the rollout
+#            stage; raise in stages per the plan: 20 → 100 → 400 → all)
+#   dry      'true' judges everything and writes nothing (step 3's dry run)
+#
+# WHY THIS SOURCE IS TREATED GENTLY
+#   The endpoint is undocumented and tenants throttle. The fetcher is strictly
+#   serial (one request per second), stops itself on a second consecutive 429,
+#   and only sweeps tenants whose paging completed. The measurement behind the
+#   whole effort: ~33% of Workday listings survive this board's gates
+#   (probeWorkday.mjs, 2026-09-01).
+on:
+  workflow_dispatch:
+    inputs:
+      tenants:
+        description: 'Tenants to fetch (number or "all")'
+        default: '20'
+        required: false
+      dry:
+        description: 'Dry run (judge, write nothing)'
+        type: choice
+        options: ['false', 'true']
+        default: 'false'
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: refresh-workday
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    # 20 tenants ≈ 15-25 min at one request per second with details. 'all' will
+    # need this raised — deliberately, at step 7, with numbers from the stages.
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci || npm install
+
+      - name: Fetch Workday jobs
+        working-directory: backend
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        run: |
+          if [ "${{ inputs.dry }}" = "true" ]; then
+            node fetchWorkday.mjs ${{ inputs.tenants }} --dry
+          else
+            node fetchWorkday.mjs ${{ inputs.tenants }}
+          fi
+
+      # ── FAILURE ALARM ─────────────────────────────────────────────────────
+      - name: Open an issue on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="🔴 ${{ github.workflow }} failed"
+          BODY="Run: $RUN_URL
+          Failed at: $(date -u '+%Y-%m-%d %H:%M UTC')
+
+          The board stops getting this source's jobs until this is fixed. The sweep guard prevents deletions, so nothing is lost - but nothing is fresh either."
+          EXISTING=$(gh issue list -R ${{ github.repository }} --state open --search "\"$TITLE\" in:title" --json number --jq '.[0].number' || true)
+          if [ -n "$EXISTING" ]; then
+            gh issue comment -R ${{ github.repository }} "$EXISTING" --body "Failed again: $RUN_URL"
+          else
+            gh issue create -R ${{ github.repository }} --title "$TITLE" --body "$BODY"
+          fi
