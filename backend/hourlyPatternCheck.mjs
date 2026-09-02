@@ -26,6 +26,13 @@ import { isHourlyJob, requiresLicense } from './jobCategory.mjs'
 const J = mongoose.model('Job', new mongoose.Schema({}, { strict: false, collection: 'jobs' }))
 
 const PROPOSED_HOURLY = [
+  // Round 2 candidates, 2026-09-03 — from reading all 394 Abbott survivors.
+  // A Fortune-100 manufacturer's plants walked straight through round 1.
+  ['operator with roman numeral',   /\boperators? (i|ii|iii)\b/],
+  ['plant-floor operator variants', /\b(packaging( equipment)?|processing|manufacturing|production) operators?\b/],
+  ['warehouse floor variants',      /\bwarehouse (general )?(utility|specialist)\b|\bclerk warehousing\b|\bwarehouse utility\b/],
+  ['production cleaning',           /\bproduction cleaning\b|\bcleaning specialists?\b/],
+
   ['truck / box-truck / class-letter driver',  /\b((box |semi |dump |tow )?truck driver|class [abc] driver|cdl driver)\b/],
   ['forklift',                                 /\bforklift( operator| driver)?\b/],
   ['machine operator',                         /\bmachine operators?\b/],
@@ -33,6 +40,13 @@ const PROPOSED_HOURLY = [
   ['warehouse floor',                          /\bwarehouse (associates?|workers?|team members?)\b/],
   ['line / assembly',                          /\b(line workers?|assembly line|assemblers?)\b/],
   ['shift-time in title',                      /\b(st|nd|rd|th|night|overnight|weekend|swing|graveyard|day|evening|morning) shift\b/],
+]
+
+// PRN is per-diem nursing — part-time by definition. It belongs in the
+// CONTRACT gate, not hourly; measured here with the same discipline. Abbott
+// alone had a dozen "Registered Nurse - Patient Educator (PRN)" postings pass.
+const PROPOSED_CONTRACT = [
+  ['PRN in title', /\bprn\b/],
 ]
 
 const PROPOSED_LICENSE = [
@@ -71,6 +85,9 @@ function report(label, re, kind) {
 
 console.log('═══ PROPOSED isHourlyJob() ADDITIONS ═══\n')
 for (const [label, re] of PROPOSED_HOURLY) report(label, re, 'hourly')
+
+console.log('═══ PROPOSED isContractOrPartTime() ADDITIONS (checked against titles only) ═══\n')
+for (const [label, re] of PROPOSED_CONTRACT) report(label, re, 'hourly')
 
 console.log('═══ PROPOSED requiresLicense() ADDITIONS ═══\n')
 for (const [label, re] of PROPOSED_LICENSE) report(label, re, 'license')

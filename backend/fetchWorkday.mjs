@@ -68,6 +68,7 @@ import {
 import { categorizeJob, requiresLicense } from './jobCategory.mjs'
 
 const BOARDS_PATH  = 'workday_boards.txt'
+const SKIP_PATH    = 'workday_skip.txt'   // tenants excluded with reasons — see that file
 const NAMES_PATH   = 'workday_names.json'      // optional hand-curated overrides
 const MAX_AGE_DAYS = 30
 const MAX_SWEEP_SHARE = 0.25
@@ -83,6 +84,11 @@ const UA = 'Optyply/1.0 (job board for international students; support@optyply.c
 
 const countArg = process.argv.find(a => /^(\d+|all)$/.test(a))
 const TENANTS = countArg === 'all' ? Infinity : Number(countArg || 20)
+// --tenant <name>: run exactly one company and, in dry mode, print EVERY title
+// that passed — the full-board interrogation for a suspect tenant, versus the
+// sampled view of a normal dry run. Usage: node fetchWorkday.mjs --tenant abbott --dry
+const tIdx = process.argv.indexOf('--tenant')
+const TENANT_FILTER = tIdx > -1 ? String(process.argv[tIdx + 1] || '').toLowerCase() : null
 
 const jobSchema = new mongoose.Schema({
   id: { type: String, unique: true }, title: String, company: String, companySlug: String,
@@ -217,7 +223,21 @@ async function main() {
   }
   const urls = fs.readFileSync(BOARDS_PATH, 'utf-8').split('\n')
     .map(s => s.trim()).filter(s => s && !s.startsWith('#'))
-  const cfgs = urls.map(parseCareerUrl).filter(Boolean).slice(0, TENANTS === Infinity ? undefined : TENANTS)
+  // The skip list removes whole tenants BEFORE the count is applied, so "10
+  // tenants" always means ten fetched tenants, not ten minus the skipped.
+  const skip = new Set(fs.existsSync(SKIP_PATH)
+    ? fs.readFileSync(SKIP_PATH, 'utf-8').split('\n').map(s => s.trim()).filter(s => s && !s.startsWith('#'))
+    : [])
+  let cfgs = urls.map(parseCareerUrl).filter(Boolean)
+  if (TENANT_FILTER) {
+    // A targeted run ignores the skip list on purpose: interrogating a skipped
+    // tenant to re-check the eviction is exactly what this flag is for.
+    cfgs = cfgs.filter(c => c.tenant.toLowerCase() === TENANT_FILTER)
+    if (!cfgs.length) { console.error(`❌ Tenant "${TENANT_FILTER}" not in ${BOARDS_PATH}`); process.exit(1) }
+  } else {
+    cfgs = cfgs.filter(c => !skip.has(c.tenant)).slice(0, TENANTS === Infinity ? undefined : TENANTS)
+  }
+  if (skip.size) console.log(`   Skipping ${skip.size} tenant(s) from ${SKIP_PATH}`)
 
   const NAMES = fs.existsSync(NAMES_PATH) ? JSON.parse(fs.readFileSync(NAMES_PATH, 'utf-8')) : {}
   const tidy = t => (NAMES[t] || t.replace(/[-_.]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim())
@@ -245,6 +265,8 @@ async function main() {
   const deadBy = {}
   const sweptTenants = []       // tenants whose paging completed — the only ones swept
   const sample = []
+  const perTenant = []          // { tenant, seen, saved } — the next 2020companies shows up here
+  const allPassed = []          // every passed title, printed only on a --tenant run
 
   for (let i = 0; i < cfgs.length; i++) {
     if (banned) { deadTenants += cfgs.length - i; deadBy['not attempted (throttled)'] = cfgs.length - i; break }
@@ -253,17 +275,27 @@ async function main() {
     if (!r.ok) { deadTenants++; deadBy[r.status] = (deadBy[r.status] || 0) + 1; continue }
     sweptTenants.push(cfg.tenant)
     const company = tidy(cfg.tenant)
+    const tenantRow = { tenant: cfg.tenant, seen: 0, saved: 0 }
+    perTenant.push(tenantRow)
 
     for (const job of r.jobs) {
       if (banned) break
       seen++
+      tenantRow.seen++
 
       const age = daysAgo(job.postedOn)
       if (age === null || age > MAX_AGE_DAYS) { tooOld++; continue }
       const posted = new Date(runStart.getTime() - age * 24 * 60 * 60 * 1000)
 
-      const location = String(job.locationsText || '').trim()
-      if (!location || !isUSLocation(location)) { nonUS++; continue }
+      // Workday hides multi-location postings behind the literal string
+      // "2 Locations" — no city, no country. The 10-tenant dry run let Ostrava
+      // (Czechia) and Baden (Switzerland) through exactly this way. When the
+      // list masks the location, the decision is DEFERRED to the detail
+      // response, which names the real places. Costs a detail request on
+      // foreign masked jobs; correctness over thrift.
+      let location = String(job.locationsText || '').trim()
+      const maskedLocation = /^\d+\s+locations$/i.test(location)
+      if (!maskedLocation && (!location || !isUSLocation(location))) { nonUS++; continue }
 
       const id = jobIdFor(cfg.tenant, job.externalPath)
       if (!DRY && known.has(id)) {
@@ -275,6 +307,13 @@ async function main() {
       detailRequests++
       const info = await detail(cfg, job.externalPath)
       if (!info) { noDetail++; continue }
+
+      if (maskedLocation) {
+        const real = [info.location, ...(Array.isArray(info.additionalLocations) ? info.additionalLocations : [])]
+          .filter(Boolean).map(String).join(', ').trim()
+        if (!real || !isUSLocation(real)) { nonUS++; continue }
+        location = real
+      }
 
       const title = String(info.title || job.title || '')
       const plainText = stripHtml(String(info.jobDescription || ''))
@@ -313,11 +352,13 @@ async function main() {
 
       if (DRY) {
         saved++
+        tenantRow.saved++
+        if (TENANT_FILTER) allPassed.push(doc)
         if (sample.length < SAMPLE_SIZE) sample.push(doc)
         else { const j = Math.floor(Math.random() * saved); if (j < SAMPLE_SIZE) sample[j] = doc }
         continue
       }
-      try { await Job.updateOne({ id: doc.id }, doc, { upsert: true }); saved++ }
+      try { await Job.updateOne({ id: doc.id }, doc, { upsert: true }); saved++; tenantRow.saved++ }
       catch { skipped++ }
     }
     process.stdout.write(`\r   tenants ${i + 1}/${cfgs.length} · saved ${saved} · refreshed ${refreshed} · details ${detailRequests}   `)
@@ -336,7 +377,17 @@ async function main() {
   if (skipped) console.log(`   Write errors:      ${skipped}`)
   console.log('─'.repeat(58))
 
-  if (DRY && sample.length) {
+  if (perTenant.length > 1) {
+    console.log('\n   Per tenant (a pass count towering over the rest is the next 2020companies):')
+    for (const t of perTenant.sort((a, b) => b.saved - a.saved)) {
+      console.log(`   ${t.tenant.padEnd(20)} seen ${String(t.seen).padStart(5)} · passed ${String(t.saved).padStart(5)}`)
+    }
+  }
+
+  if (DRY && TENANT_FILTER && allPassed.length) {
+    console.log(`\n   EVERY title that passed for ${TENANT_FILTER} (${allPassed.length}):\n`)
+    for (const d of allPassed) console.log(`   ${d.title}   · ${d.location}`)
+  } else if (DRY && sample.length) {
     console.log(`\n   Random sample of ${sample.length} of the ${saved} that passed — check these by hand:\n`)
     for (const d of sample) {
       console.log(`   ${d.title}`)

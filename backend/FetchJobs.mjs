@@ -356,6 +356,13 @@ function isContractOrPartTime(plainText = '', title = '') {
 
   if (/\([^)]*\bcontracts?\b[^)]*\)/i.test(title)) return true
 
+  // PRN in the TITLE is per-diem by definition — "as needed" clinical shifts, no
+  // fixed hours, part-time in every way that matters here. Measured 2026-09-03
+  // against 60,020 live jobs: 378 caught, all per-diem clinical (nurses, PTs,
+  // techs, chaplains), zero false positives in 247 distinct titles. Title only:
+  // a description may say "no PRN positions" or discuss PRN staffing in passing.
+  if (/\bprn\b/i.test(title)) return true
+
   const ptMatch = t.match(/\bpart[\s-]?time\b/)
   if (ptMatch) {
     const idx = ptMatch.index

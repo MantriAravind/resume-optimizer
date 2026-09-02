@@ -191,7 +191,10 @@ async function main() {
       // gate, never instead of it: the field is what the employer ticked, the text is
       // what they wrote, and both have been wrong in different directions.
       const type = String(job.employment_type || '').toLowerCase()
-      if (/part.?time|contract|temporary|intern/.test(type) || isContractOrPartTime(plainText, title)) { contractOrPartTime++; continue }
+      // "intern" was in this regex once — my assumption, never a product decision.
+      // Internships are in scope: CPT is internships, and the board's experience
+      // filter lists Internship first. The shared text gate stays the authority.
+      if (/part.?time|contract|temporary/.test(type) || isContractOrPartTime(plainText, title)) { contractOrPartTime++; continue }
 
       const salary = extractSalary(plainText)
       const years  = extractYearsExperience(plainText)

@@ -1,0 +1,13 @@
+# workday_skip.txt — tenants the fetcher must not fetch, one per line, with the
+# reason on record. A tenant goes here when its BOARD is the problem — when what
+# it posts is categorically not work an F1/OPT student can take — so per-job
+# filtering would just burn ~600 detail requests per run rejecting the same jobs.
+#
+# Evidence rule: a tenant is added only after a dry-run sample shows it, never on
+# reputation. Removing a line puts the tenant back in the next run.
+
+# 2026-09-03: 9 of 20 sample jobs were this tenant — Retail Sales Associate,
+# Brand Ambassador, Retail Display Installer x4, device sales reps. Retail
+# staffing agency; ~600 of 1,354 passed jobs in the 10-tenant dry run. Hourly
+# store-floor work throughout.
+2020companies

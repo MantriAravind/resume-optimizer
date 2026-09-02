@@ -327,6 +327,30 @@ const HOURLY = [
   // OUT: in biotech that title sometimes wants a life-sciences degree, and a QC
   // lab role is real OPT work for a biology graduate.
   /\b(forklift( operators?| drivers?)?|machine operators?|production (operators?|associates?|workers?)|warehouse (associates?|workers?|team members?)|material handlers?|line workers?|assembly line|assemblers?)\b/,
+  // Round 2, 2026-09-03. From reading all 394 survivors of a full-board Abbott
+  // dry run, then measuring each candidate against 60,020 live jobs.
+  //   Operator with a roman numeral ("Operator II", "Distillation Operator I"):
+  //   27 caught, 26 floor. The lookbehind spares "Clinical Lab Operator I" at
+  //   Natera — a lab role a bio graduate can take on OPT.
+  /\b(?<!lab )(?<!laboratory )(?<!clinical lab )operators? (i|ii|iii)\b/,
+  //   Plant-floor operator compounds Abbott exposed: packaging/processing/
+  //   manufacturing operators (20 caught, all floor — AbbVie fill lines, sterile
+  //   compounding, dairy nights). "machine operator" above stays for the rest.
+  /\b(packaging( equipment)?|processing|manufacturing|production) operators?\b/,
+  //   Warehouse floor variants: Specialist/Utility/Clerk Warehousing (6 caught,
+  //   all floor). "warehouse quality ... senior specialist" does not match: the
+  //   words must be adjacent.
+  /\bwarehouse (general )?(utility|specialists?)\b|\bclerk warehousing\b/,
+  //   Production cleaning crews. Deliberately NOT "cleaning specialist" alone —
+  //   that meets a "Data Cleaning Specialist" eventually.
+  /\bproduction cleaning\b/,
+  // MEASURED AND REJECTED, twice now, so nobody re-proposes them:
+  //   "production technician" — catches City of Philadelphia's Camera & Editing
+  //   production tech (media), church AV techs, and a co-op (internships are in
+  //   scope per 2026-09-03 decision).
+  //   shift-time in the title — catches Nuro Mission Ops Coordinators, a
+  //   full-time ER nurse, hybrid Presentation Designers. 678 titles, real jobs
+  //   throughout the list.
   // Gym, spa, and wellness floor roles — the Equinox pattern. A brand whose whole
   // board is spa desks, style advisors, and membership sales, none of it degree
   // work. Compounds only, and the traps here are the worst in the file:
