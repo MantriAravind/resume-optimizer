@@ -1,51 +1,68 @@
+// logoCoverage.mjs — how much of the LIVE board shows a real logo? READ-ONLY.
+//
+// Coverage counted two ways, because they answer different questions:
+//   by company  — how big is the enrichment backlog
+//   by job      — how much of what a student actually scrolls past shows letters.
+// A company with 50 live jobs and no logo hurts 50 cards; a one-job company
+// hurts one. The fix list below is therefore sorted by live jobs, so review
+// effort goes where the eyeballs are.
+//
+// Run from backend against production:
+//   node logoCoverage.mjs
+
 import 'dotenv/config'
 import mongoose from 'mongoose'
 
-// Measures logo coverage the same way server.js builds it: a card gets a logo
-// only if `companies` has a logoStatus:'provider' row whose `${ats}|${slug}`
-// matches the job. Everything else renders initials. Output: coverage %, and
-// the missing companies ranked by open-job count — the fix worklist.
+const Job = mongoose.model('Job', new mongoose.Schema({}, { strict: false, collection: 'jobs' }))
+const Company = mongoose.model('Company', new mongoose.Schema({}, { strict: false, collection: 'companies' }))
 
 await mongoose.connect(process.env.MONGODB_URI)
-const db = mongoose.connection
-const companies = await db.collection('companies')
-  .find({ logoStatus: 'provider' })
-  .project({ ats: 1, slug: 1, 'branding.logoUrl': 1 }).toArray()
-const brandKeys = new Set(companies.map(c => `${c.ats}|${c.slug}`))
-console.log(`companies collection: ${companies.length} provider records`)
+const db = mongoose.connection.db.databaseName
+console.log(`Database: ${db}\n`)
 
-const jobs = await db.collection('jobs').aggregate([
+// Every live company with its job count.
+const live = await Job.aggregate([
   { $match: { closed: { $ne: true } } },
-  { $group: { _id: { ats: '$ats', slug: '$companySlug', company: '$company' }, n: { $sum: 1 } } },
-]).toArray()
+  { $group: { _id: { ats: '$ats', slug: '$companySlug' }, name: { $first: '$company' }, jobs: { $sum: 1 } } },
+])
 
-let coveredJobs = 0, totalJobs = 0
-const missing = []
-for (const r of jobs) {
-  totalJobs += r.n
-  if (brandKeys.has(`${r._id.ats}|${r._id.slug}`)) coveredJobs += r.n
-  else missing.push(r)
+// Which of them have a trusted logo. Only status counts: 'provider' is shown,
+// everything else renders letters (that is attachBrand's rule in server.js).
+const companies = await Company.find({}, { ats: 1, slug: 1, logoStatus: 1, 'branding.logoUrl': 1 }).lean()
+const status = new Map()
+for (const c of companies) status.set(`${c.ats}|${c.slug}`, c.logoStatus === 'provider' && c.branding?.logoUrl ? 'logo' : (c.logoStatus || 'unknown'))
+
+let totalJobs = 0, logoJobs = 0
+const byStatus = {}        // status -> { companies, jobs }
+const noLogo = []          // companies without a shown logo, for the fix list
+
+for (const c of live) {
+  const key = `${c._id.ats}|${c._id.slug}`
+  const s = status.get(key) || 'no record'
+  totalJobs += c.jobs
+  if (s === 'logo') logoJobs += c.jobs
+  else noLogo.push({ ...c, status: s })
+  byStatus[s] ||= { companies: 0, jobs: 0 }
+  byStatus[s].companies++
+  byStatus[s].jobs += c.jobs
 }
-missing.sort((a, b) => b.n - a.n)
 
-console.log(`\nOpen jobs: ${totalJobs}`)
-console.log(`With logo record: ${coveredJobs} (${(100 * coveredJobs / totalJobs).toFixed(1)}%)`)
-console.log(`Without: ${totalJobs - coveredJobs} across ${missing.length} companies`)
-
-console.log(`\n── Top 40 missing companies by job count ──`)
-for (const r of missing.slice(0, 40)) {
-  console.log(`  ${String(r.n).padStart(4)} × [${r._id.ats}] ${r._id.company}  (slug: ${r._id.slug})`)
+const pct = (a, b) => (100 * a / b).toFixed(1) + '%'
+console.log(`Live jobs: ${totalJobs} · live companies: ${live.length}\n`)
+console.log('Status          Companies      Jobs    Share of jobs')
+console.log('─'.repeat(56))
+for (const [s, v] of Object.entries(byStatus).sort((a, b) => b[1].jobs - a[1].jobs)) {
+  console.log(`${s.padEnd(15)} ${String(v.companies).padStart(9)} ${String(v.jobs).padStart(9)}    ${pct(v.jobs, totalJobs)}`)
 }
+console.log('─'.repeat(56))
+console.log(`WITH LOGO:      ${pct(logoJobs, totalJobs)} of jobs · WITHOUT: ${pct(totalJobs - logoJobs, totalJobs)}\n`)
 
-// Diagnose the known initials cases: what does the registry hold for them?
-console.log(`\n── Known problem slugs: what the companies collection has ──`)
-const probes = [/otter/i, /aircall/i, /exadel/i, /horizon3/i]
-for (const p of probes) {
-  const rows = await db.collection('companies')
-    .find({ $or: [{ slug: p }, { name: p }] })
-    .project({ ats: 1, slug: 1, name: 1, logoStatus: 1, 'branding.logoUrl': 1 }).toArray()
-  console.log(`  ${p}: ${rows.length ? '' : 'NO ROWS'}`)
-  for (const r of rows) console.log(`    [${r.ats}] slug="${r.slug}" status=${r.logoStatus} logo=${r.branding?.logoUrl ? 'yes' : 'NO'}`)
+noLogo.sort((a, b) => b.jobs - a.jobs)
+console.log('Top 40 companies to fix, by live jobs (this is the review order):')
+for (const c of noLogo.slice(0, 40)) {
+  console.log(`   ${String(c.jobs).padStart(5)}  [${c.status}]  ${c.name}  (${c._id.ats}/${c._id.slug})`)
 }
+const rest = noLogo.slice(40).reduce((a, c) => a + c.jobs, 0)
+if (noLogo.length > 40) console.log(`   ... and ${noLogo.length - 40} more companies covering ${rest} jobs`)
 
 await mongoose.disconnect()
