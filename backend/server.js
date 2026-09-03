@@ -2237,6 +2237,54 @@ app.get('/jobs/:id', async (req, res) => {
       }
     }
 
+    if (job.ats === 'workday' && job.companySlug) {
+      // Workday's detail endpoint is per job, derived from the applyUrl the
+      // fetcher stored — origin, optional locale, site, then the externalPath,
+      // which already begins with "/job/". The CXS detail URL is the same path
+      // under /wday/cxs/{tenant}/{site}. Some tenants instead want an extra
+      // /job prefix (the shape the integration guide wrongly said was
+      // universal), so on a 404 the other shape is tried once. A non-OK on both
+      // says nothing about the posting; a 200 whose jobPostingInfo is missing
+      // for THIS path is the closed signal Workday gives.
+      try {
+        const u = new URL(job.applyUrl)
+        const parts = u.pathname.split('/').filter(Boolean)
+        const hasLocale = /^[a-z]{2}-[A-Z]{2}$/.test(parts[0] || '')
+        const site = hasLocale ? parts[1] : parts[0]
+        const externalPath = '/' + parts.slice(hasLocale ? 2 : 1).join('/')
+        const tenant = job.companySlug
+
+        let info = null, sawOk = false
+        for (const p of [externalPath, `/job${externalPath}`]) {
+          const wRes = await fetch(`${u.origin}/wday/cxs/${tenant}/${site}${p}`, {
+            headers: {
+              accept: 'application/json',
+              'user-agent': 'Optyply/1.0 (job board for international students; support@optyply.com)',
+              referer: job.applyUrl,
+            },
+            signal: AbortSignal.timeout(8000),
+          })
+          if (!wRes.ok) continue
+          sawOk = true
+          const d = await wRes.json().catch(() => null)
+          if (d?.jobPostingInfo) { info = d.jobPostingInfo; break }
+        }
+
+        if (info) {
+          fullDescription = info.jobDescription || fullDescription
+          if (closed) {
+            closed = false
+            await Job.updateOne({ id }, { closed: false })
+          }
+        } else if (sawOk) {
+          closed = true
+          if (!job.closed) await Job.updateOne({ id }, { closed: true })
+        }
+      } catch {
+        // Network failure. Stored description, closed unchanged.
+      }
+    }
+
     if (job.ats === 'lever' && job.companySlug) {
       // Lever, like Ashby, publishes a whole board per request, so the board is
       // fetched and the posting found inside it. Absence from a board that answered
