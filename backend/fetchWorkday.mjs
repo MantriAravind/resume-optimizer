@@ -275,6 +275,7 @@ async function main() {
   let tooOld = 0, nonUS = 0, noDetail = 0, disqualified = 0, contractOrPartTime = 0
   let detailRequests = 0, deadTenants = 0
   const deadBy = {}
+  const deadNames = []          // which tenants failed, with status — counts alone made 4 anonymous failures in the 21-100 dry run
   const sweptTenants = []       // tenants whose paging completed — the only ones swept
   const sample = []
   const perTenant = []          // { tenant, seen, saved } — the next 2020companies shows up here
@@ -284,7 +285,7 @@ async function main() {
     if (banned) { deadTenants += cfgs.length - i; deadBy['not attempted (throttled)'] = cfgs.length - i; break }
     const cfg = cfgs[i]
     const r = await listPages(cfg)
-    if (!r.ok) { deadTenants++; deadBy[r.status] = (deadBy[r.status] || 0) + 1; continue }
+    if (!r.ok) { deadTenants++; deadBy[r.status] = (deadBy[r.status] || 0) + 1; deadNames.push(`${cfg.tenant} (${r.status})`); continue }
     sweptTenants.push(cfg.tenant)
     const company = tidy(cfg.tenant)
     const tenantRow = { tenant: cfg.tenant, seen: 0, saved: 0 }
@@ -378,6 +379,7 @@ async function main() {
 
   console.log('\n\n' + '─'.repeat(58))
   console.log(`   Tenants completed: ${sweptTenants.length}  (${deadTenants} did not${deadTenants ? ': ' + Object.entries(deadBy).map(([k, v]) => `${v}× ${k}`).join(', ') : ''})`)
+  if (deadNames.length) console.log(`   Failed tenants:    ${deadNames.join(' · ')}`)
   console.log(`   Listings seen:     ${seen}`)
   console.log(`   Older than ${MAX_AGE_DAYS}d:   ${tooOld}`)
   console.log(`   Non-US:            ${nonUS}`)
