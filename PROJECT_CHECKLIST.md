@@ -9,7 +9,7 @@ file is the operational truth).
 Lives in the repo. Updated as part of every session's closing commit.
 Mark `[x]` only when the "Done when" condition is literally met.
 
-Last updated: 2026-08-27 (late)
+Last updated: 2026-09-03 (evening)
 
 ---
 
@@ -181,7 +181,7 @@ always.
 - [ ] **B2. Site-wide font fix** — 'Plus Jakarta Sans' referenced in CSS
   but never loaded; body text falls back to serif. One <link> in
   index.html. Verify on /pricing and landing after.
-- [ ] **B3. "there / Free plan" sidebar bug** — name fallback renders bare
+- [x] **B3. "there / Free plan" sidebar bug** — DONE 2026-08-28 (Clerk names Required + fallback chain). — name fallback renders bare
   "there" when sign-up had no first name.
 - [ ] **B4. Clerk sign-up page theming** — default Clerk look; match Space
   Grotesk/warm theme via Clerk appearance config.
@@ -189,17 +189,15 @@ always.
   deletion in 30 days (keepable now); this is the roadmap button it
   references. Includes deleting stored resume text.
 - [ ] **B6. Remove dead attachOnly code.**
-- [ ] **B7. Concise/Standard toggle is fake** (font size only). Make real
-  or remove — an honesty item, same class as the pricing pages.
+- [x] **B7. Concise/Standard toggle** — CLOSED 2026-08-28 by removing the standalone /app route entirely; board modal is the one path.
 
 ## Phase C — Pipeline correctness & safety (verify before building)
 - [ ] **C1. VERIFY the safe-closure rule (blueprint §16).** Read what each
   fetcher does when a company fetch FAILS: do existing jobs survive
   untouched? Only successful scans may mark jobs missing. If violated, fix
   before anything else in this phase — silent data loss.
-- [ ] **C2. MAX_SWEEP_SHARE back to ~0.25** (raised to 0.50 for one-time
-  backlog clear; at 0.50 a future bug can delete half the board
-  unchallenged).
+- [x] **C2. MAX_SWEEP_SHARE back to ~0.25** — verified 0.25 in GH/Ashby/SR
+  2026-08-28; fetchSR + fetchWorkday re-read 2026-09-03, both 0.25 in code.
 - [ ] **C3. Field filter end to end (was 3.3).** Fetchers already tag
   field + needsLicense. Verify: did backfillCategories.mjs run (check a
   Mongo doc)? Server accepts ?field=? UI dropdown in first filter
@@ -213,6 +211,19 @@ always.
 - [ ] **C6. Extend filterCheck to sample SR + Ashby** — Greenhouse-only
   today; SR/Ashby title mixes (franchise floods) invisible to it. Starting
   points: srCheck.mjs, ashbyCheck.mjs.
+- [ ] **C10. Relevance measurement: hourly/sales chains on an F1 board.**
+  Express Oil (133 jobs), AAA/acg (insurance agents, car-care branch
+  staff), "Oil Express GM" all pass the filter honestly but are useless to
+  F1 students. Measure count + candidate patterns FIRST (a "store manager"
+  pattern would also kill "App Store Manager"); then choose: filter
+  patterns vs field-tag-and-hide (reversible, preferred) vs leave. Run
+  after the next Workday scale stage — more data, same session shape as
+  filter hardening. Dry before real.
+- [ ] **C11. Logo scorer: cc-TLD/short-root weakness.** 4 wrong logos
+  caught 2026-09-03 (acg.org, theflex.ru, reflex.co.za + Brandfetch
+  placeholder class); 3 of 4 were exact-root matches on cc-TLD or short
+  names. Consider: cc-TLD → needs_review unless whole-domain match.
+  Evidence only; low priority.
 - [ ] **C7. Rate-limit the optimize endpoint** — any signed-in user can
   burn API budget. Until built: check Anthropic console spend weekly.
 - [ ] **C8. Key rotation + git-history scan** — repo is PUBLIC; scan
@@ -283,6 +294,8 @@ always.
   instead of silent rot. Migrate existing slug files in as status=active
   with discoveredBy=legacy. Done when: fetchers read companies from the
   registry and a dead slug flips to needs_rediscovery automatically.
+  Evidence 2026-09-03: companies collection holds 6,544 records vs 6,051
+  companies with jobs — ~500 corpses from purged mills/dead slugs.
 - [x] **D2. Bootstrap import** — DONE 2026-08-25/26 in flat-file form
   (registry doesn't exist yet): 5 MIT repos → extractCandidates.mjs →
   validateCandidates.mjs (live 200+jobs check, cloud-run via
@@ -290,7 +303,7 @@ always.
   9,434 companies added; 74 dead GH slugs pruned via dead_slugs.json.
   Full story: PLAN_company_expansion.md. When D1 (registry) is built,
   migrate these lists in as discoveredBy=bootstrap.
-- [ ] **D3. SyncRun metrics + anomaly alert (blueprint §19–20, minimum
+- [x] **D3. SyncRun metrics + anomaly alert (SHIPPED 2026-09-01: on-failure GH issue + email) (blueprint §19–20, minimum
   viable).** Each pipeline run writes one SyncRun doc {ats, companies
   attempted/succeeded, jobs fetched/new/closed, duration}. Alert = the GH
   Actions job FAILS LOUDLY (non-zero exit → email) when: an ATS success
@@ -298,7 +311,8 @@ always.
   dashboards — a failing Action IS the alert at this scale.
 - [ ] **D4. Content hashing** — skip re-processing unchanged descriptions
   (blueprint §13.2). Do with D3; cheap once SyncRun exists.
-- [ ] **D5. ATS expansion: Lever, then Workable** — AFTER C3 so new
+- [x] **D5. ATS expansion: Lever, then Workable** — BOTH LIVE 2026-09-01
+  (Lever 303 boards ~1.2k, Workable 131 accounts ~530); flat files for now, migrate at D1. — AFTER C3 so new
   sources arrive pre-tagged. Lever scripts exist (leverCheck.mjs,
   probeLever.mjs, lever_companies.txt, ~864 jobs). Each enters via the D1
   registry, never new flat files.
@@ -333,8 +347,8 @@ always.
   create Brandfetch account, get client ID into Render env.
 - [ ] **E3. Rewrite cost trim** — trim job descriptions before sending to
   the AI; do NOT downgrade the model.
-- [ ] **E4. Save for later / Hide job** — persist per-user (~2–4 hrs);
-  Tracker grows into saved → applied → interviewing.
+- [x] **E4. Save for later / Hide job** — SHIPPED 2026-08-28 evening
+  (JobMark model, board + Tracker tabs, verified on production).
 - [ ] **E5. Usage metering** — only after A4 sets the pricing model.
 - [ ] **E6. Rename decision** — parked pending E1. Candidates:
   SponsorBoard (honest only post-engine), OpenToSponsor, ClearToApply.
@@ -360,6 +374,20 @@ processor and an entity — or an explicit written decision to stay free.
 
 # PART V — DECISION LOG (append-only; verbatim answers live here)
 - 2026-08-25: DSO email sent. Awaiting reply.
+- 2026-09-03: Brandfetch DEFAULT FALLBACK is Brandfetch's own logo — unknown
+  domains rendered a fake "B" as if it were the company mark (caught via
+  Wynd Labs). Fixed: /fallback/404 in LOGO_URL + fixLogoUrls.mjs rewrote
+  5,644 stored URLs; frontend onError → initials confirmed on production.
+  Lesson: a provider's "success" response can still be a placeholder.
+- 2026-09-03: Eyeball pass caught 3 wrong-company logos same day —
+  workday/acg is AAA Auto Club Group not acg.org (→ aaa.com),
+  ashby/the-flex is theflex.global not theflex.ru, greenhouse/reflex is
+  workreflex.com (Austin, TX) not reflex.co.za. All verified from the
+  companies' own sites/postings, never guessed. demoteLogos.mjs added;
+  overrides now 80.
+- 2026-09-03: Stored job descriptions are TRUNCATED at 500 chars in all
+  fetchers — DB-only text scans are weak evidence for leak checks. Full
+  verification = re-fetch complete ads (fullLeakCheck.mjs).
 - 2026-08-25/26: Company expansion executed end to end; board doubled to
   61,990. Details + lessons in PLAN_company_expansion.md.
 - 2026-08-26: A5 resolved (see A5). Aravind proposed allowing fully
@@ -506,3 +534,33 @@ processor and an entity — or an explicit written decision to stay free.
 - 2026-08-28 late: B3 DONE — first/last name Required in Clerk (production) + display-name fallback chain in SidebarLayout; literal 'there' can no longer render as a name. B7 CLOSED by removal — /app standalone optimizer route deleted entirely (decision: board's Optimize modal is the one path; ToolPage.jsx recoverable from git history). Fabrication fix now has a single door to guard.
 
 - 2026-08-28 late: B3 DONE — first/last name Required in Clerk (production) + display-name fallback chain in SidebarLayout; literal 'there' can no longer render as a name. B7 CLOSED by removal — /app standalone optimizer route deleted entirely (decision: board's Optimize modal is the one path; ToolPage.jsx recoverable from git history). Fabrication fix now has a single door to guard. Teaser story posted on Instagram — reveal post due within ~1 week.
+
+---
+## Session log 2026-09-03 (day)
+- WORKDAY REBUILD VERIFIED: first scheduled run 17/20 tenants, 874 saved,
+  skip file held, sweep clean. fullLeakCheck.mjs BUILT+COMMITTED: re-fetches
+  full ad text, runs real isDisqualified() + leak phrases. 30/30 ABB +
+  51/51 all-tenant clean — the "permanent work authorization" fix holds on
+  full text. WATCH: 3 tenants failed (1x 422, 2x 500) — skip-file if they
+  repeat; abbott/abb hit the 1,000-listing cap; "1 warning" annotation on
+  the Actions run unread.
+- EXPRESS OIL both halves shipped: branding override EOCTEBP -> expressoil.com
+  (applied, logo verified on board) + sr_names.json EOCTEBP -> "Express Oil
+  Change & Tire Engineers" (names self-heal via upsert on next SR run —
+  VERIFY by searching "Express Oil").
+- ENRICHMENT: 14 new companies (13 provider / 1 review). Eyeball pass caught
+  acg + the-flex wrong; reflex caught next session-hour. See Part V.
+- BRANDFETCH PLACEHOLDER CLASS FIXED: /fallback/404 everywhere; 5,644 URLs
+  rewritten; Wynd Labs "B" -> honest initials, real logos unaffected.
+  Verified on production. Board is more initials-heavy now — honest, not a
+  regression.
+- BOARD FLASH + STALE-PANE RACE FIXED (JobBoard.jsx): jobs fetch gated on
+  useHasResume loading (targetRole no longer triggers a second ranked
+  fetch); openJob merges guarded by job id + sequence. Verified: 5x refresh,
+  navigation, rapid card-clicks — localhost then production.
+- TOOLING/HYGIENE: MONGODB_URI_PROD added to backend/.env (gitignored,
+  verified) — diagnostics take --prod, no more Render round-trips.
+  demoteLogos.mjs + fixLogoUrls.mjs committed. checkEOC/leakCheck deleted.
+  TODO: delete dead PDFSHIFT_API_KEY line from .env.
+- VALIDATION: still zero conversations. Commitment on record: ONE message
+  sent to candidate #1 (Google-test friend) before next session.
