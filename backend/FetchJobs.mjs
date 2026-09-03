@@ -295,6 +295,14 @@ const DISQUALIFIER_PATTERNS = [
   // Public Trust / suitability determinations are US-government-only, and a polygraph
   // requirement is likewise unavailable to a visa holder.
   /\bpublic\s+trust\b[^.]{0,60}\b(position|clearance|eligib|determination|investigation|background|suitability|required)/,
+  // "Permanent" work-authorization demands. Caught live 2026-09-03: ABB's
+  // "Candidates must already have work authorization that would permit them to
+  // work ... permanently." Permanent authorization = citizens + green cards;
+  // OPT is temporary, so this is a rejection in disguise. The requirement-verb
+  // guard (must/require/already) keeps the OPPOSITE statement alive — "we
+  // sponsor permanent work authorization / green cards" is a job to KEEP.
+  /\b(must|required?s?|already)\b[^.]{0,80}\bwork\s+authoriz\w+\b[^.]{0,80}\bpermanent(ly)?\b/,
+  /\bpermanent\s+(us\s+|u\.?s\.?\s+)?work\s+authoriz\w+\s+(is\s+)?required\b/,
   /\b(obtain|maintain|hold|eligible\s+for|able\s+to\s+obtain)\b[^.]{0,40}\bpublic\s+trust\b/,
   /\bpolygraph\b/,
   // ---- Hedged / softened non-sponsorship wording (found via a live Roblox posting) ----
