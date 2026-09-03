@@ -982,7 +982,6 @@ birdie
 bite
 bitvavo
 bivacor-inc
-bjakcareer
 blackbox-strategies
 blacksemiconductor
 blacksmith
