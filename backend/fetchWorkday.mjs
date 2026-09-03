@@ -82,8 +82,20 @@ const DRY = process.argv.includes('--dry')
 const SAMPLE_SIZE  = 20
 const UA = 'Optyply/1.0 (job board for international students; support@optyply.com)'
 
-const countArg = process.argv.find(a => /^(\d+|all)$/.test(a))
-const TENANTS = countArg === 'all' ? Infinity : Number(countArg || 20)
+// Which tenants this run covers, from the file's order AFTER the skip list:
+//   node fetchWorkday.mjs             first 20 (the scheduled default)
+//   node fetchWorkday.mjs 100         first 100
+//   node fetchWorkday.mjs 11-20       tenants 11 through 20 only — staged
+//                                     verification: dry-run just the NEWCOMERS
+//                                     of a scale stage instead of re-judging
+//                                     the already-verified ones ahead of them
+//   node fetchWorkday.mjs all         everything
+const countArg = process.argv.find(a => /^(\d+(-\d+)?|all)$/.test(a))
+let FROM = 1, TO = 20
+if (countArg === 'all') { TO = Infinity }
+else if (countArg && countArg.includes('-')) { [FROM, TO] = countArg.split('-').map(Number) }
+else if (countArg) { TO = Number(countArg) }
+if (!(FROM >= 1) || !(TO >= FROM)) { console.error(`❌ Bad range: ${countArg}`); process.exit(1) }
 // --tenant <name>: run exactly one company and, in dry mode, print EVERY title
 // that passed — the full-board interrogation for a suspect tenant, versus the
 // sampled view of a normal dry run. Usage: node fetchWorkday.mjs --tenant abbott --dry
@@ -235,7 +247,7 @@ async function main() {
     cfgs = cfgs.filter(c => c.tenant.toLowerCase() === TENANT_FILTER)
     if (!cfgs.length) { console.error(`❌ Tenant "${TENANT_FILTER}" not in ${BOARDS_PATH}`); process.exit(1) }
   } else {
-    cfgs = cfgs.filter(c => !skip.has(c.tenant)).slice(0, TENANTS === Infinity ? undefined : TENANTS)
+    cfgs = cfgs.filter(c => !skip.has(c.tenant)).slice(FROM - 1, TO === Infinity ? undefined : TO)
   }
   if (skip.size) console.log(`   Skipping ${skip.size} tenant(s) from ${SKIP_PATH}`)
 
@@ -251,7 +263,7 @@ async function main() {
   }
 
   const runStart = new Date()
-  console.log(`🔎 ${cfgs.length} Workday tenants (of ${urls.length} in file) · serial, ${PACE_MS}ms pace · jobs newer than ${MAX_AGE_DAYS} days\n`)
+  console.log(`🔎 ${cfgs.length} Workday tenants (positions ${FROM}${TO === Infinity ? '+' : '-' + TO} after skips, of ${urls.length} in file) · serial, ${PACE_MS}ms pace · jobs newer than ${MAX_AGE_DAYS} days\n`)
 
   const known = new Set()
   if (!DRY) {

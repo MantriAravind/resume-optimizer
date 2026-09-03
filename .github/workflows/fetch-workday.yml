@@ -16,6 +16,10 @@ name: Refresh Workday jobs
 #   whole effort: ~33% of Workday listings survive this board's gates
 #   (probeWorkday.mjs, 2026-09-01).
 on:
+  schedule:
+    # Every 6 hours at :35, clear of the other fetchers' minutes. Covers the
+    # first 20 tenants (script default) until step 7 raises it deliberately.
+    - cron: '35 */6 * * *'
   workflow_dispatch:
     inputs:
       tenants:
