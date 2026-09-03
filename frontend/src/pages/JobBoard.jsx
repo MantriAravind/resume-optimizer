@@ -669,7 +669,7 @@ export default function JobBoard() {
   // sent as a ranking hint whenever they have not searched: every job is present, the
   // closest title matches lead. Day still beats relevance, so today's postings come
   // first and the best matches sit at the top of each day.
-  const { profile } = useHasResume()
+  const { profile, loading: profileLoading } = useHasResume()
   const targetRole = profile?.targetRole || ''
 
 
@@ -952,7 +952,11 @@ export default function JobBoard() {
     }
   }, [page, query, workType, experienceLevel, timePosted, stateFilter, targetRole])
 
-  useEffect(() => { fetchJobs() }, [fetchJobs])
+  // Wait for the profile before the first fetch: targetRole is a ranking input, and
+  // fetching without it then again with it painted the board twice — a one-second
+  // flash of the unranked list on every mount. Signed-out and error paths resolve
+  // loading=false quickly, so nobody waits on an answer that is not coming.
+  useEffect(() => { if (!profileLoading) fetchJobs() }, [fetchJobs, profileLoading])
 
   function runSearch() {
     setSharedJob(null)
@@ -1038,7 +1042,12 @@ export default function JobBoard() {
     setTimeout(() => setCopiedShare(false), 2000)
   }
 
+  // Guards openJob against out-of-order responses: only the newest request may
+  // touch detailLoading, and a response may only merge into the job it was for.
+  const detailSeq = useRef(0)
+
   async function openJob(job) {
+    const seq = ++detailSeq.current
     setSelected(job)
     setLocIndex(0)
     setCopiedShare(false)
@@ -1053,12 +1062,12 @@ export default function JobBoard() {
         // MERGE, don't replace: /jobs/:id returns one posting and knows nothing about
         // the grouped `locations` the list built, so replacing here would wipe the
         // location picker the instant the description finished loading.
-        setSelected(prev => ({ ...prev, ...full, locations: prev?.locations, locationCount: prev?.locationCount }))
+        setSelected(prev => (prev && prev.id === job.id ? { ...prev, ...full, locations: prev?.locations, locationCount: prev?.locationCount } : prev))
       }
     } catch {
       // keep the preview we already have
     } finally {
-      setDetailLoading(false)
+      if (seq === detailSeq.current) setDetailLoading(false)
     }
   }
 
