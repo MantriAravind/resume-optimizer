@@ -22,3 +22,9 @@
 # the round-2 gate correctly rejects â€” at a price not worth 4 jobs. Reconsider
 # if a rejected-jobs cache ever makes re-judging free.
 aah
+
+# 2026-09-03 (11-20 dry run): 275 of 537 passed jobs — 51% of the whole stage.
+# Auto Club Enterprises (AAA): commission Sales Agents, licence-required Life
+# Sales Agents, Travel Consultants, Driving School Instructors, branch retail.
+# Round-3 licence candidates logged: life sales agent / insurance agent.
+ace
