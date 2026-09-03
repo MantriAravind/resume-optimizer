@@ -41,7 +41,11 @@ const DELAY_MS = 350                       // ~3 req/sec, polite
 const SEARCH_URL = q => `https://api.brandfetch.io/v2/search/${encodeURIComponent(q)}?c=${CLIENT_ID}`
 // Logo render URL is constructed at DISPLAY time from the domain (hotlinked,
 // per Brandfetch free-tier terms — we store the domain, not a downloaded file).
-const LOGO_URL = d => `https://cdn.brandfetch.io/${d}?c=${CLIENT_ID}`
+// /fallback/404: without it Brandfetch serves ITS OWN logo for unknown domains,
+// and the board rendered that placeholder as if it were the company's mark
+// (caught 2026-09-03: Wynd Labs showing the Brandfetch "B"). A 404 lets the
+// frontend's onError fall back to honest initials instead.
+const LOGO_URL = d => `https://cdn.brandfetch.io/${d}/fallback/404?c=${CLIENT_ID}`
 
 const Job = mongoose.model('Job', new mongoose.Schema({}, { strict: false, collection: 'jobs' }))
 const Company = mongoose.model('Company', new mongoose.Schema({}, { strict: false, collection: 'companies' }))
