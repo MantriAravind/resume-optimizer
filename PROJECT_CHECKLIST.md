@@ -388,6 +388,64 @@ processor and an entity — or an explicit written decision to stay free.
 - 2026-08-26: Field dropdown NOT built (Aravind: keywords over
   segregation; field tags stay in data). Target role made mandatory at
   onboarding + profile instead; board pre-ranks by it.
+- 2026-09-01: Lever LIVE — 303 boards, ~1,200 jobs (validateLever.mjs: 9 dead
+  of 312). Workable LIVE — 131 accounts, ~530 jobs, via the DOCUMENTED
+  endpoint (www.workable.com/api/accounts/{slug}?details=true) after two wrong
+  ones: spi/v3 now 401s, and the careers-page API banned the laptop IP for an
+  hour at ~500 parallel requests. STANDING RULE born: undocumented endpoints
+  get serial + paced + two-strike-429 stop, always. Both sources have detail
+  branches in server.js and scheduled workflows with failure alarms.
+- 2026-09-01: Filter round 1, measured against 58k live titles before
+  shipping: truck/CDL/class-letter drivers, forklift, machine operator,
+  production floor, warehouse floor, assembler, material handler. 698 purged.
+  Shift-time REJECTED — catches biotech QC/lab roles a student on OPT can take.
+- 2026-09-01: D3 SHIPPED — on-failure GitHub issue + email on every fetch
+  workflow, proven by a deliberate failure. gh commands need -R (no checkout
+  context on the runner).
+- 2026-09-01: Localhost split to optyply_dev; Mongo password rotated (pasted in
+  chat once — rotation is the correct reflex); GitHub secret updated. Privacy
+  copy corrected in onboarding + privacy page: the uploaded FILE is now kept.
+  Three real users found in prod; two uploaded Word files.
+- 2026-09-02/03: WORKDAY LIVE end-to-end, steps 0–6 of the 8-step plan.
+  Measured first (20-tenant probe): ~33% estimated yield → GO. 1,437 tenant
+  URLs extracted from listing repos — none guessed. Fetcher: serial 1s pace,
+  limit-20 pages, early-stop after 2 fully-old pages, sweep only over tenants
+  whose paging completed, N–M range flag for staged verification. 643 jobs at
+  the 20-tenant stage; 6-hourly schedule; full-description detail branch;
+  workday_names.json for display names.
+- 2026-09-02/03: Dry runs caught, in order: 2020companies flood (9/20 sample —
+  retail staffing, SKIPPED with evidence), "N Locations" masking foreign jobs
+  (Czechia/Switzerland leaked — location gate deferred to detail when masked),
+  the guide's doubled /job in the detail URL (first probe silently judged 0
+  descriptions — detail failures are loud now). 3m SKIPPED: 420 seen, 0 passed,
+  full board citizenship/export-gated. aah SKIPPED: 992 seen, 4 passed, ~800
+  details spent — not worth 13 min/run; revisit if a rejected-jobs cache lands.
+- 2026-09-03: Filter round 2 from reading ALL 394 Abbott survivors (--tenant
+  flag), then measuring against 60k live jobs: operator I/II/III (lookbehind
+  spares Natera's Clinical Lab Operator), packaging/processing/manufacturing/
+  production operators, warehouse specialist/utility/clerk-warehousing,
+  production cleaning; PRN-in-title into the CONTRACT gate (378 caught, all
+  per-diem clinical). 425 purged. REJECTED with recorded evidence: production
+  technician (kills City of Philadelphia's Camera & Editing tech, church AV, a
+  co-op) and shift-time (again — Nuro Mission Ops, an FT ER nurse). Round-3
+  candidates parked: general labor, shipping clerk, strut plater loader,
+  facility worker.
+- 2026-09-03: DECISION — internships ARE in scope. CPT is internships; the
+  experience filter lists Internship first. Workable's employment_type intern
+  drop (Claude's assumption, never decided) removed. CONSEQUENCE: the
+  "Full-time roles only" banner now lies → landing-page rework list.
+- 2026-09-03: alphabeinsightinc REMOVED — ghost-posting mill. Three postings
+  opened; each described a different shell company (Catch Vibe Voice,
+  NextShining — self-described staffing agency). 390 postings deleted, slug
+  removed. bjakcareer REMOVED — 155 "onsite / United States" postings with no
+  city, SE-Asia descriptions, daily repost churn: a worldwide funnel, not US
+  jobs. FUTURE AUTOMATION logged: account-level quality checks — description
+  company-name mismatch, country-only onsite locations, repost churn.
+- 2026-09-02/03: Logos 89.9% → ~92% of live cards. enrichCompanies runs (437 +
+  38 + retry 47 + 33 Workday), 30 hand-verified overrides via
+  applyOverridesBatch.mjs, logoCoverage.mjs reports by JOBS not companies.
+  Remaining tail (~780 needs_review) is human-judgment-only; automation
+  candidates logged (apply-URL crawler, Claude draft-then-approve).
 - (A2 interview answers go here, verbatim.)
 - (A3 observation notes go here.)
 - (A4 pricing decision + case against goes here.)
@@ -428,23 +486,23 @@ processor and an entity — or an explicit written decision to stay free.
 
 ---
 ## Session log 2026-08-28
-- FIXED+PUSHED: location filter � Georgia state/country collision, 16 missing post-Soviet/Balkan countries, Panama City FL, British Columbia/Columbia SC, European code-first postal format (JD Sports leak), Vancouver WA shield. Commits e864d5f, 36e9755, 01c5279.
-- PURGED: 212 foreign jobs closed reversibly across two sweeps (179 + 33) via purgeForeign.mjs. Decision reaffirmed: never delete records for filter bugs � fix at source, purge via tooling.
+- FIXED+PUSHED: location filter — Georgia state/country collision, 16 missing post-Soviet/Balkan countries, Panama City FL, British Columbia/Columbia SC, European code-first postal format (JD Sports leak), Vancouver WA shield. Commits e864d5f, 36e9755, 01c5279.
+- PURGED: 212 foreign jobs closed reversibly across two sweeps (179 + 33) via purgeForeign.mjs. Decision reaffirmed: never delete records for filter bugs — fix at source, purge via tooling.
 - FIXED+PUSHED: fetchAshby displays US location on dual-location jobs (48f6178). server.js/JobBoard.jsx (19ba983): card logos, duplicate folding w/ company-name normalization, stable pagination (id sort tiebreaker). Verified on optyply.com production.
 - LOGOS: coverage 83.7% -> ~89.5%. enrichCompanies gained --retry/--dry + whole-domain scoring (6bf3bc5). 46 overrides in branding_overrides.json. applyOverride.mjs added (5654229). Zipline squatter fixed (flyzipline.com vs Retail Zipline).
 - C2 DONE: MAX_SWEEP_SHARE verified 0.25 all three fetchers, local + origin/main.
-- ACCEPTED RESIDUALS: dark-variant logos (Equinox, Horizon3ai, Ready) � revisit only if users mention. filterCheck "looks US" heuristic misreads ", IN" as Indiana � report polish, low priority.
-- OPEN POLICY QUESTION: contract-to-hire jobs on a "full-time only" board � ask students before deciding.
+- ACCEPTED RESIDUALS: dark-variant logos (Equinox, Horizon3ai, Ready) — revisit only if users mention. filterCheck "looks US" heuristic misreads ", IN" as Indiana — report polish, low priority.
+- OPEN POLICY QUESTION: contract-to-hire jobs on a "full-time only" board — ask students before deciding.
 - VALIDATION: messaged friends re: student conversation #1. NEXT SESSION PRIORITY: schedule + hold it. After that: optimizer fabrication fix (A5 findings, still top engineering priority).
 
 ---
 ## Session log 2026-08-28 (evening)
-- SHIPPED (54e76ed, verified on production): E4 save/hide jobs � JobMark model + /me/job-marks endpoints (snapshot fields survive 30-day prune; one row per user+job, saved/hidden mutually exclusive). Board: x -> Hide menu on cards, Save-for-later beside Share in detail head, hidden jobs filtered from list. Tracker: Applied/Saved/Hidden tabs with Unsave/Unhide, layout fixes (width 1400, heading aligned with Profile).
-- SHIPPED same commit: card redesign � logo 72px base/56px two-pane inline, chips full width, list column 37% -> 45%.
-- SHIPPED same commit: Support page at /support + sidebar item. Gmail-compose primary button (mailto is dead on machines with no mail app � observed), mailto secondary, clipboard fallback. support@optyply.com verified end-to-end: redirect works, Gmail filter created (never-spam + important).
-- NOTE: "Upgrade to Pro" button audited � routes to /pricing (honesty-swept). No fake claim.
+- SHIPPED (54e76ed, verified on production): E4 save/hide jobs — JobMark model + /me/job-marks endpoints (snapshot fields survive 30-day prune; one row per user+job, saved/hidden mutually exclusive). Board: x -> Hide menu on cards, Save-for-later beside Share in detail head, hidden jobs filtered from list. Tracker: Applied/Saved/Hidden tabs with Unsave/Unhide, layout fixes (width 1400, heading aligned with Profile).
+- SHIPPED same commit: card redesign — logo 72px base/56px two-pane inline, chips full width, list column 37% -> 45%.
+- SHIPPED same commit: Support page at /support + sidebar item. Gmail-compose primary button (mailto is dead on machines with no mail app — observed), mailto secondary, clipboard fallback. support@optyply.com verified end-to-end: redirect works, Gmail filter created (never-spam + important).
+- NOTE: "Upgrade to Pro" button audited — routes to /pricing (honesty-swept). No fake claim.
 - E4 DONE. Mark [x] when checklist next open.
 
-- 2026-08-28 late: B3 DONE � first/last name Required in Clerk (production) + display-name fallback chain in SidebarLayout; literal 'there' can no longer render as a name. B7 CLOSED by removal � /app standalone optimizer route deleted entirely (decision: board's Optimize modal is the one path; ToolPage.jsx recoverable from git history). Fabrication fix now has a single door to guard.
+- 2026-08-28 late: B3 DONE — first/last name Required in Clerk (production) + display-name fallback chain in SidebarLayout; literal 'there' can no longer render as a name. B7 CLOSED by removal — /app standalone optimizer route deleted entirely (decision: board's Optimize modal is the one path; ToolPage.jsx recoverable from git history). Fabrication fix now has a single door to guard.
 
-- 2026-08-28 late: B3 DONE � first/last name Required in Clerk (production) + display-name fallback chain in SidebarLayout; literal 'there' can no longer render as a name. B7 CLOSED by removal � /app standalone optimizer route deleted entirely (decision: board's Optimize modal is the one path; ToolPage.jsx recoverable from git history). Fabrication fix now has a single door to guard. Teaser story posted on Instagram � reveal post due within ~1 week.
+- 2026-08-28 late: B3 DONE — first/last name Required in Clerk (production) + display-name fallback chain in SidebarLayout; literal 'there' can no longer render as a name. B7 CLOSED by removal — /app standalone optimizer route deleted entirely (decision: board's Optimize modal is the one path; ToolPage.jsx recoverable from git history). Fabrication fix now has a single door to guard. Teaser story posted on Instagram — reveal post due within ~1 week.
