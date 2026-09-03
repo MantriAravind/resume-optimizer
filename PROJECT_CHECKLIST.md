@@ -564,3 +564,31 @@ processor and an entity — or an explicit written decision to stay free.
   TODO: delete dead PDFSHIFT_API_KEY line from .env.
 - VALIDATION: still zero conversations. Commitment on record: ONE message
   sent to candidate #1 (Google-test friend) before next session.
+
+---
+## Session log 2026-09-03 (afternoon)
+- WORKDAY 21-100 DRY RUN executed on GitHub (workflow inputs 21-100/dry) and
+  READ in full: 76/80 tenants, 12,865 seen -> 4,040 would-save. Leak-clean,
+  no 2020companies-style floods. 4 failed (1x 403, 3x 500) — anonymous in the
+  log, hence the fetcher patch below.
+- DECISION: HOLD schedule at 20 tenants. C10 relevance session runs FIRST,
+  then arm 21-100 (Aravind: "filter out all the junk first, then pull only
+  the useful one"). C10 evidence from the dry run: advanceauto 430/500
+  (auto-parts retail), americanredcross 242, alwayscompassionate 83,
+  agiliti 80 — ~800 of 4,040 in the retail/care/trade class. Also: ag
+  994-seen/3-passed = pure paging waste, skip candidate at C10;
+  analogdevices 500/0 + arcticwolf 118/0 likely export-control/citizenship
+  language (probably CORRECT, spot-check at C10).
+- LICENSE GAP FIXED (db8f644): "Certified Home Health Aide (HHA)/Personal
+  Care Aide (PCA)" passed requiresLicense — aide/caregiver pattern added;
+  bare pca/dsp EXCLUDED on purpose (PCA Test Engineer, DSP Engineer are
+  real tech titles). Verified: nurse true, aide true, techs false, both
+  collision guards false.
+- fetchWorkday: failed tenants now NAMED in the summary, not just counted.
+  Next scheduled run identifies the 4.
+- Actions "1 warning" annotation READ: GitHub's own checkout/setup-node
+  actions target deprecated Node 20 — their problem, ignorable; dies when
+  @v5 lands.
+- .env: dead PDFSHIFT_API_KEY line deleted.
+- VALIDATION: candidate #1 message still NOT sent. Carries forward, top of
+  the list.
