@@ -165,6 +165,12 @@ const LICENSED = [
   // Technician" safe, since nursery is never preceded by one of these words.
   /\b(registered|licensed|practical|vocational|travel|staff|charge|school|duty|acuity|private duty)\s*nurse/,
   /\b(nurses?|registered nurses?|nurse practitioners?|licensed practical nurses?|licensed vocational nurses?|nurse anesthetists?|nurse midwi(fe|ves)|rn|lpn|lvn|cna|crna|np|bsn)\b/,
+  // State-certified direct care (caught 2026-09-03: "Certified Home Health Aide
+  // (HHA)/Personal Care Aide (PCA)" passed — 83 such jobs in one Workday tenant).
+  // Bare "pca" is EXCLUDED on purpose: PCA Test Engineer (printed circuit
+  // assembly) is a real electronics title. Same reason dsp is absent. The
+  // spelled-out forms carry the load, per errs-toward-false.
+  /\b(home health aides?|hha|personal care aides?|home care aides?|caregivers?|direct support professionals?)\b/,
   // Physicians, dentistry, and surgical
   /\b(physicians?|surgeons?|dentists?|endodontists?|orthodontists?|periodontists?|prosthodontists?|dental hygienists?|anesthesiologists?|radiologists?|psychiatrists?|optometrists?|podiatrists?|chiropractors?)\b/,
   // Pharmacy
