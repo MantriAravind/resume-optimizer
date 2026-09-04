@@ -1927,7 +1927,7 @@ app.get('/jobs', async (req, res) => {
     // label (set by applyJunk.mjs on the back catalogue; fetchers at the door).
     // $exists:false, same logic as needsLicense's $ne: the untagged back
     // catalogue stays visible. Reversible: unset the field and the job returns.
-    filter.junkClass = { $exists: false }
+    filter.junkClass = null   // matches null AND missing: fetchers write the label or explicit null every cycle
 
     // The field filter is deliberately no longer applied. Hiding four fifths of the
     // board on an inferred category meant a wrong inference was invisible and had no

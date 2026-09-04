@@ -65,7 +65,7 @@ import {
   detectEmploymentType,
   extractYearsExperience,
 } from './FetchJobs.mjs'
-import { categorizeJob, requiresLicense } from './jobCategory.mjs'
+import { categorizeJob, requiresLicense, junkClass } from './jobCategory.mjs'
 
 const BOARDS_PATH  = 'workday_boards.txt'
 const SKIP_PATH    = 'workday_skip.txt'   // tenants excluded with reasons — see that file
@@ -105,7 +105,7 @@ const TENANT_FILTER = tIdx > -1 ? String(process.argv[tIdx + 1] || '').toLowerCa
 const jobSchema = new mongoose.Schema({
   id: { type: String, unique: true }, title: String, company: String, companySlug: String,
   location: String, isRemote: Boolean, description: String, applyUrl: String,
-  postedAt: Date, sponsorBadge: Boolean, field: String, needsLicense: Boolean,
+  postedAt: Date, sponsorBadge: Boolean, field: String, needsLicense: Boolean, junkClass: String,
   ats: String, fetchedAt: Date, experienceLevel: String, workType: String, state: String,
   salaryMin: Number, salaryMax: Number, employmentType: String,
   yearsMin: Number, yearsMax: Number, closed: Boolean,
@@ -350,6 +350,7 @@ async function main() {
         sponsorBadge: false,
         field:        categorizeJob(title),
         needsLicense: requiresLicense(title),
+        junkClass: junkClass(title) ?? null,
         ats:          'workday',
         fetchedAt:    new Date(),
         closed:       false,

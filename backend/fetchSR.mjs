@@ -45,7 +45,7 @@ import {
   detectEmploymentType,
   extractYearsExperience,
 } from './FetchJobs.mjs'
-import { categorizeJob, requiresLicense } from './jobCategory.mjs'
+import { categorizeJob, requiresLicense, junkClass } from './jobCategory.mjs'
 
 const LIST_PATH    = 'sr_companies.txt'
 const NAMES_PATH   = 'sr_names.json'
@@ -64,7 +64,7 @@ const MAX_SWEEP_SHARE = 0.25
 const jobSchema = new mongoose.Schema({
   id: { type: String, unique: true }, title: String, company: String, companySlug: String,
   location: String, isRemote: Boolean, description: String, applyUrl: String,
-  postedAt: Date, sponsorBadge: Boolean, field: String, needsLicense: Boolean,
+  postedAt: Date, sponsorBadge: Boolean, field: String, needsLicense: Boolean, junkClass: String,
   ats: String, fetchedAt: Date, experienceLevel: String, workType: String, state: String,
   salaryMin: Number, salaryMax: Number, employmentType: String,
   yearsMin: Number, yearsMax: Number, closed: Boolean,
@@ -235,6 +235,7 @@ async function main() {
           sponsorBadge: false,
           field:        categorizeJob(s.title),
           needsLicense: requiresLicense(s.title),
+          junkClass: junkClass(s.title) ?? null,
           ats:          'smartrecruiters',
           fetchedAt:    new Date(),
           closed:       false,

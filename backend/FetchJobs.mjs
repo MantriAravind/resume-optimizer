@@ -1,5 +1,5 @@
 import mongoose from 'mongoose'
-import { categorizeJob, requiresLicense, isHourlyJob } from './jobCategory.mjs'
+import { categorizeJob, requiresLicense, isHourlyJob, junkClass } from './jobCategory.mjs'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
@@ -34,6 +34,7 @@ const jobSchema = new mongoose.Schema({
   // gone for good. The first version of this filter had five false positives on real
   // data, including two sales jobs — which is the argument in one line.
   needsLicense:    Boolean,
+  junkClass:       String,
   fetchedAt:       { type: Date, default: Date.now },
   experienceLevel: String,
   workType:        String,
@@ -957,6 +958,7 @@ async function fetchAllJobs() {
               sponsorBadge:    false,
               field:             categorizeJob(job.title),
               needsLicense:             requiresLicense(job.title),
+              junkClass:                junkClass(job.title) ?? null,
               ats:             'greenhouse',
               fetchedAt:       new Date(),
               experienceLevel,
@@ -1055,6 +1057,7 @@ async function fetchAllJobs() {
                 sponsorBadge:    false,
                 field:             categorizeJob(job.title),
                 needsLicense:             requiresLicense(job.title),
+              junkClass:                junkClass(job.title) ?? null,
                 ats:             'greenhouse',
                 fetchedAt:       new Date(),
                 experienceLevel: detectExperienceLevel(job.title || ''),
