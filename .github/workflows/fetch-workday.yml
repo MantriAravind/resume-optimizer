@@ -18,13 +18,14 @@ name: Refresh Workday jobs
 on:
   schedule:
     # Every 6 hours at :35, clear of the other fetchers' minutes. Covers the
-    # first 20 tenants (script default) until step 7 raises it deliberately.
+    # first 100 tenants (step 6, armed 2026-09-05 after the 21-100 dry run
+    # passed and C10 junk filtering shipped). Next stages: 400, then all.
     - cron: '35 */6 * * *'
   workflow_dispatch:
     inputs:
       tenants:
         description: 'Tenants to fetch (number or "all")'
-        default: '20'
+        default: '100'
         required: false
       dry:
         description: 'Dry run (judge, write nothing)'
@@ -44,9 +45,10 @@ concurrency:
 jobs:
   refresh:
     runs-on: ubuntu-latest
-    # 20 tenants ≈ 15-25 min at one request per second with details. 'all' will
-    # need this raised — deliberately, at step 7, with numbers from the stages.
-    timeout-minutes: 180
+    # Measured: 80 tenants took 165 min (21-100 dry, 2026-09-04) — 96 does not
+    # fit in 180. 300 gives the 100-stage headroom; 'all' will need its own
+    # number at the next stage, from measurement as always.
+    timeout-minutes: 300
 
     steps:
       - name: Check out the repo
@@ -66,10 +68,12 @@ jobs:
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
         run: |
+          # Scheduled runs have no inputs — '|| 100' is what actually arms the
+          # 100-tenant stage on the cron path (the script's own default stays 20).
           if [ "${{ inputs.dry }}" = "true" ]; then
-            node fetchWorkday.mjs ${{ inputs.tenants }} --dry
+            node fetchWorkday.mjs ${{ inputs.tenants || '100' }} --dry
           else
-            node fetchWorkday.mjs ${{ inputs.tenants }}
+            node fetchWorkday.mjs ${{ inputs.tenants || '100' }}
           fi
 
       # ── FAILURE ALARM ─────────────────────────────────────────────────────
