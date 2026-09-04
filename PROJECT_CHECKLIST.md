@@ -687,3 +687,27 @@ processor and an entity — or an explicit written decision to stay free.
   Advance Auto Parts; next scheduled run log (activision skipped — do the
   five 500-tenants repeat?); design page 1 (job board) with designer.
 - STANDING ABOVE ALL: friends' replies — messages sent, replies unreported.
+
+---
+## Session log 2026-09-06 (afternoon) — steady state + pattern round
+- WORKDAY STEADY STATE VERIFIED (2nd scheduled 100-run): 4,827 refreshed, 116
+  new, details down to 2,982 — runs now fast+cheap. Run raced the activision
+  skip commit (started before push; next run says "Skipping 5").
+- 500-TENANT DECISION: all five repeated (aaamidatlantic, acehardware, allina,
+  amh, arbella) + amplify 403. NOT skipped — they fail in ~1 request, the skip
+  file exists for detail-request burners. QUEUED instead: path-fix hunt for
+  amplify + activision (real-job boards worth having); the rest not worth it.
+- workday_names.json: 14 added — AND 7 pre-existing curated names briefly
+  CLOBBERED by wholesale replacement (Claude generated without reading the
+  existing file; read-before-write violated on a "trivial" file). Caught via
+  the diff stat, merged to 21, pushed before any cycle acted. No file is
+  trivial.
+- PATTERN ROUND (measured first, all lists read): salesperson 106/106 junk ->
+  shipped bare; commercial specialist 74/74 -> shipped; NEW event class
+  (39/39 hiring events/job fairs — no JD to optimize against; ~3 debatable,
+  accepted); GM probe found REAL product/BU GMs (Veeva, Trade Desk, Via,
+  Papa, Amcor plant) -> shipped CONTEXT-SCOPED only, bare GM stays visible
+  (title-only limit; company-level rules in parking lot). 20-case battery.
+  +305 tagged; board 4,663 hidden of 63,576. "Salesperson" verified empty.
+- QUEUED: amplify/activision path fix; design page 1 (board) with designer;
+  acronym pass over filterCheck phrase families; friends' replies.
