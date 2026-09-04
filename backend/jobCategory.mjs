@@ -254,7 +254,7 @@ function splitTitle(raw) {
 // non-null (reversible: unset the field). Fetchers also drop at the door.
 const JUNK_CLASSES = [
   { label: 'retail',      re: /(?<!app\s)(?<!play\s)\b(store|retail|boutique)\s+(manager|assistant\s+manager|associate|supervisor|lead|team\s+lead|keyholder|key\s+holder|stylist)|\b(cashiers?|merchandisers?|stock(er|ing)\s+associates?|shift\s+(leads?|supervisors?))\b/i },
-  { label: 'auto',        re: /\b(automotive|auto)\s+(service|technician|tech|mechanic|detailer|advisor|body|parts|glass)\b|\b(oil\s+change|lube\s+tech|tire\s+(tech|installer|center|sales)|car\s+wash|collision\s+(repair|center|estimator)|body\s+shop|service\s+advisor|dealership|parts\s+(pro|counter|specialist|manager)|a&p\s+mechanic|aircraft\s+mechanic)\b/i },
+  { label: 'auto',        re: /\b(automotive|auto)\s+(service|technician|tech|mechanic|detailer|advisor|body|parts|glass)\b|\b(oil\s+change|lube\s+tech|tire\s+(tech|installer|center|sales)|car\s+wash|collision\s+(repair|center|estimator)|body\s+shop|service\s+advisor|dealership|parts\s+(pro(fessional)?s?|counter|specialist|manager)|a&p\s+mechanic|aircraft\s+mechanic)\b/i },
   { label: 'care',        re: /\b(aides?|orderl(y|ies)|phlebotom\w+|patient\s+care\s+tech(nician)?)\b/i },
   { label: 'insurance',   re: /\b(insurance\s+(sales|agent|producer)|sales\s+agent|claims\s+(adjuster|processor|representative|rep|examiner))\b/i },
   { label: 'food',        re: /\b(line\s+cook|prep\s+cook|\bcook\b|sous\s+chef|pastry\s+chef|executive\s+chef|head\s+chef|dishwash\w*|bussers?|barbacks?|baristas?|bartenders?|banquet|food\s+(service|runner|prep)|steward\b|(?<!executive\s)host(ess)?\b|(restaurant|catering|cocktail|dining|club)\s+server|server\s+assistant|dining\s+room)\b/i },
