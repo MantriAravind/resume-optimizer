@@ -253,15 +253,15 @@ function splitTitle(raw) {
 // Returns the class label or null. Saved as job.junkClass; the board hides
 // non-null (reversible: unset the field). Fetchers also drop at the door.
 const JUNK_CLASSES = [
-  { label: 'retail',      re: /(?<!app\s)(?<!play\s)\b(store|retail|boutique)\s+(manager|assistant\s+manager|associate|supervisor|lead|team\s+lead|keyholder|key\s+holder|stylist)|\b(cashier|merchandiser|stock(er|ing)\s+associate|shift\s+(lead|supervisor))\b/i },
+  { label: 'retail',      re: /(?<!app\s)(?<!play\s)\b(store|retail|boutique)\s+(manager|assistant\s+manager|associate|supervisor|lead|team\s+lead|keyholder|key\s+holder|stylist)|\b(cashiers?|merchandisers?|stock(er|ing)\s+associates?|shift\s+(leads?|supervisors?))\b/i },
   { label: 'auto',        re: /\b(automotive|auto)\s+(service|technician|tech|mechanic|detailer|advisor|body|parts|glass)\b|\b(oil\s+change|lube\s+tech|tire\s+(tech|installer|center|sales)|car\s+wash|collision\s+(repair|center|estimator)|body\s+shop|service\s+advisor|dealership|parts\s+(pro|counter|specialist|manager)|a&p\s+mechanic|aircraft\s+mechanic)\b/i },
   { label: 'care',        re: /\b(aides?|orderl(y|ies)|phlebotom\w+|patient\s+care\s+tech(nician)?)\b/i },
   { label: 'insurance',   re: /\b(insurance\s+(sales|agent|producer)|sales\s+agent|claims\s+(adjuster|processor|representative|rep|examiner))\b/i },
-  { label: 'food',        re: /\b(line\s+cook|prep\s+cook|\bcook\b|sous\s+chef|pastry\s+chef|executive\s+chef|head\s+chef|dishwash\w*|busser|barback|barista|bartender|banquet|food\s+(service|runner|prep)|steward\b|(?<!executive\s)host(ess)?\b|(restaurant|catering|cocktail|dining|club)\s+server|server\s+assistant|dining\s+room)\b/i },
+  { label: 'food',        re: /\b(line\s+cook|prep\s+cook|\bcook\b|sous\s+chef|pastry\s+chef|executive\s+chef|head\s+chef|dishwash\w*|bussers?|barbacks?|baristas?|bartenders?|banquet|food\s+(service|runner|prep)|steward\b|(?<!executive\s)host(ess)?\b|(restaurant|catering|cocktail|dining|club)\s+server|server\s+assistant|dining\s+room)\b/i },
   { label: 'warehouse',   re: /\b(warehouse\s+(associate|lead|worker|tech(nician)?|support|team|operator)|forklift|order\s+picker|packer|material\s+handler|dock\s+worker|loader|route\s+delivery|delivery\s+(driver|professional|associate)|(cdl|truck|van|shuttle|bus)\s+driver)\b|^driver\b|\bdriver$/i },
-  { label: 'guard',       re: /\b(security\s+(officer|guard)|unarmed\s+security|janitor(ial)?|custodian|housekeep\w*|groundskeep\w*|porter|maintenance\s+tech(nician)?)\b/i },
+  { label: 'guard',       re: /\b((?<!information\s)(?<!cyber\s)security\s+(officers?|guards?)|unarmed\s+security|janitor(ial)?s?|custodians?|housekeep\w*|groundskeep\w*|porters?|maintenance\s+tech(nician)?s?)\b/i },
   { label: 'hospitality', re: /\b(front\s+desk|guest\s+service|concierge|valet|hotel\s+operations)\b|\bfront\s+office\b(?=.*\b(hotel|resort|guest|housekeep))/i },
-  { label: 'labor',       re: /\b(equipment\s+operator|machine\s+operator|general\s+labor\w*|laborer|flagger|traffic\s+control|landscapers?\b|landscaping\b|production\s+(associate|operator|worker)|assembly\s+line|assembler|fabricator|welder|pipefitter|journeyman|apprentice|rental\s+agent|leasing\s+(agent|consultant)|process\s+server)\b/i },
+  { label: 'labor',       re: /\b(equipment\s+operator|machine\s+operator|general\s+labor\w*|laborer|flagger|traffic\s+control|landscapers?\b|landscaping\b|production\s+(associate|operator|worker)|assembly\s+line|assemblers?|fabricators?|welders?|pipefitters?|journey(man|men)|apprentices?|rental\s+agent|leasing\s+(agent|consultant)|process\s+server)\b/i },
   // Spanish-language titles evade English patterns entirely (caught:
   // "Asociado de Almacén - Tercer Turno" = Warehouse Associate, 3rd shift).
   { label: 'non-english', re: /\b(asociado|almacen|bodega|conserje|cocinero|mesero|cajero)\b/i },
