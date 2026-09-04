@@ -621,3 +621,40 @@ processor and an entity — or an explicit written decision to stay free.
 - REMAINING (next session): Step 5 block-the-door — junkClass check in all 6
   fetchers; Step 6 arm Workday 21-100; add monthly junk suspicious-scan to
   the C5 routine. Above all of it, still: candidate #1 message.
+
+---
+## Session log 2026-09-05 — C10 COMPLETE (all 6 steps) + Step 6 verified live
+- CORRECTION ON RECORD: morning "tags lost" diagnosis was FALSE — a PowerShell-
+  mangled $exists query printed a fake zero. Tags were never lost. Standing
+  rule: $-operator queries ONLY via here-strings or files, never quoted -e.
+- STEP 5 SHIPPED: junkClass computed at all 9 save sites across 6 fetchers
+  (label or explicit null — self-clears on title change); server filters
+  junkClass:null. PROVEN LIVE: first 100-tenant run door-tagged 579 of 4,899
+  workday jobs unaided ("Retail Parts Pro" -> auto; advanceauto 263/446).
+- STEP 6 ARMED + VERIFIED: schedule at 100 tenants (explicit || fallback on
+  the cron path), timeout 300 (from measured 165min/80). First run: 93/100,
+  4,039 new + 872 refreshed, gates sane, no floods. Workday ~4,900; board ~64k.
+  Board verify: Amgen directors/clinical visible; parts-counter jobs hidden.
+- LIVE CATCH post-run (Aravind): "Retail Parts Professional" escaped the
+  "parts pro" boundary — suffix fixed (pro(fessional)?s?), 2 stragglers
+  tagged (f35ee9c). Suffix/plural rounds now both on record.
+- FAILED TENANTS NAMED (patch paid off day one): activision (422 — SKIP NOW,
+  wrong-path signature) · aaamidatlantic, acehardware, allina, amh, arbella
+  (500s — one more run decides) · amplify (403 — watch).
+- VERIFIES: Werkstudent = 0 (ZIP-leak self-healed via sweep) · Express Oil
+  name healed ("Express Oil Change & Tire Engineers"; 51/124 junk-tagged;
+  "Hiring Event" titles = known pattern residual).
+- PRICING (A4 substantially drafted): structure DECIDED — Free 3 / Active
+  $19.99·300 / Power $39.99·1,000, 30-day passes, top-up packs at launch, NO
+  Unlimited tier. Unit economics verified ~1-1.5c/optimization (OpenAI, 2-3x
+  margin; cost hostage to model choice — rerun at A5). DECISION: no interim
+  waitlist; live /pricing stays as-is until real checkout exists (processor
+  + entity + DSO + E7). Waitlist code built, tested, reverted, parked.
+- DESIGN: designer friend joined. Sample reviewed — direction APPROVED with 5
+  corrections sent: real pricing numbers; F1/OPT positioning must LEAD;
+  "Show all roles" toggle killed (contradicts the promise); ATS/coverage
+  wording not match-%; font decision + mobile depth. Process: page-by-page,
+  board first, localhost before ship.
+- NEXT: add activision to workday_skip.txt; read next scheduled run for
+  500-repeaters; Workday stage 400 later; A5 fabrication fix; friends'
+  REPLIES — the open loop above everything.
