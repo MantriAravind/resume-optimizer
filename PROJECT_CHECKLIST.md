@@ -592,3 +592,32 @@ processor and an entity — or an explicit written decision to stay free.
 - .env: dead PDFSHIFT_API_KEY line deleted.
 - VALIDATION: candidate #1 message still NOT sent. Carries forward, top of
   the list.
+
+---
+## Session log 2026-09-04 (late night) — C10 Steps 1-4 SHIPPED
+- MEASURE: measureJunk.mjs, 8 rough classes over 59,678 titles -> 2,789 visible.
+  Inverse sample found the 9th class (manual labor), Spanish-title evasion, and
+  the European-ZIP location leak (fixed same night: classifyLocation guard
+  generalized, 9-case battery green; Karlsruhe/Alicante jobs self-heal via
+  sweep — VERIFY Werkstudent query returns empty after next Greenhouse run).
+- BUILD: junkClass() in jobCategory.mjs — 10 classes, every guard evidenced
+  from the dry reports: bare server/delivery/driver/collision/automotive all
+  context-required; App Store lookbehind; landscape-architecture, finance
+  front-office, and executive-host guards; GLOBAL seniority exemption
+  (director/vp/chief/head-of); information/cyber security officer protected;
+  frontline nouns plural-proofed ("Security Officers" escaped singular
+  pattern, caught on the live board).
+- DRY: dryJunk.mjs full would-hide report x2; suspicious-scan 7 of 3,782, all
+  defensible; guard class audited in full (1,029 jobs / 602 titles: 357 maint
+  techs, 101 security officers — 2 suspicious, both trade roles).
+- APPLY: applyJunk.mjs (--dry / --undo) — clean undo+retag, 3,791 tagged in
+  prod; server.js board query excludes junkClass ($exists:false, same logic
+  as needsLicense). VERIFIED on optyply.com: "Line Cook" empty, "Security
+  Officers" empty, CISOs at Zipline/Cohere/Allegis still visible, "Software
+  Engineer" untouched. Reversibility proven in production via --undo.
+- ADMIN-DASHBOARD PARKING LOT started (build only after Phase A): unhide-by-
+  class UI, needs_review logo queue, logo demote button, per-source pipeline
+  health, registry/corpse view, "report a missing job" inbox.
+- REMAINING (next session): Step 5 block-the-door — junkClass check in all 6
+  fetchers; Step 6 arm Workday 21-100; add monthly junk suspicious-scan to
+  the C5 routine. Above all of it, still: candidate #1 message.
