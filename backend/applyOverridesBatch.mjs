@@ -32,7 +32,10 @@ for (const [key, domain] of Object.entries(OVERRIDES)) {
   if (!DRY) {
     await col.updateOne({ ats, slug }, { $set: {
       officialDomain: domain,
-      'branding.logoUrl': `https://cdn.brandfetch.io/${domain}?c=${CLIENT_ID}`,
+      // /fallback/404: same fix as enrichCompanies (2026-09-03) — without it,
+      // unknown domains render Brandfetch's own "B" as if it were the company
+      // mark. This door was missed in that patch; caught live on alfalaval.
+      'branding.logoUrl': `https://cdn.brandfetch.io/${domain}/fallback/404?c=${CLIENT_ID}`,
       'branding.logoSource': 'manual_override',
       logoStatus: 'provider',
       updatedAt: new Date(),
