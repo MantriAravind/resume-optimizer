@@ -594,12 +594,18 @@ function hasUSCountryOrState(lower) {
 // A 5-digit postal code only means "US" once an explicit foreign country has been ruled
 // out — France, Germany and Spain all use 5-digit codes too.
 function hasUSZip(lower) {
-  // European addresses put the postal code FIRST ("67000 Strasbourg"); US
-  // addresses put it LAST ("Portland, OR 97201"). A leading 5-digit code
-  // followed by a word is European format — 26 French JD Sports jobs reached
-  // the live board through exactly this hole, because none of their cities
-  // were in the marker list and the bare ZIP then read as US.
-  if (/^\s*\d{5}\s+[a-z]/.test(lower)) return false
+  // European addresses put the postal code IMMEDIATELY BEFORE the city
+  // ("67000 Strasbourg", "76137 Karlsruhe"); US addresses put it after
+  // ("Portland, OR 97201"). The original guard only checked position zero —
+  // 26 French JD Sports jobs leaked that way — but a street address puts the
+  // code MID-string ("Hinterm Hauptbahnhof 3-5, 76137 Karlsruhe"), and 4
+  // IONOS Karlsruhe + 3 Sprinter Alicante jobs reached the live board through
+  // that gap (caught 2026-09-04 via C10's inverse sample). So: a 5-digit
+  // group followed by a word, ANYWHERE, is European format.
+  // Accepted residual: a US address written street-number-first with NO state
+  // ("12345 Main Street, Springfield 62704") now drops to unknown — fail-safe,
+  // rare, and the checker's unknown list surfaces it.
+  if (/(^|[^\d])\d{5}\s+[a-z]/.test(lower)) return false
   return /(^|[^\d])\d{5}(-\d{4})?([^\d]|$)/.test(lower) && /[a-z]/.test(lower)
 }
 // City names that exist BOTH abroad and in the US. For these, a US state code wins
