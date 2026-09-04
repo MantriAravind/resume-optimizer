@@ -23,8 +23,13 @@
 # if a rejected-jobs cache ever makes re-judging free.
 aah
 
-# 2026-09-03 (11-20 dry run): 275 of 537 passed jobs — 51% of the whole stage.
+# 2026-09-03 (11-20 dry run): 275 of 537 passed jobs ï¿½ 51% of the whole stage.
 # Auto Club Enterprises (AAA): commission Sales Agents, licence-required Life
 # Sales Agents, Travel Consultants, Driving School Instructors, branch retail.
 # Round-3 licence candidates logged: life sales agent / insurance agent.
 ace
+
+# 2026-09-05 (first 100-tenant run): HTTP 422 on both this and the 09-03 dry
+# run â€” wrong-path signature, board never answers. Zero jobs ever fetched;
+# retrying burns time every cycle for nothing.
+activision
