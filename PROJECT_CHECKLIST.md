@@ -658,3 +658,32 @@ processor and an entity — or an explicit written decision to stay free.
 - NEXT: add activision to workday_skip.txt; read next scheduled run for
   500-repeaters; Workday stage 400 later; A5 fabrication fix; friends'
   REPLIES — the open loop above everything.
+
+---
+## Session log 2026-09-05 (night) — Qode acronym leak + logo round at 100-scale
+- LIVE LEAK caught by Aravind on the board: Qode staffing posts read "ONLY USC
+  and GC no other visas will be considered" — ALL 174 disqualifier patterns
+  spell the words out; none knew acronym-speak. Function-tested: 5/5 variants
+  passed the old filter. FIX: 11-pattern acronym/other-visas family with
+  collision guards (USC-the-university is in our own uni list; GC = gas
+  chromatography in lab posts) — 12-case battery green. Board-wide stored-
+  text scan: 2 leaks of 63,686, BOTH Qode, both purged (leakPurge.mjs built +
+  committed, dry mode). Deep-text siblings self-clean via the next cycles
+  through the widened gate. Lessons: recruiters write in acronyms — queue an
+  acronym pass over filterCheck's phrase families; Qode = staffing agency
+  worth watching; founder-on-the-board caught what patterns missed, 4th time
+  this week.
+- LOGO ROUND at 100-tenant scale: 161 enriched (144 provider / 17 review).
+  Eyeball caught 13 wrong: 5 overridden with verified domains (Advance Auto
+  Parts, Applied Materials, Alfa Laval, Molton Brown, Study.com), 8 wrong-
+  shaped demoted to initials. THEN caught live: applyOverridesBatch was the
+  door MISSED in the 09-03 fallback/404 fix — alfalaval rendered the
+  Brandfetch "B" again. Patched; fixLogoUrls swept 6 old-form URLs (incl.
+  reflex from Thursday). Board state: 5,780 companies with logos, 939
+  initials, 3,696 visible cards on initials (~6%), zero known wrong logos.
+- QUEUED next session: pattern round — "Salesperson"/"Commercial Specialist"
+  (advanceauto escapees, measure first), Express Oil "Hiring Event" titles;
+  workday_names mechanism for Amat -> Applied Materials, Advanceauto ->
+  Advance Auto Parts; next scheduled run log (activision skipped — do the
+  five 500-tenants repeat?); design page 1 (job board) with designer.
+- STANDING ABOVE ALL: friends' replies — messages sent, replies unreported.
