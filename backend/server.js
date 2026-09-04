@@ -100,6 +100,7 @@ const jobSchema = new mongoose.Schema({
   // Job field, written by the pipeline from the title via jobCategory.mjs.
   field:           String,
   needsLicense:    Boolean,
+  junkClass:       String,   // C10: junk-for-F1 class label (retail/food/labor/...) — non-null is hidden
   fetchedAt:       Date,
   experienceLevel: String,
   workType:        String,
@@ -1921,6 +1922,12 @@ app.get('/jobs', async (req, res) => {
     // `$ne: true` rather than `false` on purpose: jobs saved before this field existed
     // have no value at all, and a strict false would hide the entire back catalogue.
     filter.needsLicense = { $ne: true }
+    // C10 (2026-09-04): jobs that pass every visa gate but are useless to an
+    // F1 student — store staff, food service, trade labor — carry a junkClass
+    // label (set by applyJunk.mjs on the back catalogue; fetchers at the door).
+    // $exists:false, same logic as needsLicense's $ne: the untagged back
+    // catalogue stays visible. Reversible: unset the field and the job returns.
+    filter.junkClass = { $exists: false }
 
     // The field filter is deliberately no longer applied. Hiding four fifths of the
     // board on an inferred category meant a wrong inference was invisible and had no

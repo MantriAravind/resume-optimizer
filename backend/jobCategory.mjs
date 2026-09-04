@@ -239,6 +239,45 @@ function splitTitle(raw) {
  *
  * Errs toward false. A missed one shows on the board; a wrong true hides a real job.
  */
+// ── C10: JUNK-FOR-F1 CLASSES ─────────────────────────────────────────────────
+// Jobs that pass every visa/location gate honestly but are useless to an F1/OPT
+// student: store staff, food service, trade labor. Built 2026-09-04 from
+// measureJunk.mjs against all 59,678 live titles (junk-report.md is the source).
+// Every guard below exists because the measurement CAUGHT a real job:
+//   - bare "server"    caught "Feature Server" (Esri), "Server/Full-stack" (Zynga)
+//   - bare "delivery"  caught "Technical Delivery Manager", "AI Delivery Lead"
+//   - bare "driver"    would catch "Device Driver Engineer"
+//   - bare "collision" caught a Waymo Staff SWE (Collision Avoidance)
+//   - bare "automotive" caught copywriters and SaaS account managers
+//   - "home health" alone caught Clinical Managers and Directors — legit roles
+// Returns the class label or null. Saved as job.junkClass; the board hides
+// non-null (reversible: unset the field). Fetchers also drop at the door.
+const JUNK_CLASSES = [
+  { label: 'retail',      re: /(?<!app\s)(?<!play\s)\b(store|retail|boutique)\s+(manager|assistant\s+manager|associate|supervisor|lead|team\s+lead|keyholder|key\s+holder|stylist)|\b(cashier|merchandiser|stock(er|ing)\s+associate|shift\s+(lead|supervisor))\b/i },
+  { label: 'auto',        re: /\b(automotive|auto)\s+(service|technician|tech|mechanic|detailer|advisor|body|parts|glass)\b|\b(oil\s+change|lube\s+tech|tire\s+(tech|installer|center|sales)|car\s+wash|collision\s+(repair|center|estimator)|body\s+shop|service\s+advisor|dealership|parts\s+(pro|counter|specialist|manager)|a&p\s+mechanic|aircraft\s+mechanic)\b/i },
+  { label: 'care',        re: /\b(aides?|orderl(y|ies)|phlebotom\w+|patient\s+care\s+tech(nician)?)\b/i },
+  { label: 'insurance',   re: /\b(insurance\s+(sales|agent|producer)|sales\s+agent|claims\s+(adjuster|processor|representative|rep|examiner))\b/i },
+  { label: 'food',        re: /\b(line\s+cook|prep\s+cook|\bcook\b|sous\s+chef|pastry\s+chef|executive\s+chef|head\s+chef|dishwash\w*|busser|barback|barista|bartender|banquet|food\s+(service|runner|prep)|steward\b|(?<!executive\s)host(ess)?\b|(restaurant|catering|cocktail|dining|club)\s+server|server\s+assistant|dining\s+room)\b/i },
+  { label: 'warehouse',   re: /\b(warehouse\s+(associate|lead|worker|tech(nician)?|support|team|operator)|forklift|order\s+picker|packer|material\s+handler|dock\s+worker|loader|route\s+delivery|delivery\s+(driver|professional|associate)|(cdl|truck|van|shuttle|bus)\s+driver)\b|^driver\b|\bdriver$/i },
+  { label: 'guard',       re: /\b(security\s+(officer|guard)|unarmed\s+security|janitor(ial)?|custodian|housekeep\w*|groundskeep\w*|porter|maintenance\s+tech(nician)?)\b/i },
+  { label: 'hospitality', re: /\b(front\s+desk|guest\s+service|concierge|valet|hotel\s+operations)\b|\bfront\s+office\b(?=.*\b(hotel|resort|guest|housekeep))/i },
+  { label: 'labor',       re: /\b(equipment\s+operator|machine\s+operator|general\s+labor\w*|laborer|flagger|traffic\s+control|landscapers?\b|landscaping\b|production\s+(associate|operator|worker)|assembly\s+line|assembler|fabricator|welder|pipefitter|journeyman|apprentice|rental\s+agent|leasing\s+(agent|consultant)|process\s+server)\b/i },
+  // Spanish-language titles evade English patterns entirely (caught:
+  // "Asociado de Almacén - Tercer Turno" = Warehouse Associate, 3rd shift).
+  { label: 'non-english', re: /\b(asociado|almacen|bodega|conserje|cocinero|mesero|cajero)\b/i },
+]
+export function junkClass(title = '') {
+  const t = title.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  // Seniority exemption: Directors/VPs of anything are professional management,
+  // not frontline junk — the dry run caught "Director of Housekeeping" and
+  // "VP - Hotel Operations", both hospitality-degree career roles. Finance's
+  // "front office" (trading desk) and "Landscape Architecture" designers are
+  // guarded in the class patterns above, for the same reason.
+  if (/\b(director|vice\s+president|vp|chief|head\s+of)\b/i.test(t)) return null
+  for (const c of JUNK_CLASSES) if (c.re.test(t)) return c.label
+  return null
+}
+
 export function requiresLicense(title) {
   if (!title) return false
   const t = ' ' + String(title)
