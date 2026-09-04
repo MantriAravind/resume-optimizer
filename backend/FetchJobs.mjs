@@ -218,6 +218,27 @@ const DISQUALIFIER_PATTERNS = [
   /\bregret\s+that\s+we\s+are\s+unable\s+to\s+(offer|provide)/,
   /\bgreen\s+card\s+(is\s+)?required\b/,
   /\bgc\s+required\b/,
+  // ── ACRONYM-SPEAK (caught live 2026-09-05: a staffing post read "ONLY USC and
+  // GC no other visas will be considered" and passed all 174 patterns — every
+  // rule above spells the words out). Collision guards are load-bearing here:
+  // "USC" is also the university (it is in our own university list) and "GC"
+  // is gas chromatography in lab postings ("GC/MS"), so neither acronym may
+  // ever match alone — always paired, or bound to holder/only/required context.
+  /\buscs?\s*(\/|,|\s+(and|or)\s+)\s*(gc|green\s+card)s?\b/,
+  /\b(gc|green\s+card)s?\s*(\/|,|\s+(and|or)\s+)\s*uscs?\b/,
+  /\bonly\s+uscs?\b/,
+  /\bmust\s+be\s+(a\s+)?usc\b/,
+  /\bgc\s+holders?\b/,
+  // "Must be USC or Green Card holder" — the requirement form of green card,
+  // which every rule above only knew inside no-sponsorship chains.
+  /\bmust\s+be\s+([\w-]+\s+){0,3}green\s+card\s+holders?\b/,
+  /\bgreen\s+card\s+holders?\s+only\b/,
+  /\bcitizens?\s+(and|or|\/)\s*(lawful\s+)?green\s+card\s+holders?\b/,
+  // "no other visas will be considered" — refusal phrased about the visas,
+  // not about sponsorship, so the sponsorship families never see it.
+  /\bno\s+other\s+visas?\b/,
+  /\bother\s+visas?\s+(will\s+)?not\s+(be\s+)?(considered|accepted|eligible)\b/,
+  /\bvisas?\s+will\s+not\s+be\s+(considered|accepted)\b/,
   /\bpermanent\s+resident\s+(is\s+)?required\b/,
   /\bmust\s+be\s+(us\s+|u s\s+|united states\s+)?citizens?\b/,
   /\bcitizens?\s+or\s+(lawful\s+)?permanent\s+residents?\b/,
