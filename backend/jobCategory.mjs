@@ -253,7 +253,7 @@ function splitTitle(raw) {
 // Returns the class label or null. Saved as job.junkClass; the board hides
 // non-null (reversible: unset the field). Fetchers also drop at the door.
 const JUNK_CLASSES = [
-  { label: 'retail',      re: /(?<!app\s)(?<!play\s)\b(store|retail|boutique)\s+(manager|assistant\s+manager|associate|supervisor|lead|team\s+lead|keyholder|key\s+holder|stylist)|\b(cashiers?|merchandisers?|stock(er|ing)\s+associates?|shift\s+(leads?|supervisors?))\b/i },
+  { label: 'retail',      re: /(?<!app\s)(?<!play\s)\b(store|retail|boutique)\s+(manager|assistant\s+manager|associate|supervisor|lead|team\s+lead|keyholder|key\s+holder|stylist)|\b(cashiers?|merchandisers?|stock(er|ing)\s+associates?|shift\s+(leads?|supervisors?)|sales\s?persons?|commercial\s+specialists?)\b|\b(restaurant|retail|deli|travel\s+center|gym|salon|store|optical)\b[^|]{0,30}\bgeneral\s+manager|\bgeneral\s+manager\b[^|]{0,15}\b(optical|trainee)\b/i },
   { label: 'auto',        re: /\b(automotive|auto)\s+(service|technician|tech|mechanic|detailer|advisor|body|parts|glass)\b|\b(oil\s+change|lube\s+tech|tire\s+(tech|installer|center|sales)|car\s+wash|collision\s+(repair|center|estimator)|body\s+shop|service\s+advisor|dealership|parts\s+(pro(fessional)?s?|counter|specialist|manager)|a&p\s+mechanic|aircraft\s+mechanic)\b/i },
   { label: 'care',        re: /\b(aides?|orderl(y|ies)|phlebotom\w+|patient\s+care\s+tech(nician)?)\b/i },
   { label: 'insurance',   re: /\b(insurance\s+(sales|agent|producer)|sales\s+agent|claims\s+(adjuster|processor|representative|rep|examiner))\b/i },
@@ -264,6 +264,7 @@ const JUNK_CLASSES = [
   { label: 'labor',       re: /\b(equipment\s+operator|machine\s+operator|general\s+labor\w*|laborer|flagger|traffic\s+control|landscapers?\b|landscaping\b|production\s+(associate|operator|worker)|assembly\s+line|assemblers?|fabricators?|welders?|pipefitters?|journey(man|men)|apprentices?|rental\s+agent|leasing\s+(agent|consultant)|process\s+server)\b/i },
   // Spanish-language titles evade English patterns entirely (caught:
   // "Asociado de Almacén - Tercer Turno" = Warehouse Associate, 3rd shift).
+  { label: 'event',       re: /\b(hiring\s+event|job\s+fair|open\s+interviews?|walk-?in\s+(interviews?|hiring))\b/i },
   { label: 'non-english', re: /\b(asociado|almacen|bodega|conserje|cocinero|mesero|cajero)\b/i },
 ]
 export function junkClass(title = '') {
