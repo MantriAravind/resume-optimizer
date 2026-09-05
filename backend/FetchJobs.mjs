@@ -239,6 +239,14 @@ const DISQUALIFIER_PATTERNS = [
   /\bno\s+other\s+visas?\b/,
   /\bother\s+visas?\s+(will\s+)?not\s+(be\s+)?(considered|accepted|eligible)\b/,
   /\bvisas?\s+will\s+not\s+be\s+(considered|accepted)\b/,
+  // Bare "U.S. Person" (export-control speak; an F1 student is not one).
+  // Caught 2026-09-06 by the semantic auditor: OceanComm listed it as a naked
+  // two-word bullet — after HTML stripping there is NO requirement context to
+  // anchor on, so the guarded bare form is the only catchable shape. The left
+  // guard is load-bearing: without it this matches inside "Bus Person" and
+  // "audacious person" (both live on the board). Accepted collateral: analytic
+  // mentions in tax/sanctions roles ("obligations of U.S. persons").
+  /(^|[^a-z])u\.?s\.?[\s-]+persons?\b/,
   /\bpermanent\s+resident\s+(is\s+)?required\b/,
   /\bmust\s+be\s+(us\s+|u s\s+|united states\s+)?citizens?\b/,
   /\bcitizens?\s+or\s+(lawful\s+)?permanent\s+residents?\b/,
