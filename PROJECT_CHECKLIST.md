@@ -711,3 +711,52 @@ processor and an entity — or an explicit written decision to stay free.
   +305 tagged; board 4,663 hidden of 63,576. "Salesperson" verified empty.
 - QUEUED: amplify/activision path fix; design page 1 (board) with designer;
   acronym pass over filterCheck phrase families; friends' replies.
+
+---
+## Session log 2026-09-06 (night) — SEMANTIC AUDITOR: first blood, doctrine settled
+- BUILT semanticAudit.mjs (v4 after calibration): samples visible jobs evenly
+  across all 6 sources, pulls FULL text via our own /jobs/:id (works for every
+  ATS — the detail pane's path), asks gpt-5-nano ONE question: does this
+  restrict visa candidates in ANY wording. ~$0.05/200 jobs. Calibration run
+  (20) + main run (200): ~50% flag precision at ~5.7% flag rate — sampling
+  for DISCOVERY, patterns for SWEEPING (a 60k semantic sweep would dump
+  ~3,400 flags; ruled out).
+- CATCHES -> 8 NEW DISQUALIFIER PATTERNS, two families + one bare form:
+  (1) guarded bare U.S. Person — OceanComm listed it as a naked <li> bullet;
+  after HTML strip there is NO anchor context. Left guard load-bearing
+  ("Bus Person", "audacious person" live on the board). Job purged.
+  (2) INVERSION family — "work authorization that does not now, or in the
+  future, require visa sponsorship (e.g., H-1B, F-1 CPT, F-1 OPT, TN)" —
+  Ameriprise names our users verbatim; never says "no sponsorship".
+  (3) EUPHEMISM family — "not our practice to sponsor" (Allstate).
+- TENANT-WIDE BOILERPLATE UNMASKED: Ameriprise (~140) and Allstate (~35)
+  stamp the refusal into EVERY posting, past char 500 — invisible to stored-
+  text scans, on the board for days. miniDeepClean.mjs (deep-clean PROTOTYPE:
+  full-text re-judge via own API) purged the scoped set. Their future posts
+  die at the door via the new families — no skip entry needed.
+- VALIDATED before push: 360 random full-text jobs through the widened
+  filter — ZERO false positives (the one fail was a sampled Ameriprise).
+- PRODUCT DECISION (Aravind, verbatim intent): "Sponsorship for this role is
+  not guaranteed" (Amgen-class hedge) KEPT — "let user might take a chance
+  to apply"; banner already says confirm with employer.
+- DOCTRINE SETTLED (Aravind's formulation): monthly routine = FULL deep clean
+  — every visible job, full description re-fetched, re-judged by current
+  filter (~$0, chunked overnight runs). The semantic SAMPLE (~200-400) is
+  the scout that teaches patterns BEFORE the sweep. Order: sample -> patterns
+  -> full sweep. miniDeepClean is the sweep's prototype; full version = top
+  pipeline build (unscoped + chunk/resume + updated_at re-fetch trick).
+- HONEST CORRECTIONS on record: "cycles self-heal" is TRUE for title/location/
+  listing fields, FALSE for description verdicts (judged once at entry) —
+  this session's three converging questions (pattern archaeology, mid-flight
+  edits, friend's contract question) all point at the same missing tool.
+- ALSO: sixBoardCheck clean 0/300 (preview scope); auditor v1 shipped 20
+  errors silently — errors now LOUD with self-declaring worthless-run banner.
+- TENANT DECISION (Ameriprise, deliberated both ways with evidence): KEEP.
+  182 boilerplate refusals purged; ~24 survivors full-text-verified clean —
+  mostly franchise-practice licensure-track roles, but including real
+  corporate tech (Principal Architect $140-190K, Contact Center Engineer).
+  Door patterns now kill their boilerplate posts at entry; no skip needed.
+  Revisit at E1 with USCIS sponsorship data. (Allstate same treatment.)
+- QUEUED: FULL DEEP CLEAN build (top); monthly routine entry #1 (sample 400
+  on the cleaned board); design page 1; amplify/activision paths; A5;
+  friends' replies (standing).
