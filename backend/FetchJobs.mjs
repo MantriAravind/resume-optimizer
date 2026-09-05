@@ -247,6 +247,17 @@ const DISQUALIFIER_PATTERNS = [
   // "audacious person" (both live on the board). Accepted collateral: analytic
   // mentions in tax/sanctions roles ("obligations of U.S. persons").
   /(^|[^a-z])u\.?s\.?[\s-]+persons?\b/,
+  // ── SEMANTIC-AUDIT CATCHES, 200-run 2026-09-06 ─────────────────────────────
+  // Family 1: the INVERSION — requiring authorization that does NOT (now or in
+  // future) require sponsorship. Ameriprise even enumerates "F-1 CPT, F-1 OPT".
+  // The no-sponsorship families never fire because the sentence never says
+  // "no sponsorship" — it demands its absence.
+  /\bwork\s+authorization\s+(that|which)\s+(does|will)\s+not[^.]{0,60}(require|need)[^.]{0,40}(visa\s+)?sponsorship/,
+  /\bwithout\s+(current,?\s*(or|and)\s*future,?\s*)?need\s+(of|for)\s+(a\s+)?(visa\s+)?sponsorship/,
+  /\b(does|will)\s+not\s+now,?\s*(or|and)\s*(in\s+the\s+)?future,?\s*require\s+(visa\s+)?sponsorship/,
+  // Family 2: the EUPHEMISM — refusal phrased as company habit.
+  /\bnot\s+our\s+(practice|policy)\s+to\s+sponsor/,
+  /\bwe\s+do\s+not\s+(currently\s+)?(offer|provide)\s+(visa\s+)?sponsorship/,
   /\bpermanent\s+resident\s+(is\s+)?required\b/,
   /\bmust\s+be\s+(us\s+|u s\s+|united states\s+)?citizens?\b/,
   /\bcitizens?\s+or\s+(lawful\s+)?permanent\s+residents?\b/,
