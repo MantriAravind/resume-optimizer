@@ -247,6 +247,16 @@ const DISQUALIFIER_PATTERNS = [
   // "audacious person" (both live on the board). Accepted collateral: analytic
   // mentions in tax/sanctions roles ("obligations of U.S. persons").
   /(^|[^a-z])u\.?s\.?[\s-]+persons?\b/,
+  // Clearance stated as a LABEL, not a sentence ("Clearance Level: Secret
+  // Required to Start" — Agile Defense via Lever, semantic-audit catch #4,
+  // 2026-09-07). The prose patterns need "clearance ... required" wording;
+  // label format and bare grade names evade them.
+  // "Clearance Level: None / N-A / Not required" is the GOOD answer — only
+  // actual grades disqualify.
+  /\bclearance\s+level\s*:(?!\s*(none\b|n\/?a\b|not\s+(required|applicable)))/,
+  /\b(active|current)\s+(top\s+)?secret\s+clearance/,
+  /\b(top\s+secret|ts\/?sci)\b/,
+  /\bsecret\s+clearance\s+(is\s+)?(required|preferred|desired)/,
   // ── SEMANTIC-AUDIT CATCHES, 200-run 2026-09-06 ─────────────────────────────
   // Family 1: the INVERSION — requiring authorization that does NOT (now or in
   // future) require sponsorship. Ameriprise even enumerates "F-1 CPT, F-1 OPT".
@@ -257,6 +267,18 @@ const DISQUALIFIER_PATTERNS = [
   /\b(does|will)\s+not\s+now,?\s*(or|and)\s*(in\s+the\s+)?future,?\s*require\s+(visa\s+)?sponsorship/,
   // Family 2: the EUPHEMISM — refusal phrased as company habit.
   /\bnot\s+our\s+(practice|policy)\s+to\s+sponsor/,
+  // 500-run catches, 2026-09-07:
+  // Inversion variant without the "need of" wording (Aoins): "ability to work
+  // in the U.S. without current or future sponsorship is a requirement".
+  /\bwithout\s+current,?\s*(or|and)\s*future,?\s*(need\s+(of|for)\s+)?(visa\s+)?sponsorship/,
+  // Label format (Alliance): "Sponsorship: No". Alternation deliberately
+  // excludes "not guaranteed" — the Amgen hedge is KEPT by decision.
+  /\b(visa\s+)?sponsorship\s*:\s*(no|none|not\s+available|unavailable)\b/,
+  // Internal-only postings (City of NY civil-service titles, Crest transfer
+  // portal): not visa refusals — simply un-applyable from outside.
+  /\b(open|available)\s+only\s+to\s+(current\s+)?([\w\s]{0,25}\s+)?employees\b/,
+  /\binternal\s+(candidates?|applicants?|employees?)\s+only\b/,
+  /\(internal\s+only\)/,
   /\bwe\s+do\s+not\s+(currently\s+)?(offer|provide)\s+(visa\s+)?sponsorship/,
   /\bpermanent\s+resident\s+(is\s+)?required\b/,
   /\bmust\s+be\s+(us\s+|u s\s+|united states\s+)?citizens?\b/,
