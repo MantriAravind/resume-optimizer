@@ -1,0 +1,44 @@
+name: Deep clean (report-only)
+
+# C12 — re-judges Workday + SmartRecruiters full descriptions against the
+# current disqualifier. REPORT-ONLY: deletes nothing. Stamps make every chunk
+# resumable, so this cron grinds until the scope is exhausted, then each run
+# costs seconds (nothing left to judge -> report -> exit).
+# Remove the schedule after the report is read and the delete pass is done.
+on:
+  schedule:
+    - cron: '5 */3 * * *'   # every 3h at :05, clear of the fetchers' minutes
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deep-clean
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 170
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci || npm install
+      - name: Judge one chunk (6,000 jobs ≈ 2h)
+        working-directory: backend
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        run: node deepClean.mjs --limit 6000
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deep-clean-report
+          path: backend/deep-clean-report.md
+          overwrite: true

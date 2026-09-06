@@ -39,8 +39,8 @@ async function writeReport() {
   const fails = await J.find({ deepCleanFail: { $exists: true } }, { projection: { title: 1, company: 1, ats: 1, deepCleanFail: 1 } }).toArray()
   let rep = `# Deep clean report — stamp ${STAMP} — ${new Date().toISOString().slice(0, 16)}\n`
   const judged = await J.countDocuments({ deepCleanAt: STAMP })
-  const total = await J.countDocuments({ junkClass: null })
-  rep += `judged ${judged} of ${total} visible · FAILURES: ${fails.length}\n\n`
+  const total = await J.countDocuments({ junkClass: null, ats: { $in: ['workday', 'smartrecruiters'] } })
+  rep += `judged ${judged} · scope workday+smartrecruiters · FAILURES: ${fails.length}\n\n`
   for (const f of fails.sort((a, b) => (a.company > b.company ? 1 : -1)))
     rep += `- ${f.ats} · ${f.company} · ${f.title}\n  ...${f.deepCleanFail}...\n`
   fs.writeFileSync('deep-clean-report.md', rep)
@@ -49,10 +49,15 @@ async function writeReport() {
 if (REPORT) { await writeReport(); process.exit(0) }
 
 // visible, not yet judged under this stamp
+// Scope: ONLY the entry-judged sources. Greenhouse/Lever/Ashby/Workable get
+// full text in their LIST responses and re-run isDisqualified on every job
+// every cycle — they deep-clean themselves. Workday and SmartRecruiters fetch
+// descriptions once, for newcomers — they are the archaeology.
 const todo = await J.find(
-  { junkClass: null, deepCleanAt: { $ne: STAMP } },
+  { junkClass: null, deepCleanAt: { $ne: STAMP }, ats: { $in: ['workday', 'smartrecruiters'] } },
   { projection: { id: 1, title: 1, company: 1, ats: 1 } }
 ).limit(LIMIT === Infinity ? 0 : LIMIT).toArray()
+console.log('scope: workday+smartrecruiters ONLY (others self-clean per cycle)')
 console.log('to judge this run:', todo.length, LIMIT !== Infinity ? `(chunk limit ${LIMIT})` : '(until done)')
 
 let fails = 0, errors = 0, n = 0
