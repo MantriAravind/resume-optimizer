@@ -465,7 +465,16 @@ function isContractOrPartTime(plainText = '', title = '') {
   const hasFalsePositive = CONTRACT_FALSE_POSITIVES.some(re => re.test(t))
   if (hasFalsePositive) return false
 
-  const triggerMatch = t.match(/\b(contractors?|temporary|temp position|fixed[\s-]?term)\b/)
+  // Trigger rebuilt from the 2026-09-08 pattern audit (40 evidenced kills read):
+  // - bare "contractors?" DELETED — it fired on jobs that MANAGE contractors
+  //   (Corporate Counsel drafting contractor agreements, Commissioning
+  //   Engineers holding contractors accountable, BD selling to prime
+  //   contractors) — ~22 of 40 samples, zero unique legit catches; real
+  //   contract roles are caught by the title/(field)/contract-noun rules.
+  // - "temporary" now needs role-shape: "(temporary)" or "temporary
+  //   position/role/assignment..." — Gumloop's "temporary remote work
+  //   flexibility" perk killed five engineers.
+  const triggerMatch = t.match(/\btemporary\b(?=\s*\)|\s+(position|role|assignment|employment|worker|staffing|basis|cover|contract))|\btemp\s+position\b|\bfixed[\s-]?term\b/)
   if (triggerMatch) {
     const idx = triggerMatch.index
     const window = t.slice(Math.max(0, idx - 60), idx + triggerMatch[0].length + 60)
