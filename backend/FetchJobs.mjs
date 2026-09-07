@@ -273,7 +273,10 @@ const DISQUALIFIER_PATTERNS = [
   /\bwithout\s+current,?\s*(or|and)\s*future,?\s*(need\s+(of|for)\s+)?(visa\s+)?sponsorship/,
   // Label format (Alliance): "Sponsorship: No". Alternation deliberately
   // excludes "not guaranteed" — the Amgen hedge is KEPT by decision.
-  /\b(visa\s+)?sponsorship\s*:\s*(no|none|not\s+available|unavailable)\b/,
+  // Guards: "Relocation Assistance/Sponsorship: None" is a RELOCATION field
+  // (caught by the first deep-clean report — 4 Alcon jobs nearly deleted for
+  // not paying moving costs). Slash- or relocation-prefixed labels don't count.
+  /(?<!\/)(?<!relocation\s)\b(visa\s+)?sponsorship\s*:\s*(no|none|not\s+available|unavailable)\b/,
   // Internal-only postings (City of NY civil-service titles, Crest transfer
   // portal): not visa refusals — simply un-applyable from outside.
   /\b(open|available)\s+only\s+to\s+(current\s+)?([\w\s]{0,25}\s+)?employees\b/,

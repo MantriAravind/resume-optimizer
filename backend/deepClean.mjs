@@ -17,6 +17,7 @@ dotenv.config()
 
 const PROD = process.argv.includes('--prod')
 const REPORT = process.argv.includes('--report')
+const DELETE = process.argv.includes('--delete')
 const RESET = process.argv.includes('--reset')
 const lIdx = process.argv.indexOf('--limit')
 const LIMIT = lIdx > -1 ? Number(process.argv[lIdx + 1]) : Infinity
@@ -47,6 +48,32 @@ async function writeReport() {
   console.log(`📄 deep-clean-report.md · judged ${judged}/${total} · failures ${fails.length}`)
 }
 if (REPORT) { await writeReport(); process.exit(0) }
+
+// ── DELETE PASS: self-verifying. Re-fetches each flagged job's full text and
+// re-judges with the CURRENT filter — pattern fixes since the sweep (e.g. the
+// Alcon relocation guard) automatically spare their jobs. Deletes only what
+// still fails TODAY.
+if (DELETE) {
+  const flagged = await J.find({ deepCleanFail: { $exists: true } }, { projection: { id: 1, title: 1, company: 1 } }).toArray()
+  console.log('flagged jobs to re-verify:', flagged.length)
+  let del = 0, spared = 0, errs = 0
+  for (const j of flagged) {
+    try {
+      const r = await fetch(`${API}/jobs/${encodeURIComponent(j.id)}`, { signal: AbortSignal.timeout(20000) })
+      if (!r.ok) { errs++; continue }
+      const full = stripHtml(String((await r.json()).description || ''))
+      if (isDisqualified(`${j.title}\n${full}`, j.title)) {
+        await J.deleteOne({ _id: j._id }); del++
+      } else {
+        await J.updateOne({ _id: j._id }, { $unset: { deepCleanFail: '' } }); spared++
+        console.log('  SPARED (passes current filter):', j.company, '·', j.title)
+      }
+      await sleep(150)
+    } catch { errs++ }
+  }
+  console.log(`\ndeleted ${del} · spared ${spared} · errors ${errs}`)
+  process.exit(0)
+}
 
 // visible, not yet judged under this stamp
 // Scope: ONLY the entry-judged sources. Greenhouse/Lever/Ashby/Workable get
