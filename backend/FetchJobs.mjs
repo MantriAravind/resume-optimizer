@@ -141,8 +141,12 @@ const DISQUALIFIER_PATTERNS = [
   /\b(requires?|must have|must hold|must possess)\s+(a\s+|an\s+)?(active\s+|current\s+)?(public\s+trust|top[\s-]?secret|ts\/sci)\b/,
   /\btop\s+secret\b/, /\bts\/sci\b/, /\bts\s+sci\b/, /\bts-sci\b/, /\bsecret\s+clearance\b/, /\bdod\s+clearance\b/,
   // Catch-all clearance patterns — "obtain and maintain", filler words, bare mention (aggressive by design)
-  /\bsecurity\s+clearance\b/,
-  /\b(obtain|maintain|hold|possess|acquire|eligible|able|ability|require|requires|required)\b[^.]{0,40}\bsecurity\s+clearance\b/,
+  // Bare mention stays aggressive — but NOT when the sentence is saying a
+  // clearance is NOT needed ("no security clearance required", "is a plus but
+  // not necessary"). Found in the 2026-09-08 joint pattern read: the
+  // friendliest defense-adjacent ads were dying on their welcome sentence.
+  /(?<!\bno\s)(?<!\bwithout\s+a\s)(?<!\bwithout\s)\bsecurity\s+clearance\b(?!\s+(is\s+)?not\b|\s+is\s+a\s+plus|\s*[:,-]?\s*not\s+required)/,
+  /(?<!\bnot\s)(?<!\bnot\s(\w+\s){1,2})\b(obtain|maintain|hold|possess|acquire|eligible|able|ability|require|requires|required)\b[^.]{0,40}\bsecurity\s+clearance\b(?!\s+(is\s+)?not\b|\s*[:,-]?\s*not\s+required)/,
   /\b(obtain|maintain)\b[^.]{0,30}\bclearance\b/,
   /\bsecurity\s+clearance\b[^.]{0,40}\b(required|is required|must|eligib)/,
   /\b\(clearance\s+required\)/,
@@ -408,7 +412,18 @@ function isDisqualified(plainText = '', title = '') {
   // Title-only check, never run on descriptions: half of all postings say
   // 'as a team member you will' in the body. The title is the signal.
   if (title && isHourlyJob(title)) return true
-  const norm = normalize(plainText)
+  let norm = normalize(plainText)
+  // NEUTRALIZER (2026-09-08 joint pattern read): the clearance family is ~8
+  // overlapping patterns, and sentences saying a clearance is NOT needed
+  // ("no security clearance required", "does not require a security
+  // clearance", "is a plus but not necessary") tripped them anyway — the
+  // friendliest defense-adjacent ads dying on their welcome sentence.
+  // Blanking the negation idioms BEFORE matching beats guarding each pattern
+  // (same architecture as the EEO sentence-bounding).
+  norm = norm
+    .replace(/\b(?:no|without(?:\s+an?)?)\s+(?:active\s+)?(?:security\s+)?clearance\b[^.]{0,25}/g, ' ')
+    .replace(/\b(?:does|do|will|would|should)?\s*not\s+(?:require|requiring|need|needing)\b[^.]{0,30}\b(?:security\s+)?clearance\b/g, ' ')
+    .replace(/\b(?:security\s+)?clearance\b[^.]{0,30}\b(?:is\s+)?(?:not\s+(?:required|necessary|needed)|a\s+plus\b[^.]{0,25})/g, ' ')
   return DISQUALIFIER_PATTERNS.some(re => re.test(norm))
 }
 
