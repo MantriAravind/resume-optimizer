@@ -837,3 +837,26 @@ processor and an entity — or an explicit written decision to stay free.
   coverage counts) formalizes it. Both filter directions now instrumented.
 - WATCH TOMORROW: total visible count after all cycles (expect WELL above
   the old 59k — three un-suppressions compounding); Workday run summary.
+
+---
+## STANDING ROUTINE — the filter's health checks (added 2026-09-07)
+Frequency is the point. A silent bug costs jobs every hour it lives.
+
+**WEEKLY (2-5 min each):**
+- [ ] `node patternAudit.mjs --gh 120 --ashby 120` — read any pattern whose
+      samples show mainstream titles. (Catches: over-catch bugs.)
+- [ ] `node coverageCheck.mjs` — read any company with a big theirs-vs-ours
+      gap. (Catches: silent suppression, the OpenAI class.)
+- [ ] Board eyeball: open optyply.com, one search, one "Today" look.
+
+**MONTHLY (~30 min + overnight):**
+- [ ] Sampler: `node semanticAudit.mjs --prod --n 400` — read flags, add
+      patterns. (Catches: refusal wordings we don't know.)
+- [ ] Deep clean: bump STAMP in deepClean.mjs, let the Actions cron sweep
+      workday+SR, read report, run --delete. (Catches: old jobs judged by
+      old lists; description edits.)
+
+**AFTER ANY PATTERN CHANGE:**
+- [ ] Battery test before push (verbatim victim/survivor sentences).
+- [ ] patternAudit rerun as validation.
+- [ ] Purge scan if the change widens the filter.
