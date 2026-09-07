@@ -426,7 +426,12 @@ const CONTRACT_FALSE_POSITIVES = [
   /\b(roofing|general|licensed|preferred|certified)\s+contractors?\b/,
 ]
 function isContractOrPartTime(plainText = '', title = '') {
-  const t = (title + ' ' + plainText).toLowerCase()
+  // URLs are stripped before ANY matching: OpenAI's boilerplate links to
+  // "employee-and-contractor-privacy-policy.pdf" in every ad, and the bare
+  // word "contractor" inside that URL killed 186 of their 189 passable jobs
+  // (found 2026-09-08 via a jobright side-by-side; \b treats hyphens as
+  // word boundaries). A URL never declares employment type.
+  const t = (title + ' ' + plainText).toLowerCase().replace(/https?:\/\/\S+/g, ' ')
 
   if (/\([^)]*\bcontracts?\b[^)]*\)/i.test(title)) return true
 
@@ -461,6 +466,9 @@ function isContractOrPartTime(plainText = '', title = '') {
     const window = t.slice(Math.max(0, idx - 60), idx + triggerMatch[0].length + 60)
     if (/\bpermanent\b/.test(window)) return false
     if (/\b(eligible|will not)\b/.test(window)) return false
+    // "Employee and Contractor Privacy Policy" as text heading — a policy
+    // reference, not an employment type.
+    if (/\bprivacy\b/.test(window)) return false
     return true
   }
 
