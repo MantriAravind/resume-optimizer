@@ -760,3 +760,38 @@ processor and an entity — or an explicit written decision to stay free.
 - QUEUED: FULL DEEP CLEAN build (top); monthly routine entry #1 (sample 400
   on the cleaned board); design page 1; amplify/activision paths; A5;
   friends' replies (standing).
+
+---
+## Session log 2026-09-07 — C12 FIRST FULL CYCLE: sweep -> read -> guard -> delete, all verified
+- SWEEP RAN ON ACTIONS overnight: 3 chunks (~1h each), then cron runs at
+  seconds — 16,916 workday+SR jobs full-text re-judged vs ~206 patterns.
+  REPORT: 112 failures. Architecture note proven en route: Greenhouse/Lever/
+  Ashby/Workable re-judge full text EVERY cycle (list responses carry
+  descriptions) — only workday+SR are entry-judged; sweep scope corrected
+  from 59k/20h to 17k/3h after Aravind's "think again" cross-examination.
+- REPORT READ: Aoins tenant-wide (~75 incl. every Summer-2027 internship —
+  "without current or future sponsorship"), Alliance=Nissan (~29,
+  "Sponsorship: No" label), Amainc US-Person, Allstate straggler. AND the
+  reading caught a FALSE-POSITIVE CLASS: Alcon's "Relocation Assistance/
+  Sponsorship: None" is a MOVING-COSTS field — relocation guard added
+  (slash/relocation lookbehinds), battery 5/5. Amgen ambiguity rule applied:
+  ambiguity is not refusal.
+- DELETE PASS (--delete, self-verifying: re-fetches + re-judges each flagged
+  job against the CURRENT filter before deleting): 108 deleted · 4 Alcon
+  spared automatically by the new guard · 0 outstanding after retries.
+- PREDICTION KEPT — SELF-HEAL PROVEN LIVE: Agile Defense "Clearance Level:
+  Secret" job (Lever) vanished via Lever's OWN cycle after the pattern push,
+  zero manual purge. Board verifies: Aoins underwriting wall empty; clean
+  competitors (Alliedsolutions/Arlo/Arch) standing.
+- SAMPLER 500-RUN (earlier today): 4 new families — clearance-label (Aravind
+  caught mid-run), Aoins-inversion variant, sponsorship-label, internal-only.
+  False alarms instructive: Natera "GC" = Genetic Counselor (our guards
+  right where AI tripped); Amgen hedge x7 (prompt learns next month).
+  Discovery curve flattening: 200->3 families, 500->3 smaller, sweep->0.
+- STATE: ~200+ disqualifier patterns (273 regexes total in filter brain).
+  Monthly routine doctrine operational end to end. PIPELINE CONVERGED —
+  marginal filter hour now worth less than first Phase A hour.
+- NEXT SESSION: Phase A front and center (friends' replies, candidate #1
+  watch-session); design page 1 when designer answers; deep-clean schedule
+  stays (cron cheap, remove or monthly-ize later); commit sixBoardCheck/
+  measureSales tools + delete local artifacts.
