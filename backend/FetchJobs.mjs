@@ -279,7 +279,12 @@ const DISQUALIFIER_PATTERNS = [
   /(?<!\/)(?<!relocation\s)\b(visa\s+)?sponsorship\s*:\s*(no|none|not\s+available|unavailable)\b/,
   // Internal-only postings (City of NY civil-service titles, Crest transfer
   // portal): not visa refusals — simply un-applyable from outside.
-  /\b(open|available)\s+only\s+to\s+(current\s+)?([\w\s]{0,25}\s+)?employees\b/,
+  // Anchored on the POSITION being the subject — "This position is open only
+  // to City employees". Without the anchor this matched benefits boilerplate
+  // ("401k available only to regular employees", "referral bonuses open only
+  // to current employees") and suppressed thousands of legitimate jobs for
+  // ~36h across the self-re-judging sources (caught 2026-09-08 morning count).
+  /\b(position|role|posting|job|opportunity|vacancy|requisition)\s+(is\s+)?(open|available)\s+only\s+to\b[^.\n]{0,40}\bemployees\b/,
   /\binternal\s+(candidates?|applicants?|employees?)\s+only\b/,
   /\(internal\s+only\)/,
   /\bwe\s+do\s+not\s+(currently\s+)?(offer|provide)\s+(visa\s+)?sponsorship/,
