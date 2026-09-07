@@ -795,3 +795,45 @@ processor and an entity — or an explicit written decision to stay free.
   watch-session); design page 1 when designer answers; deep-clean schedule
   stays (cron cheap, remove or monthly-ize later); commit sixBoardCheck/
   measureSales tools + delete local artifacts.
+
+---
+## Session log 2026-09-08 (Labor Day) — THE FALSE-POSITIVE PURGE: three over-catch bugs killed in one day
+- MORNING: board count DOWN 3.6k -> Saturday's internal-only pattern was
+  matching benefits boilerplate ("401k available only to regular employees",
+  "referral bonuses open only to current employees") — anchored on
+  position-subject within 20 minutes of detection, pushed (ce03c47). Lesson:
+  the "16 jobs today" crater was bug + Labor Day both.
+- AFTERNOON, Aravind's ask — "scan the whole filter system for more
+  401k-class patterns and read it together": built patternAudit.mjs
+  (per-pattern kill attribution over 1,046 fresh US jobs from 126 live
+  boards, full text, snippets). READING: disqualifiers CLEAN (all 10 fired
+  patterns = genuine refusals); contract/PT gate GUILTY — 122 kills, ~70%
+  false: bare "contractors?" fired on jobs MANAGING contractors (Corporate
+  Counsel drafting contractor agreements, Commissioning Engineers holding
+  contractors accountable, BD selling to prime contractors), "temporary"
+  fired on perks ("15 days of temporary remote work flexibility" killed five
+  Gumloop engineers). LONGSTANDING — predates the weekend; Workday's
+  historic ~756 contract-kills/run partly this.
+- REBUILT on evidence (400adf8): bare contractors DELETED (zero unique legit
+  catches in 40 evidenced samples — real contract roles announce themselves
+  via title/(field)/contract-noun rules), temporary requires role-shape.
+  13-case battery on verbatim victim sentences. Validation rerun: 122 -> 38
+  kills, all genuine. WORKDAY REFEREE: yesterday saved 1/1044 details;
+  today saved 114 by tenant 21 and climbing (~15% pass rate, healthy).
+- EVENING, joint pattern read (Aravind's ask, line by line): caught over-
+  catch #3 — bare /security clearance/ ("aggressive by design") killed
+  "no security clearance required" ads — the friendliest defense-adjacent
+  postings dying on their welcome sentence, 8 overlapping family patterns.
+  Fix: clearance-negation NEUTRALIZER in isDisqualified (blank the negation
+  idioms pre-match, same architecture as EEO bounding) — beats per-pattern
+  whack-a-mole. 14-case battery. Pushed (f67351b).
+- ALSO: OpenAI live on the board (~180 jobs; last night's URL fix);
+  Ashby +5k confirmed; workday_skip "Skipping 5" live; architecture Q&A on
+  record (FetchJobs = Greenhouse fetcher + shared brain; single source of
+  truth; fetchGreenhouse/filters.mjs split = someday-refactor).
+- THE DAY'S SHAPE: three silent over-catch bugs (401k-internal, bare-
+  contractors, clearance-negation) found by counting, scanning, and reading —
+  none by waiting. patternAudit is now permanent; C13 (routine reject-audit +
+  coverage counts) formalizes it. Both filter directions now instrumented.
+- WATCH TOMORROW: total visible count after all cycles (expect WELL above
+  the old 59k — three un-suppressions compounding); Workday run summary.
