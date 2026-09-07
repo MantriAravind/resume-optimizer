@@ -860,3 +860,23 @@ Frequency is the point. A silent bug costs jobs every hour it lives.
 - [ ] Battery test before push (verbatim victim/survivor sentences).
 - [ ] patternAudit rerun as validation.
 - [ ] Purge scan if the change widens the filter.
+
+---
+## Session log 2026-09-07 afternoon — C13 COMPLETE, BOARD RECOVERED
+- coverageCheck.mjs built + pushed (f465d82): per-company theirs-vs-ours
+  counting alarm, gh+ashby top-N. 100-company baseline: 97 near-perfect
+  (openai 189/190 — was 3/190 Friday; anthropic 172/172; stripe/waymo/
+  anduril/datadog exact). bayada "gap" probed: MISSING 0 — pure snapshot
+  timing mid-recovery. N2 family (n2alljobs 72/5, n2publishingglassdoor
+  197/17) noted for ghost-board review — reverse gap, stale-tail suspicion.
+- All six sources manually cycled on f67351b gates. BOARD: 55,595 (morning,
+  suppressed) -> 60,915 (evening) — +5,320 in a day, +1.7k ABOVE the old
+  ~59k baseline despite ~290 refusals deleted this weekend and holiday-thin
+  inflow. gh +3.3k (contractors fix), sr +918, ashby +764, workday +445.
+- Workday referee final: saved 114+ by tenant 21 (vs 1/1044 yesterday).
+- ROUTINE section added to this file (weekly patternAudit+coverageCheck+
+  eyeball; monthly AI audit THEN deep clean; pattern-change protocol).
+- Clock rule (standing): Aravind owns the clock; Claude states no
+  time-of-day. Date verified via Get-Date: Mon Sep 7 2026 = Labor Day.
+- NEXT: A5 scoping (top), design page 1 (designer pending), amplify/
+  activision paths, N2 ghost review, sampler prompt tweaks (Amgen hedge).
