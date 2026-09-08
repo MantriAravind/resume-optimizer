@@ -898,3 +898,30 @@ Existing modal design and flow stay EXACTLY as shipped. Five changes:
       remaining gap belongs to untapped skills, not the resume.
 Done when: real optimizer output matches the prototype behavior on
 Aravind's own resume for a real job, all five checked.
+
+### A5 decisions locked 2026-09-08 (build starts from these; do not reopen)
+- SCORING LAW: keywords 40 · bullet relevance 30 · core role 20 · years 10.
+  Same `scoreRubric()` on both /analyze and /optimize. Role or years mismatch
+  caps below 100 by design; shown as "✓ your best honest score", never hidden.
+- BULLET RELEVANCE: AI-graded 1-5 on the ORIGINAL resume, inside the existing
+  nano extract call (no new call). Same number on tap screen and result.
+- CORE ROLE: hybrid. Strip seniority tokens, string-compare; only on mismatch
+  one nano yes/no "same job family?". Resume title comes from the extract call
+  (`latestTitle`); job title sent by the modal.
+- YEARS: resume side = totalExperienceMonths (code). JD side = `yearsRequired`
+  from the extract call. JD silent -> 10 points awarded, no penalty.
+- JUNK FILTER: model returns `kind` per keyword (tool|practice|phrase); code
+  drops `phrase` + heuristic guard. Prompt-only already failed once.
+- RULE-7 GATE: every confirmed skill must land in the output, enforced in the
+  code gate (retry, then code-append to skills). Root cause of the
+  100-promise/75-delivery bug was `landed` < `confirmed` with no gate.
+- PLACEMENTS: rewrite JSON gains `placements:[{skill,where,fragment}]`,
+  code-verified; ✕ = fragment removal, no AI call. ✕ does not change score.
+- CACHE: analyze cache key gets `v2:` prefix (new fields, old hits stale).
+- A6 COVER LETTER: in this build, lazy (generated on tab click only),
+  resume-facts-only, overlap-gated. New POST /cover-letter.
+- TAPPED SKILLS: session-only. Cross-job persistence -> later checklist item.
+- THRESHOLDS: shipped modal colours (80/60) stay; prototype's 70 ignored.
+- BUILD ORDER: extract v2 -> scoreRubric -> optimize placements+gate ->
+  cover-letter -> modal. Each step tested on own resume + real job.
+- [ ] Later: tapped-skill persistence across jobs (needs User schema change).
