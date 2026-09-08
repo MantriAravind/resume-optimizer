@@ -291,7 +291,9 @@ const DISQUALIFIER_PATTERNS = [
   /\b(position|role|posting|job|opportunity|vacancy|requisition)\s+(is\s+)?(open|available)\s+only\s+to\b[^.\n]{0,40}\bemployees\b/,
   /\binternal\s+(candidates?|applicants?|employees?)\s+only\b/,
   /\(internal\s+only\)/,
-  /\bwe\s+do\s+not\s+(currently\s+)?(offer|provide)\s+(visa\s+)?sponsorship/,
+  // Filler-verb variant (Allegion, caught live by Aravind 2026-09-07 night):
+  // "does not INTEND TO provide sponsorship for employment visa status".
+  /\b(we|company|employer)?\s*(do|does|will)\s+not\s+(currently\s+)?((intend|plan|expect|be\s+able)\s+to\s+)?(offer|provide|sponsor)\b[^.\n]{0,50}(sponsorship|visa\s+status|work\s+visa)/,
   /\bpermanent\s+resident\s+(is\s+)?required\b/,
   /\bmust\s+be\s+(us\s+|u s\s+|united states\s+)?citizens?\b/,
   /\bcitizens?\s+or\s+(lawful\s+)?permanent\s+residents?\b/,
