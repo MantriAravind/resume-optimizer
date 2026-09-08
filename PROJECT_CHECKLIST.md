@@ -880,3 +880,21 @@ Frequency is the point. A silent bug costs jobs every hour it lives.
   time-of-day. Date verified via Get-Date: Mon Sep 7 2026 = Labor Day.
 - NEXT: A5 scoping (top), design page 1 (designer pending), amplify/
   activision paths, N2 ghost review, sampler prompt tweaks (Amgen hedge).
+
+---
+## A5 BUILD SPEC — locked 2026-09-08 (prototype: a5-optyply-spec.html)
+Existing modal design and flow stay EXACTLY as shipped. Five changes:
+- [ ] 1. JUNK FILTER: skill extractor offers real skills only — never job-ad
+      phrases ("production data incidents"). Filter at extraction time.
+- [ ] 2. PLACEMENTS NAMED: "Skills woven in" panel says WHERE each tapped
+      skill went — "dbt -> Skills section + your Thermo Fisher bullet".
+      No silent employer claims.
+- [ ] 3. REVERSIBLE: each woven card gets ✕ (pull back to Skills section
+      only) that toggles to ↩ Undo (restore). Resume + score update live.
+- [ ] 4. ONE RUBRIC: tap screen previews the EXACT score the optimizer
+      will deliver (no 100-promise -> 75-delivery). Same formula both sides.
+- [ ] 5. MAX FRAMING: when every tapped skill is deployed, present the
+      score as "✓ your best honest score / your max for this job" — the
+      remaining gap belongs to untapped skills, not the resume.
+Done when: real optimizer output matches the prototype behavior on
+Aravind's own resume for a real job, all five checked.
