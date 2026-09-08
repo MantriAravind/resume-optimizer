@@ -160,6 +160,11 @@ const analyzeCacheSchema = new mongoose.Schema({
   key:       { type: String, unique: true },
   matched:   [String],
   missing:   [String],
+  // A5 rubric inputs, produced by the same extract call. Stored so a cache hit
+  // returns the whole rubric, not just the keyword lists.
+  latestTitle:     String,
+  yearsRequired:   Number,
+  bulletRelevance: Number,
   createdAt: { type: Date, default: Date.now, expires: '30d' },
 })
 const AnalyzeCache = mongoose.model('AnalyzeCache', analyzeCacheSchema)
@@ -168,8 +173,16 @@ const AnalyzeCache = mongoose.model('AnalyzeCache', analyzeCacheSchema)
 // and a cache miss. A user editing their resume in Profile therefore does NOT get a
 // stale result: the new resume text hashes differently and re-runs the model. This is
 // the whole reason we hash the inputs rather than keying on something like a job id.
-function analyzeCacheKey(resumeText, jobText) {
-  return crypto.createHash('sha256').update(resumeText + '\u0000' + jobText).digest('hex')
+//
+// Versioned. A5 added rubric fields to the extract result; a v1 hit would return the
+// keyword lists with every rubric field undefined and the score would silently be
+// built from half the inputs. Bumping the prefix makes every old entry a miss, and
+// the 30-day TTL cleans them up. The job title is part of the key because the
+// core-role check depends on it.
+const ANALYZE_CACHE_VERSION = 'v2'
+function analyzeCacheKey(resumeText, jobText, jobTitle = '') {
+  return ANALYZE_CACHE_VERSION + ':' + crypto.createHash('sha256')
+    .update(resumeText + '\u0000' + jobText + '\u0000' + jobTitle).digest('hex')
 }
 
 // Removed, and why. Every index has to be rewritten on all ~55K upserts each refresh,
@@ -637,14 +650,57 @@ const MODEL_EXTRACT  = process.env.OPENAI_ANALYSIS_MODEL     || 'gpt-5-nano'
 const MODEL_REWRITE  = process.env.OPENAI_OPTIMIZATION_MODEL || 'gpt-5.6-luna'
 const MODEL_FALLBACK = process.env.OPENAI_FALLBACK_MODEL     || 'gpt-5.6-terra'
 
-async function extractKeywords(resumeText, jobText) {
-  const cacheKey = analyzeCacheKey(resumeText, jobText)
+// ── JUNK GUARD (A5 change 1) ───────────────────────────────────────────────
+//
+// "production data incidents" reached the checkbox list even though the prompt said
+// "only concrete, checkable things". A prompt instruction is a suggestion. So the
+// model now labels every entry with a kind, code drops the phrases, and this guard
+// catches the ones it mislabels. A student is never asked "have you used
+// stakeholder requirements?".
+const JUNK_WORDS = /\b(incidents?|issues?|requirements?|stakeholders?|environments?|processe?s?|experience|ability|understanding|knowledge|skills?|practices?|principles?|concepts?|fundamentals?|best|strong|excellent|proven|curated|collaboration|cross-functional)\b/i
+// Seen in real output: "Snowflake (data platform) specifically", "Cloud Platform
+// emphasis on Snowflake + dbt", "data ingestion pipelines in Snowflake/dbt-centric
+// stack". A parenthetical or one of these words means the model pasted a clause.
+// A parenthetical is fine when it is an acronym, "(ADLS)"; it is a pasted clause when
+// it holds words, "(data platform)".
+const JUNK_SHAPE = /\((?![A-Z0-9]{2,8}\))|\b(specifically|emphasis|centric|stack|focus(?:ed)?|preferably|including)\b/i
+function looksLikeJunk(term) {
+  const t = String(term || '').trim()
+  const words = t.split(/\s+/)
+  if (JUNK_SHAPE.test(t)) return true
+  // Four or more words is a clause unless it is a product name, and product names are
+  // Title Case: "Azure Data Lake Storage" keeps, "data ingestion pipelines in" drops.
+  if (words.length >= 4) {
+    const caps = words.filter(w => /^[A-Z0-9]/.test(w)).length
+    return caps < words.length / 2
+  }
+  // A product token has a capital, a digit, or a symbol (dbt is the exception below).
+  const hasProductToken = words.some(w => /[A-Z0-9.+#\/]/.test(w)) || /^(dbt|kafka|spark|airflow|snowflake|redshift|bigquery|databricks|terraform|docker|kubernetes|k8s)$/i.test(t)
+  if (words.length === 3 && !hasProductToken && JUNK_WORDS.test(t)) return true
+  return false
+}
+// "Snowflake" and "Snowflake (data platform) specifically" are one keyword. Dedupe on
+// the base: parenthetical stripped, lowercased, trailing qualifier words removed.
+function keywordBase(term) {
+  return String(term || '').toLowerCase().replace(/\(.*?\)/g, '').replace(/\b(specifically|platform)\b/g, '').replace(/\s+/g, ' ').trim()
+}
+
+// jobTitle is optional: the standalone /optimize fallback path does not have it, and
+// the core-role check then simply reports unknown.
+async function extractKeywords(resumeText, jobText, jobTitle = '') {
+  const cacheKey = analyzeCacheKey(resumeText, jobText, jobTitle)
 
   // Cache read is best-effort. If Mongo hiccups we must NOT fail the whole analyze,
   // so a lookup error just falls through to calling the model as normal.
   try {
     const hit = await AnalyzeCache.findOne({ key: cacheKey }).lean()
-    if (hit) return { matchedKeywords: hit.matched, missingKeywords: hit.missing }
+    if (hit) return {
+      matchedKeywords: hit.matched,
+      missingKeywords: hit.missing,
+      latestTitle:     hit.latestTitle || '',
+      yearsRequired:   typeof hit.yearsRequired === 'number' ? hit.yearsRequired : null,
+      bulletRelevance: typeof hit.bulletRelevance === 'number' ? hit.bulletRelevance : null,
+    }
   } catch (e) {
     console.warn('analyze cache read failed:', e.message)
   }
@@ -668,7 +724,17 @@ Read the job description and identify the specific skills, technologies, tools, 
 
 Ignore generic filler. An ATS does not screen on "strong attention to detail", "good communication skills", "strong organizational skills", "team player", or "ability to work independently". Skip all of it. Only list concrete, checkable things: named technologies, named tools, named platforms, specific technical practices.
 
+Label each entry with a kind:
+- "tool": a named technology, product, platform, language, or library (dbt, Snowflake, PySpark, Terraform).
+- "practice": a specific, nameable technical method someone can say they have done (data modeling, unit testing, CI/CD, dimensional modeling).
+- "phrase": a duty or situation lifted from the posting that is not a skill anyone "has" (production data incidents, stakeholder requirements, cross-functional collaboration). A student cannot tick "I have used production data incidents". Label these honestly; they are dropped.
+
 Then check the resume against that list.
+
+Also report, from the same read:
+- latestTitle: the job title of the candidate's most recent role, exactly as the resume writes it. Empty string if there is no work history.
+- yearsRequired: the minimum years of experience the posting asks for, as a whole number. null if the posting states no number. If it gives a range ("3-5 years") use the low end.
+- bulletRelevance: an integer 1-5 grading how closely the WORK described in the candidate's experience bullets matches the core duties of this posting. Judge the work, not the vocabulary: a bullet about building ELT pipelines is relevant to a pipeline job even if it never says "ELT". 5 = they have done this job; 4 = most of it; 3 = an adjacent role with real overlap; 2 = a different role with a little overlap; 1 = unrelated. Grade the bullets as written, not the summary.
 
 Resume:
 ${resumeText}
@@ -678,22 +744,45 @@ ${jobText}
 
 Respond in this exact JSON format with no extra text:
 {
-  "matchedKeywords": [<the ones already present in the resume>],
-  "missingKeywords": [<the ones that are not>]
+  "keywords": [{"term": "<exact wording>", "kind": "tool|practice|phrase", "present": true|false}],
+  "latestTitle": "<string>",
+  "yearsRequired": <number or null>,
+  "bulletRelevance": <1-5>
 }`
     }]
   })
   const cleaned = replyText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
   const parsed = JSON.parse(cleaned)
+
+  // Certifications are removed before the checkbox list is ever built. The box says
+  // "Tap if you have", and next to Kubernetes that means "I have used this" while
+  // next to VMCE it means "I passed this exam" — a claim a recruiter verifies in one
+  // search. The two are indistinguishable in a list of chips, and the person who
+  // wrote this product's anti-fabrication rule still ticked VMCE and VMCSE by
+  // mistake. A student will not do better. So the option is not offered.
+  // Same filter drops phrases: the model's label first, the code guard second.
+  const entries = Array.isArray(parsed.keywords) ? parsed.keywords : []
+  const usable = []
+  const dropped = []
+  for (const e of entries) {
+    const term = String(e?.term || '').trim()
+    if (!term) continue
+    if (e.kind === 'phrase' || looksLikeJunk(term) || !keepAsSkill(term)) { dropped.push(term); continue }
+    if (usable.some(u => keywordBase(u.term) === keywordBase(term))) continue
+    usable.push({ term, present: e.present === true })
+  }
+  if (dropped.length) console.log('extract: dropped ' + dropped.length + ' non-skill(s): ' + dropped.join(' | '))
+
+  const rel = Number(parsed.bulletRelevance)
+  const yrs = parsed.yearsRequired === null || parsed.yearsRequired === undefined ? null : Number(parsed.yearsRequired)
   const result = {
-    matchedKeywords: Array.isArray(parsed.matchedKeywords) ? parsed.matchedKeywords.filter(keepAsSkill) : [],
-    // Certifications are removed before the checkbox list is ever built. The box says
-    // "Tap if you have", and next to Kubernetes that means "I have used this" while
-    // next to VMCE it means "I passed this exam" — a claim a recruiter verifies in one
-    // search. The two are indistinguishable in a list of chips, and the person who
-    // wrote this product's anti-fabrication rule still ticked VMCE and VMCSE by
-    // mistake. A student will not do better. So the option is not offered.
-    missingKeywords: Array.isArray(parsed.missingKeywords) ? parsed.missingKeywords.filter(keepAsSkill) : [],
+    matchedKeywords: usable.filter(u => u.present).map(u => u.term),
+    missingKeywords: usable.filter(u => !u.present).map(u => u.term),
+    latestTitle:     typeof parsed.latestTitle === 'string' ? parsed.latestTitle.trim() : '',
+    // Out-of-range or unparseable grades become null, and the scorer treats null as
+    // "could not read" rather than as a zero. A missing figure beats a wrong one.
+    bulletRelevance: Number.isInteger(rel) && rel >= 1 && rel <= 5 ? rel : null,
+    yearsRequired:   Number.isFinite(yrs) && yrs >= 0 && yrs <= 30 ? Math.floor(yrs) : null,
   }
 
   // Store for next time. upsert so a race between two identical requests cannot throw
@@ -702,7 +791,9 @@ Respond in this exact JSON format with no extra text:
   try {
     await AnalyzeCache.updateOne(
       { key: cacheKey },
-      { key: cacheKey, matched: result.matchedKeywords, missing: result.missingKeywords, createdAt: new Date() },
+      { key: cacheKey, matched: result.matchedKeywords, missing: result.missingKeywords,
+        latestTitle: result.latestTitle, yearsRequired: result.yearsRequired,
+        bulletRelevance: result.bulletRelevance, createdAt: new Date() },
       { upsert: true }
     )
   } catch (e) {
@@ -715,17 +806,23 @@ Respond in this exact JSON format with no extra text:
 // ── ANALYZE — what this job screens for, and what the resume already has.
 // No rewrite, so it is fast. The modal shows gaps in ~2s.
 app.post('/analyze', async (req, res) => {
-  const { resumeText, jobText } = req.body
+  const { resumeText, jobText, jobTitle = '' } = req.body
   if (!resumeText || !jobText) {
     return res.status(400).json({ error: 'Please provide both resume text and job description.' })
   }
   try {
-    const { matchedKeywords, missingKeywords } = await extractKeywords(resumeText, jobText)
+    const found = await extractKeywords(resumeText, jobText, String(jobTitle || ''))
+    const { matchedKeywords, missingKeywords } = found
     const total = matchedKeywords.length + missingKeywords.length
     res.json({
       matchedKeywords,
       missingKeywords,
       scoreBefore: total ? Math.round((matchedKeywords.length / total) * 100) : 0,
+      // Rubric inputs. Step 2 turns these into the scored rows; for now they are
+      // passed through so the shape can be checked against real output.
+      latestTitle:     found.latestTitle,
+      yearsRequired:   found.yearsRequired,
+      bulletRelevance: found.bulletRelevance,
     })
   } catch (error) {
     console.error('Analyze error:', error)
