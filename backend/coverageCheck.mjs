@@ -19,7 +19,10 @@ const J = mongoose.connection.db.collection('jobs')
 
 // our biggest gh+ashby companies by visible jobs
 const ours = await J.aggregate([
-  { $match: { ats: { $in: ['greenhouse', 'ashby'] }, junkClass: null } },
+  // No junkClass filter: "theirs" isn't junk/license-gated either, so counting
+  // ours unfiltered keeps the comparison symmetric (bayada's ~130 license-
+  // hidden nurses created a permanent phantom gap).
+  { $match: { ats: { $in: ['greenhouse', 'ashby'] } } },
   { $group: { _id: { ats: '$ats', slug: '$companySlug' }, n: { $sum: 1 } } },
   { $sort: { n: -1 } }, { $limit: TOP },
 ]).toArray()
