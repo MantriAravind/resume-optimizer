@@ -167,6 +167,9 @@ const analyzeCacheSchema = new mongoose.Schema({
   bulletRelevance: Number,
   // true / false from the core-role check, null when there was no title to compare.
   roleMatch:       { type: Boolean, default: null },
+  // Job-ad phrases the extract refused to offer, shown on the tap screen so the
+  // student sees why "production data incidents" is not a checkbox.
+  dropped:         [String],
   createdAt: { type: Date, default: Date.now, expires: '30d' },
 })
 const AnalyzeCache = mongoose.model('AnalyzeCache', analyzeCacheSchema)
@@ -225,7 +228,7 @@ async function latestTitleFor(resumeText) {
 // built from half the inputs. Bumping the prefix makes every old entry a miss, and
 // the 30-day TTL cleans them up. The job title is part of the key because the
 // core-role check depends on it.
-const ANALYZE_CACHE_VERSION = 'v7'   // v5: role by family; v6: keywords must appear in posting; v7: vendor-prefix dedupe
+const ANALYZE_CACHE_VERSION = 'v8'   // v6: keywords must appear in posting; v7: vendor-prefix dedupe; v8: dropped phrases cached
 function analyzeCacheKey(resumeText, jobText, jobTitle = '') {
   return ANALYZE_CACHE_VERSION + ':' + crypto.createHash('sha256')
     .update(resumeText + '\u0000' + jobText + '\u0000' + jobTitle).digest('hex')
@@ -885,6 +888,7 @@ async function extractKeywords(resumeText, jobText, jobTitle = '') {
       yearsRequired:   typeof hit.yearsRequired === 'number' ? hit.yearsRequired : null,
       bulletRelevance: typeof hit.bulletRelevance === 'number' ? hit.bulletRelevance : null,
       roleMatch:       typeof hit.roleMatch === 'boolean' ? hit.roleMatch : null,
+      dropped:         Array.isArray(hit.dropped) ? hit.dropped : [],
     }
   } catch (e) {
     console.warn('analyze cache read failed:', e.message)
@@ -984,14 +988,14 @@ Respond in this exact JSON format with no extra text:
     // so the tail is the least important; 12 is enough for a tap list and keeps one
     // skill worth more than 2 points.
     if (usable.length > 12) { console.log('extract: capped ' + usable.length + ' keywords to 12'); usable.length = 12 }
-    return { parsed, usable }
+    return { parsed, usable, dropped }
   }
-  let { parsed, usable } = await runExtract()
+  let { parsed, usable, dropped } = await runExtract()
   if (usable.length < 5) {
     console.log('extract: only ' + usable.length + ' usable keyword(s), retrying once')
     try {
       const again = await runExtract('\n\nYour previous answer listed fewer than 5 concrete skills. Read the JOB POSTING again and list every named tool, technology, platform and technical practice it mentions, up to 10.')
-      if (again.usable.length > usable.length) ({ parsed, usable } = again)
+      if (again.usable.length > usable.length) ({ parsed, usable, dropped } = again)
     } catch (e) {
       console.warn('extract: retry failed, keeping first result:', e.message)
     }
@@ -1013,6 +1017,9 @@ Respond in this exact JSON format with no extra text:
     bulletRelevance: Number.isInteger(rel) && rel >= 1 && rel <= 5 ? rel : null,
     yearsRequired:   Number.isFinite(yrs) && yrs >= 1 && yrs <= 30 ? Math.floor(yrs) : null,
     roleMatch:       null,
+    // Only the phrase-shaped ones, not certifications: the cert filter is a different
+    // honesty rule with its own explanation.
+    dropped:         dropped.filter(t => !/^[A-Z0-9-]{3,8}$/.test(t)).slice(0, 6),
   }
   result.roleMatch = await roleMatch(result.latestTitle, jobTitle)
 
@@ -1024,7 +1031,7 @@ Respond in this exact JSON format with no extra text:
       { key: cacheKey },
       { key: cacheKey, matched: result.matchedKeywords, missing: result.missingKeywords,
         latestTitle: result.latestTitle, yearsRequired: result.yearsRequired,
-        bulletRelevance: result.bulletRelevance, roleMatch: result.roleMatch, createdAt: new Date() },
+        bulletRelevance: result.bulletRelevance, roleMatch: result.roleMatch, dropped: result.dropped, createdAt: new Date() },
       { upsert: true }
     )
   } catch (e) {
@@ -1068,6 +1075,7 @@ app.post('/analyze', async (req, res) => {
       scoreBefore: total ? Math.round((matchedKeywords.length / total) * 100) : 0,
       rubric,
       maxScore,
+      droppedPhrases: found.dropped || [],
     })
   } catch (error) {
     console.error('Analyze error:', error)
@@ -3453,7 +3461,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-09 A5 step 4c (paragraph breaks kept)'
+const SERVER_BUILD = '2026-09-09 A5 step 5a (droppedPhrases on /analyze, cache v8)'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })

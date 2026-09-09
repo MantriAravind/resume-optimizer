@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 import {
   X, Check, CheckCheck, ArrowRight, ArrowLeft, ArrowUp, Download, FileText,
-  ExternalLink, Sparkles, BookOpen, AlertCircle, Ban,
+  ExternalLink, Sparkles, BookOpen, AlertCircle, Ban, Undo2, Copy, PenLine,
 } from 'lucide-react'
 
 // Read from the environment so the backend can move without editing four files.
@@ -73,6 +73,64 @@ const STOP = new Set(('a an and are as at be by for from has have in into is it 
   + 'will with within who whose you your our we they i').split(' '))
 const wordsOf = t => String(t || '').toLowerCase().match(/[a-z0-9][a-z0-9./#+-]*/g) || []
 
+// ✕ on a placement card. The server verified `fragment` is literally in the text and
+// sits on a bullet line, so removing it is a string operation, not a model call. The
+// punctuation it leaves behind (", ." / "and .") is tidied, and the skill is kept in
+// the skills section so the tap is still honoured: the student said they have it,
+// they just did not use it there.
+function stripFragment(text, fragment) {
+  if (!fragment || !text.includes(fragment)) return text
+  return text.replace(fragment, '')
+    .replace(/,\s*(and|with|using|via|in|on)?\s*([.,;:])/g, '$2')
+    .replace(/\s+(and|with|using|via|in|on)?\s*([.,;:])/g, '$2')
+    .replace(/\(\s*\)/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+}
+function ensureInSkills(text, skill) {
+  const re = new RegExp('\\b' + skill.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i')
+  if (re.test(text)) return text
+  const lines = text.split('\n')
+  const h = lines.findIndex(l => /^\s*(TECHNICAL |CORE |KEY )?(SKILLS|PROFICIENC(Y|IES)|COMPETENCIES)\s*:?\s*$/i.test(l))
+  if (h === -1) return text
+  for (let i = h + 1; i < lines.length; i++) {
+    if (/^[A-Z][A-Z &/]{3,}:?$/.test(lines[i].trim())) break
+    if (/^[A-Za-z][A-Za-z /&+-]{1,48}:\s+\S/.test(lines[i].trim())) { lines[i] = lines[i].replace(/\s*$/, '') + ', ' + skill; return lines.join('\n') }
+  }
+  return text
+}
+
+// Score rows. Same law as the server (keywords 40 · bullets 30 · role 20 · years 10);
+// only the keyword row is recomputed here as the student taps, and with the same
+// formula, so the number on this screen is the number the result screen delivers.
+function RubricRows({ rubric, kwHave, kwTotal }) {
+  if (!rubric?.rows) return null
+  const r = rubric.rows
+  const kwPts = kwTotal ? Math.round(40 * kwHave / kwTotal) : 0
+  const roleDetail = r.role.match === null
+    ? (r.role.note || 'not compared')
+    : `"${r.role.jobTitle || 'this job'}" ↔ "${r.role.resumeTitle || 'your latest title'}" · seniority ignored → ${r.role.match ? 'same core role' : 'different role'}`
+  const yearsDetail = r.years.required === null
+    ? 'posting states no minimum'
+    : r.years.have === null ? `${r.years.required}+ required · could not read your dates`
+    : `${r.years.required}+ required · ${r.years.have} on your resume`
+  const bulletDetail = r.bullets.grade === null ? 'not graded' : `how closely your work stories mirror this job's work · ${r.bullets.grade} / 5`
+  const Row = ({ name, detail, pts, max }) => (
+    <div className="om-rub-row">
+      <div className="om-rub-l"><div className="om-rub-n">{name}</div><div className="om-rub-d">{detail}</div></div>
+      <div className={`om-rub-p ${pts === max ? 'full' : pts === 0 ? 'zero' : ''}`}>{pts} / {max}</div>
+    </div>
+  )
+  return (
+    <div className="om-rub">
+      <div className="om-lbl">How this score is built</div>
+      <Row name="Core role match" detail={roleDetail} pts={r.role.pts} max={20} />
+      <Row name="Years of experience" detail={yearsDetail} pts={r.years.pts} max={10} />
+      <Row name="Bullet relevance" detail={bulletDetail} pts={r.bullets.pts} max={30} />
+      <Row name="Keywords" detail={`${kwHave} / ${kwTotal} · tap below — every true tap counts`} pts={kwPts} max={40} />
+    </div>
+  )
+}
+
 function ResumeView({ text, skills, originalText }) {
   const skillList = Array.isArray(skills) ? skills.filter(Boolean) : []
   const origVocab = new Set(wordsOf(originalText))
@@ -133,6 +191,9 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   const [matched, setMatched]   = useState([])
   const [missing, setMissing]   = useState([])
   const [scoreBefore, setScoreBefore] = useState(0)
+  const [rubric, setRubric]     = useState(null)   // rows from /analyze, one law for both screens
+  const [maxScore, setMaxScore] = useState(null)   // what every honest tap reaches; can be < 100
+  const [dropped, setDropped]   = useState([])     // job-ad phrases never offered as checkboxes
 
   const [checked, setChecked]   = useState({})
 
@@ -140,6 +201,14 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   const [added, setAdded]           = useState([])
   const [scoreAfter, setScoreAfter] = useState(0)
   const [feedback, setFeedback]     = useState('')
+  const [placements, setPlacements] = useState([])   // one card per tapped skill, server-verified
+  const [removed, setRemoved]       = useState({})   // skill -> document text before ✕, for ↩
+  const [docVersion, setDocVersion] = useState(0)    // remount the editable sheet when ✕/↩ change its text
+  const [tab, setTab]               = useState('resume')   // resume | letter
+  const [letter, setLetter]         = useState('')
+  const [letterState, setLetterState] = useState('idle')  // idle | loading | ready | error
+  const [copied, setCopied]         = useState(false)
+  const letterRef = useRef(null)
 
   // The editable document is UNCONTROLLED — React never re-renders it, because a
   // re-render on every keystroke would wipe the caret. Its text is read from the ref
@@ -316,7 +385,9 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
         const aRes = await fetch(`${BACKEND}/analyze`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ resumeText: resume, jobText: jd }),
+          // jobTitle feeds the core-role row and the cache key; yearsMin is the
+          // pipeline's read of the posting and wins over the model's when present.
+          body: JSON.stringify({ resumeText: resume, jobText: jd, jobTitle: job.title || '', yearsMin: job.yearsMin ?? null }),
         })
         if (!aRes.ok) throw new Error('analyze failed')
         const a = await aRes.json()
@@ -324,7 +395,11 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
 
         setMatched(a.matchedKeywords || [])
         setMissing(a.missingKeywords || [])
-        setScoreBefore(a.scoreBefore || 0)
+        setRubric(a.rubric || null)
+        setMaxScore(typeof a.maxScore === 'number' ? a.maxScore : null)
+        setDropped(Array.isArray(a.droppedPhrases) ? a.droppedPhrases : [])
+        // Rubric total when the server sends one; the old keyword-only number otherwise.
+        setScoreBefore(a.rubric?.total ?? a.scoreBefore ?? 0)
         setPhase('pick')
       } catch {
         if (!cancelled) { setError('generic'); setPhase('error') }
@@ -336,8 +411,13 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
 
   const confirmedList = missing.filter(k => checked[k])
   const total = matched.length + missing.length
-  const liveScore = total ? Math.round(((matched.length + confirmedList.length) / total) * 100) : 0
+  const kwHave = matched.length + confirmedList.length
+  // Same formula as scoreRubric() on the server: only the keyword row moves with taps.
+  const liveScore = rubric
+    ? rubric.total - (rubric.rows?.keywords?.pts || 0) + (total ? Math.round(40 * kwHave / total) : 0)
+    : (total ? Math.round((kwHave / total) * 100) : 0)
   const stillGap = missing.filter(k => !checked[k])
+  const allTapped = missing.length > 0 && confirmedList.length === missing.length
 
   function toggle(skill) {
     setChecked(c => ({ ...c, [skill]: !c[skill] }))
@@ -371,14 +451,22 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
           confirmedSkills: confirmedList,
           matchedKeywords: matched,   // pass lists so /optimize doesn't re-extract (kills drift)
           missingKeywords: missing,
+          jobTitle: job.title || '',  // same key as /analyze, so the rubric inputs are a cache hit
+          yearsMin: job.yearsMin ?? null,
         }),
       })
       if (!res.ok) throw new Error('optimize failed')
       const d = await res.json()
       setOptimized(d.optimizedResume || '')
       setAdded(d.addedKeywords || [])
-      setScoreAfter(d.scoreAfter ?? liveScore)
+      setScoreAfter(d.rubricAfter?.total ?? d.scoreAfter ?? liveScore)
       setFeedback(d.feedback || '')
+      setPlacements(Array.isArray(d.placements) ? d.placements : [])
+      setRemoved({})
+      setDocVersion(v => v + 1)
+      setTab('resume')
+      setLetter('')
+      setLetterState('idle')
       setPhase('result')
 
       // If this job is ALREADY in the tracker — they applied straight from the board
@@ -405,6 +493,54 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       setError('generic')
       setPhase('error')
     }
+  }
+
+  // ── placement cards: ✕ pulls a skill out of the bullet it was woven into
+  function removePlacement(p) {
+    const current = docRef.current?.innerText || optimized
+    const next = ensureInSkills(stripFragment(current, p.fragment), p.skill)
+    setRemoved(r => ({ ...r, [p.skill]: current }))
+    setOptimized(next)
+    setDocVersion(v => v + 1)
+  }
+  function undoPlacement(p) {
+    const snap = removed[p.skill]
+    if (snap === undefined) return
+    setRemoved(r => { const c = { ...r }; delete c[p.skill]; return c })
+    setOptimized(snap)
+    setDocVersion(v => v + 1)
+  }
+
+  // ── cover letter tab: generated on first click only, from the resume on screen
+  async function openLetter() {
+    setTab('letter')
+    if (letterState === 'ready' || letterState === 'loading') return
+    setLetterState('loading')
+    try {
+      const res = await fetch(`${BACKEND}/cover-letter`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resumeText, jobText,
+          jobTitle: job.title || '', company: job.company || '',
+          confirmedSkills: confirmedList, missingKeywords: missing,
+          optimizedResume: docRef.current?.innerText || optimized,
+        }),
+      })
+      if (!res.ok) throw new Error('cover letter failed')
+      const d = await res.json()
+      setLetter(d.coverLetter || '')
+      setLetterState('ready')
+    } catch {
+      setLetterState('error')
+    }
+  }
+  async function copyLetter() {
+    try {
+      await navigator.clipboard.writeText(letterRef.current?.innerText || letter)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1600)
+    } catch {}
   }
 
   // ── step 3: download (same endpoints + payload as the Resume Tool)
@@ -534,6 +670,14 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
           <>
             <div className="om-body">
               <ScoreBar before={scoreBefore} after={liveScore} animate={false} />
+              <RubricRows rubric={rubric} kwHave={kwHave} kwTotal={total} />
+              {rubric && confirmedList.length > 0 && (
+                <div className={`om-proj ${allTapped ? 'max' : ''}`}>
+                  {allTapped
+                    ? <><b>✓ {liveScore} — your best honest score for this job.</b> Every keyword is covered{maxScore !== null && liveScore < 100 ? '; the rest of the gap is the role and years rows above, not something to fix on a resume' : ''}.</>
+                    : <>Projected optimized score: <b>{liveScore}</b>. Untapped skills below are worth more points — tap only what's true.</>}
+                </div>
+              )}
 
               {matched.length > 0 && (
                 <>
@@ -564,6 +708,12 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                       <span className="om-gap-as">{checked[skill] ? "I've used this" : 'Tap if you have'}</span>
                     </div>
                   ))}
+
+                  {dropped.length > 0 && (
+                    <div className="om-junk">
+                      <span className="om-junk-t">{dropped.join(', ')}</span> — job-ad phrases, not skills. Never offered.
+                    </div>
+                  )}
 
                   {stillGap.length > 0 && (
                     <div className="om-prep">
@@ -635,40 +785,121 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
               </a>
             </div>
 
+            <div className="om-tabs">
+              <button className={`om-tab ${tab === 'resume' ? 'on' : ''}`} onClick={() => setTab('resume')}><FileText size={12} />Optimized resume</button>
+              <button className={`om-tab ${tab === 'letter' ? 'on' : ''}`} onClick={openLetter}><PenLine size={12} />Cover letter</button>
+            </div>
+
             <div className="om-split">
               <div className="om-pane">
-                <div className="om-paper">
-                  <div className="om-paper-h">
-                    <span>Click anywhere to edit</span>
-                    <span>{DOC_FONT}</span>
+                {tab === 'resume' ? (
+                  <div className="om-paper">
+                    <div className="om-paper-h">
+                      <span>Click anywhere to edit</span>
+                      <span>{DOC_FONT}</span>
+                    </div>
+                    {/* contentEditable and NOT bound to state: binding it would re-render
+                        on every keystroke and throw the caret to the start. Keyed on
+                        docVersion so a ✕ or ↩ remounts the sheet instead of reconciling
+                        React children into DOM the student may have edited. */}
+                    <pre
+                      key={docVersion}
+                      ref={docRef}
+                      className="om-resume"
+                      contentEditable
+                      suppressContentEditableWarning
+                      spellCheck={false}
+                    >
+                      <ResumeView text={optimized} skills={added} originalText={resumeText} />
+                    </pre>
                   </div>
-                  {/* contentEditable and NOT bound to state: binding it would re-render
-                      on every keystroke and throw the caret to the start. */}
-                  <pre
-                    ref={docRef}
-                    className="om-resume"
-                    contentEditable
-                    suppressContentEditableWarning
-                    spellCheck={false}
-                  >
-                    <ResumeView text={optimized} skills={added} originalText={resumeText} />
-                  </pre>
-                </div>
+                ) : (
+                  <div className="om-paper">
+                    <div className="om-paper-h">
+                      <span>{letterState === 'ready' ? 'Click anywhere to edit' : 'Cover letter'}</span>
+                      <span>{DOC_FONT}</span>
+                    </div>
+                    {letterState === 'loading' && (
+                      <div className="om-load" style={{ padding: '36px 0' }}>
+                        <div className="om-spin" />
+                        <div className="om-load-t">Writing your cover letter…</div>
+                        <div className="om-load-s">From your resume's facts and the skills you tapped. Nothing else.</div>
+                      </div>
+                    )}
+                    {letterState === 'error' && (
+                      <div className="om-load" style={{ padding: '36px 0' }}>
+                        <AlertCircle size={22} color="#DC2626" />
+                        <div className="om-load-t" style={{ marginTop: 8 }}>Couldn't write the letter</div>
+                        <button className="om-closed-btn" onClick={() => { setLetterState('idle'); openLetter() }}>Try again</button>
+                      </div>
+                    )}
+                    {letterState === 'ready' && (
+                      <pre
+                        ref={letterRef}
+                        className="om-resume om-letter"
+                        contentEditable
+                        suppressContentEditableWarning
+                        spellCheck={false}
+                      >{letter}</pre>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="om-rail">
-                {added.length > 0 && (
+                {tab === 'letter' ? (
                   <>
-                    <div className="om-rail-lbl">{added.length} skill{added.length === 1 ? '' : 's'} woven in</div>
-                    <div className="om-added-pills">
-                      {added.map(sk => <span key={sk} className="om-added-pill">{sk}</span>)}
+                    <div className="om-rail-lbl">Cover letter</div>
+                    <div className="om-feedback">
+                      <b>✍ Built only from your resume's facts</b> and the skills you tapped. No invented projects, no fake passion for the company. Click anywhere to edit before you paste it.
                     </div>
+                    {letterState === 'ready' && (
+                      <button className="om-dl" style={{ marginTop: 12, width: '100%', justifyContent: 'center' }} onClick={copyLetter}>
+                        <Copy size={13} />{copied ? 'Copied' : 'Copy letter'}
+                      </button>
+                    )}
                   </>
-                )}
-                {feedback && (
+                ) : (
                   <>
-                    <div className="om-rail-lbl" style={{ marginTop: 16 }}>Where they went</div>
-                    <div className="om-feedback">{feedback}</div>
+                    {placements.length > 0 ? (
+                      <>
+                        <div className="om-rail-lbl">{placements.length} skill{placements.length === 1 ? '' : 's'} woven in</div>
+                        <div className="om-rail-hint">Each card says exactly <b>where</b> a skill went. Wrong place? <b>✕</b> pulls it back to your Skills section.</div>
+                        {placements.map(p => {
+                          const isRemoved = removed[p.skill] !== undefined
+                          const skillsOnly = !p.removable || isRemoved
+                          return (
+                            <div key={p.skill} className={`om-wov ${skillsOnly ? 'skillonly' : ''}`}>
+                              <div className="om-wov-r1">
+                                <span className="om-added-pill">{p.skill}</span>
+                                {p.removable && (isRemoved
+                                  ? <button className="om-wov-x undo" title="Put it back" onClick={() => undoPlacement(p)}><Undo2 size={11} />Undo</button>
+                                  : <button className="om-wov-x" title="I didn't use this there — remove" onClick={() => removePlacement(p)}><X size={11} /></button>)}
+                              </div>
+                              <div className="om-wov-w">
+                                {skillsOnly
+                                  ? (isRemoved ? <>→ Skills section only — removed from {p.employer || 'that bullet'}</> : <>→ Skills section only</>)
+                                  : <>→ Skills section <b>+ your {p.employer || 'experience'} bullet</b></>}
+                              </div>
+                              {!skillsOnly && p.fragment && <div className="om-wov-f">"{p.fragment}"</div>}
+                            </div>
+                          )
+                        })}
+                      </>
+                    ) : added.length > 0 && (
+                      <>
+                        <div className="om-rail-lbl">{added.length} skill{added.length === 1 ? '' : 's'} woven in</div>
+                        <div className="om-added-pills">
+                          {added.map(sk => <span key={sk} className="om-added-pill">{sk}</span>)}
+                        </div>
+                      </>
+                    )}
+                    {feedback && (
+                      <>
+                        <div className="om-rail-lbl" style={{ marginTop: 16 }}>Where they went</div>
+                        <div className="om-feedback">{feedback}</div>
+                      </>
+                    )}
                   </>
                 )}
               </div>
@@ -818,6 +1049,45 @@ const CSS = `
 .om-ring-l { font-size: 12px; font-weight: 700; color: #0A0A0B; }
 .om-ring-d { font-size: 11.5px; color: #059669; font-weight: 700; margin-top: 1px; }
 .om-rail-lbl { font-size: 10px; font-weight: 800; color: #A1A1A6; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+
+/* ── A5: rubric rows, projection note, junk line, placement cards, tabs, letter ── */
+.om-rub { margin: -6px 0 18px; border: 1px solid #F1EDE7; border-radius: 10px; padding: 12px 13px 4px; }
+.om-rub .om-lbl { margin-bottom: 6px; }
+.om-rub-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+  padding: 7px 0; border-top: 1px solid #F3F4F6; }
+.om-rub-row:first-of-type { border-top: 0; }
+.om-rub-n { font-size: 12px; font-weight: 700; color: #0A0A0B; }
+.om-rub-d { font-size: 10.5px; color: #6B7280; line-height: 1.45; margin-top: 1px; }
+.om-rub-p { font-size: 11.5px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap;
+  color: #92400E; background: #FFFBEB; border: 1px solid #FDE68A; padding: 2px 8px; border-radius: 100px; }
+.om-rub-p.full { color: #047857; background: #ECFDF5; border-color: #A7F3D0; }
+.om-rub-p.zero { color: #991B1B; background: #FEF2F2; border-color: #FECACA; }
+.om-proj { font-size: 11.5px; color: #6B7280; line-height: 1.5; margin: -8px 0 16px; padding: 9px 12px;
+  background: #F9FAFB; border: 1px solid #F3F4F6; border-radius: 8px; }
+.om-proj b { color: #0A0A0B; }
+.om-proj.max { background: #ECFDF5; border-color: #A7F3D0; color: #065F46; }
+.om-proj.max b { color: #047857; }
+.om-junk { font-size: 11px; color: #9CA3AF; line-height: 1.5; margin: 4px 0 2px; padding: 0 2px; }
+.om-junk-t { color: #6B7280; text-decoration: line-through; }
+.om-tabs { display: flex; gap: 4px; padding: 8px 18px 0; border-bottom: 1px solid #F1EDE7; background: #fff; flex-shrink: 0; }
+.om-tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 12px 9px; font-size: 12.5px; font-weight: 700;
+  color: #6B7280; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; gap: 6px; margin-bottom: -1px; }
+.om-tab.on { color: #2563EB; border-bottom-color: #2563EB; }
+.om-tab:hover { color: #0A0A0B; }
+.om-rail-hint { font-size: 11px; color: #6B7280; line-height: 1.5; margin-bottom: 10px; }
+.om-rail-hint b { color: #0A0A0B; }
+.om-wov { border: 1px solid #A7F3D0; background: #F7FEFB; border-radius: 9px; padding: 9px 10px; margin-bottom: 7px; }
+.om-wov.skillonly { border-color: #E5E7EB; background: #F9FAFB; }
+.om-wov-r1 { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.om-wov-x { border: 1px solid #E5E7EB; background: #fff; color: #6B7280; border-radius: 6px; width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer; font-family: inherit; font-size: 10.5px; font-weight: 700; }
+.om-wov-x:hover { border-color: #DC2626; color: #DC2626; }
+.om-wov-x.undo { width: auto; padding: 0 8px; gap: 4px; color: #2563EB; border-color: #DBEAFE; }
+.om-wov-x.undo:hover { background: #EFF6FF; }
+.om-wov-w { font-size: 11px; color: #6B7280; margin-top: 6px; line-height: 1.45; }
+.om-wov-w b { color: #047857; }
+.om-wov-f { font-size: 10.5px; color: #374151; font-style: italic; margin-top: 4px; line-height: 1.4; }
+.om-paper .om-letter { font-size: 12.5px; line-height: 1.6; }
 
 @media (max-width: 720px) {
   .om-split { flex-direction: column; }
