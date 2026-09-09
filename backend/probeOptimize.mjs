@@ -29,7 +29,7 @@ const db = mongoose.connection.db
 const user = await db.collection('users').findOne({ resumeText: { $exists: true, $ne: '' } }, { projection: { resumeText: 1 } })
 const job = wantJob
   ? await db.collection('jobs').findOne({ id: wantJob })
-  : await db.collection('jobs').findOne({ title: new RegExp(wantTitle, 'i'), closed: { $ne: true }, company: { $not: /sandbox|test|demo/i } }, { sort: { postedAt: -1 } })
+  : await db.collection('jobs').findOne({ title: new RegExp(wantTitle, 'i'), closed: { $ne: true }, company: { $not: /sandbox|test|demo/i }, ats: { $in: ['greenhouse', 'smartrecruiters', 'ashby'] } }, { sort: { postedAt: -1 } })
 await mongoose.disconnect()
 if (!user || !job) { console.error('no user or no job'); process.exit(1) }
 

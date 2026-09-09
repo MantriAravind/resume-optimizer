@@ -36,7 +36,10 @@ const job = wantJob
       // product-designer body under a "Big Data Engineer <timestamp>" title. Skipped here;
       // the pipeline should skip them too (checklist).
       { title: new RegExp(wantTitle, 'i'), closed: { $ne: true }, description: { $exists: true },
-        company: { $not: /sandbox|test|demo/i } },
+        company: { $not: /sandbox|test|demo/i },
+        // Only sources whose full posting /jobs/:id can fetch. The dev database still
+        // holds Lever stubs from an old measurement; a stub scores against nothing.
+        ats: { $in: ['greenhouse', 'smartrecruiters', 'ashby'] } },
       { sort: { postedAt: -1 } },
     )
 if (!job) { console.error('no job matched'); process.exit(1) }

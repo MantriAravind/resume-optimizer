@@ -703,7 +703,7 @@ const MODEL_FALLBACK = process.env.OPENAI_FALLBACK_MODEL     || 'gpt-5.6-terra'
 // model now labels every entry with a kind, code drops the phrases, and this guard
 // catches the ones it mislabels. A student is never asked "have you used
 // stakeholder requirements?".
-const JUNK_WORDS = /\b(incidents?|issues?|requirements?|stakeholders?|environments?|processe?s?|experience|ability|understanding|knowledge|skills?|practices?|principles?|concepts?|fundamentals?|best|strong|excellent|proven|curated|collaboration|cross-functional|capabilit(?:y|ies)|solutions?|workflows?|tasks?|activities)\b/i
+const JUNK_WORDS = /\b(incidents?|issues?|requirements?|stakeholders?|environments?|processe?s?|experience|ability|understanding|knowledge|skills?|practices?|principles?|concepts?|fundamentals?|best|strong|excellent|proven|curated|collaboration|cross-functional|capabilit(?:y|ies)|solutions?|workflows?|tasks?|activities|services?|systems?)\b/i
 // Seen in real output: "Snowflake (data platform) specifically", "Cloud Platform
 // emphasis on Snowflake + dbt", "data ingestion pipelines in Snowflake/dbt-centric
 // stack". A parenthetical or one of these words means the model pasted a clause.
@@ -980,6 +980,10 @@ Respond in this exact JSON format with no extra text:
     if (dropped.length) console.log('extract: dropped ' + dropped.length + ' non-skill(s): ' + dropped.join(' | '))
     if (notInPosting.length) console.log('extract: model listed ' + notInPosting.length + ' term(s) NOT in the posting (resume-anchored), dropped: ' + notInPosting.join(' | '))
     if (overclaimed.length) console.log('extract: model said present, not in resume, moved to missing: ' + overclaimed.join(' | '))
+    // nano lists 15 on a long posting despite "6-10". The model orders by importance,
+    // so the tail is the least important; 12 is enough for a tap list and keeps one
+    // skill worth more than 2 points.
+    if (usable.length > 12) { console.log('extract: capped ' + usable.length + ' keywords to 12'); usable.length = 12 }
     return { parsed, usable }
   }
   let { parsed, usable } = await runExtract()
@@ -2000,6 +2004,7 @@ ${unconfirmed.length ? `The posting also asks for these, and the candidate has N
 - Last: one plain closing sentence.
 - Plain voice. No "I am writing to express my interest". No "passionate", "dynamic", "leverage", "synergy", "spearheaded". No exclamation marks. No em-dashes or en-dashes; use commas and full stops.
 - Write as the candidate, first person. Their name is not needed anywhere in the body.
+- Never use the words "confirmed", "checkbox", "posting", "resume" or "job description" in the letter. Those are our words, not the candidate's.
 
 Role: ${jobTitle || '(see posting)'}
 Company: ${company || '(see posting)'}
@@ -2024,6 +2029,11 @@ Respond in this exact JSON format with no extra text:
       letter = String(parsed.coverLetter || '').trim()
       // Dashes are house style and deterministic: fixed here, never retried.
       letter = letter.replace(/\s*[\u2014\u2013]\s*/g, ', ').replace(/\s--\s/g, ', ')
+      // Our vocabulary must not reach a recruiter. The prompt says so; the model still
+      // wrote "confirmed experience using SEO" twice. Deterministic, so done in code.
+      // Only runs of spaces are collapsed. \s{2,} here ate the blank lines between
+      // paragraphs and shipped a 196-word wall of text.
+      letter = letter.replace(/\b(confirmed|checkbox)\s+/gi, '').replace(/[ \t]{2,}/g, ' ')
 
       const claims = sentencesMentioning(letter, unconfirmed)
       const copied = longestSharedRun(letter, jobText)
@@ -2031,7 +2041,7 @@ Respond in this exact JSON format with no extra text:
       if (attempt === 2) {
         // Last resort: a sentence claiming an unconfirmed skill is cut. A shorter
         // letter beats a letter that lies.
-        for (const c of claims) letter = letter.replace(c.sentence, '').replace(/\s{2,}/g, ' ').replace(/\n\s*\n\s*\n/g, '\n\n').trim()
+        for (const c of claims) letter = letter.replace(c.sentence, '').replace(/[ \t]{2,}/g, ' ').replace(/\n\s*\n\s*\n/g, '\n\n').trim()
         stripped = claims.map(c => c.term)
         console.warn('cover-letter gate unresolved: stripped ' + claims.length + ' sentence(s) claiming ' + stripped.join(', ') + '; copied runs left: ' + copied.length)
         break
@@ -3441,6 +3451,9 @@ app.post('/download-pdf', async (req, res) => {
   res.send(pdfBuffer)
 })
 
+// Bump on every change that ships. Printed at startup so "which code is running"
+// is read off the terminal, never inferred from behaviour.
+const SERVER_BUILD = '2026-09-09 A5 step 4c (paragraph breaks kept)'
 app.listen(PORT, () => {
-  console.log(`Backend server running on http://localhost:${PORT}`)
+  console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })
