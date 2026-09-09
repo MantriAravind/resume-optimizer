@@ -925,3 +925,51 @@ Aravind's own resume for a real job, all five checked.
 - BUILD ORDER: extract v2 -> scoreRubric -> optimize placements+gate ->
   cover-letter -> modal. Each step tested on own resume + real job.
 - [ ] Later: tapped-skill persistence across jobs (needs User schema change).
+
+### A5 build log — 2026-09-09
+Step 1 (`3e4b2e7`) and Step 2 (`2f1d65a`) live on Render. Verified on production
+data via probeAnalyze (6 real jobs) and the live modal (Clera AWS Data Engineer:
+tap 67 → promised 100 → delivered 100, 3 skills landed in the skills line).
+
+What step 2 shipped beyond the spec, all from probe evidence:
+- `present` decided in code (term literally in resume, whole-word, plural/gerund
+  and vendor-prefix slack). Model said "dbt present" on a resume without dbt.
+- keyword must literally appear in the posting. Fed a 500-char stub the model listed
+  the resume's skills as "posting keywords".
+- core role by family classification (fixed list, code compares). Yes/no let
+  "Data Engineer → Product Manager" through as same family.
+- latest title is its own cached nano call (ResumeFacts). Inside the extract it came
+  back "" two runs in seven; "" scored as unknown = 20 free points.
+- extract retries once when <5 usable keywords (nano ignores "6-10").
+- yearsRequired 0 read as null; posting yearsMin preferred over model.
+- cache key now v7; every bump is documented at ANALYZE_CACHE_VERSION.
+
+Findings parked (evidence, not guesses):
+- [ ] C-new: Mongo stores a 500-char description PREVIEW for all 67,710 jobs; the
+      modal fetches full text via /jobs/:id. Confirm in FetchJobs.mjs that the visa
+      filter runs on FULL text before the trim. Expected yes; must be verified.
+- [ ] C-new: "BuiltIn Integration Sandbox" (greenhouse 6186553004) is on the live
+      board with a product-designer body under a "Big Data Engineer <timestamp>"
+      title. Pipeline must exclude sandbox/test/demo boards.
+- [ ] B-new: Clerk keys. Render log says backend is on a DEVELOPMENT instance;
+      Clerk dashboard shows the production publishable key "Never used". Both Vercel
+      and Render likely still on pk_test/sk_test. Verify, then switch, then test.
+- [ ] B-new: production Clerk instance refuses localhost origin, so the modal cannot
+      be tested locally. Either allow localhost in Clerk (Production instance →
+      Domains) or accept probe-only backend testing.
+- [ ] A5-followup: bullet-relevance grade is the noisiest row (gave a PM posting a
+      3; calibration says 1-2). Consider its own call, or two calls averaged.
+- [ ] A5-followup: comma-list keywords ("Windows, macOS, Linux") arrive as one term.
+- [ ] A5-followup (step 5): result highlighter marks "years", "dependable", "use" in
+      the summary — loose match on something; must be confirmed-skills only.
+- Tooling: backend/probeAnalyze.mjs (--local, --job, --title; fetches full JD via
+  /jobs/:id) and backend/jdAudit.mjs (description length by ATS). Local server
+  against production DB: `$env:MONGODB_URI = "<prod>"` in the shell, never in a file.
+- Lesson: `Set-Content` replaces a file; `Add-Content` appends. Never write an
+  env file with Set-Content without reading it first.
+- Lesson: a probe must feed the model the same input the product does. Two hours
+  went to a "resume-anchoring bug" that was a truncated test input.
+
+Remaining: Step 3 (/optimize placements + Rule-7 gate), Step 4 (/cover-letter),
+Step 5 (OptimizeModal.jsx: rubric rows, junk line, placements ✕/↩, max framing,
+cover letter tab, switch scoreBefore/scoreAfter to rubric.total/rubricAfter.total).
