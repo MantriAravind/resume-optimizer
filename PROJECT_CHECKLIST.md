@@ -973,3 +973,39 @@ Findings parked (evidence, not guesses):
 Remaining: Step 3 (/optimize placements + Rule-7 gate), Step 4 (/cover-letter),
 Step 5 (OptimizeModal.jsx: rubric rows, junk line, placements ✕/↩, max framing,
 cover letter tab, switch scoreBefore/scoreAfter to rubric.total/rubricAfter.total).
+
+### A5 build log — 2026-09-09, second session
+Steps 3 (`c4ed0b7`) and 4 (`258ad66`) live. Backend for A5 complete.
+- Step 3: rewrite returns `placements[{skill,where,employer,fragment}]`, code-verified
+  (fragment must be in output, on a bullet line, and name the skill; else downgraded
+  to skills-only). Rule 7 is a gate check: missing confirmed skill -> correction ->
+  last resort `appendToSkills()`. `landed === confirmed`; probe: promised 93 = delivered 93.
+- Step 4: POST /cover-letter, lazy, resume-facts-only. Gate: unconfirmed posting
+  skills in the letter (retry, then cut the sentence), 10-word runs copied from the
+  posting (retry), dashes and our vocabulary ("confirmed") stripped in code.
+- Keyword list capped at 12 in code (nano returned 15); retry when <5.
+- SERVER_BUILD stamp printed at startup. Bump it on every change that ships.
+
+Local environment restored (this is why the evening was hard):
+- Dev DB had only Lever stubs -> every local test hit production. Now
+  `backend/seedDev.mjs` copies 300 real jobs prod->dev (reads PROD_MONGODB_URI from
+  backend/.env, gitignored). Re-run when local tests need fresh postings.
+- RULE: before `node server.js`, run `netstat -ano | findstr LISTENING | findstr :3001`.
+  Must be empty. Closing a VS Code terminal tab does NOT kill node on Windows; an
+  orphan from 3:04 PM answered every probe for 30 minutes while "restarted" code sat
+  idle. `taskkill /PID <pid> /F` if anything is listening.
+- RULE: read the build line after every restart. If it is not the build you just
+  moved in, stop.
+- [ ] B-new: production Clerk instance refuses localhost, so the modal cannot sign in
+      locally. Needed before step 5 UI testing: Clerk dashboard -> Production ->
+      Domains/Origins, allow http://localhost:5173. If Clerk will not allow it, step 5
+      is verified by deploy-and-check on optyply.com.
+- Probes: `node probeAnalyze.mjs --local --title "X"`, `node probeOptimize.mjs --local
+  --title "X" --tap 2 --letter`. Both restrict to greenhouse/smartrecruiters/ashby.
+
+Remaining for A5: Step 5, OptimizeModal.jsx. Rubric rows (from `rubric.rows`),
+junk line, placement cards from `placements` with ✕ (remove `fragment` from the
+text) / ↩, "✓ your best honest score" when total === maxScore, cover letter tab
+calling /cover-letter on click, score switched to `rubric.total` / `rubricAfter.total`,
+send `jobTitle` + `yearsMin` on /analyze and /optimize. Highlighter: confirmed
+skills only (currently marks "years", "dependable", "use").
