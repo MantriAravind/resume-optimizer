@@ -165,9 +165,55 @@ const analyzeCacheSchema = new mongoose.Schema({
   latestTitle:     String,
   yearsRequired:   Number,
   bulletRelevance: Number,
+  // true / false from the core-role check, null when there was no title to compare.
+  roleMatch:       { type: Boolean, default: null },
   createdAt: { type: Date, default: Date.now, expires: '30d' },
 })
 const AnalyzeCache = mongoose.model('AnalyzeCache', analyzeCacheSchema)
+
+// Facts that belong to the RESUME, not to a resume+job pair. The extract call reads
+// the latest title on every job, and one run in four returned "" for a resume that
+// plainly has one. That empty title scored the core-role row as "unknown" and awarded
+// the full 20. So the first good answer is kept per resume and reused whenever a
+// later call comes back blank. Keyed on the resume hash: edit the resume, new key.
+const resumeFactsSchema = new mongoose.Schema({
+  key:         { type: String, unique: true },
+  latestTitle: String,
+  createdAt:   { type: Date, default: Date.now, expires: '90d' },
+})
+const ResumeFacts = mongoose.model('ResumeFacts', resumeFactsSchema)
+function resumeFactsKey(resumeText) {
+  return crypto.createHash('sha256').update(String(resumeText || '')).digest('hex')
+}
+// One question, one answer, once per resume. Asked inside the extract call (which
+// is also ranking keywords and grading bullets) nano returned "" for this title two
+// times in seven. Asked alone it does not. Cached on the resume hash.
+async function latestTitleFor(resumeText) {
+  const key = resumeFactsKey(resumeText)
+  try {
+    const facts = await ResumeFacts.findOne({ key }).lean()
+    if (facts?.latestTitle) return facts.latestTitle
+  } catch (e) { console.warn('resume facts read failed:', e.message) }
+  let title = ''
+  try {
+    const reply = await askModel({
+      model: MODEL_EXTRACT, maxTokens: 2000, reasoningEffort: 'minimal',
+      messages: [{ role: 'user', content: `Below is a resume. What is the job title of the candidate's MOST RECENT role (the one with the latest start date, usually the first listed under experience)? Copy it exactly as the resume writes it. If the resume has no work history, answer with an empty string.\n\nRespond in this exact JSON format with no extra text:\n{"latestTitle": "<title or empty string>"}\n\nRESUME:\n${resumeText}` }],
+    })
+    const parsed = JSON.parse(reply.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim())
+    title = typeof parsed.latestTitle === 'string' ? parsed.latestTitle.trim().slice(0, 120) : ''
+  } catch (e) {
+    console.error('latestTitleFor: MODEL CALL FAILED, role row will be unknown:', e.message)
+    return ''
+  }
+  if (title) {
+    try { await ResumeFacts.updateOne({ key }, { $setOnInsert: { key, latestTitle: title, createdAt: new Date() } }, { upsert: true }) }
+    catch (e) { console.warn('resume facts write failed:', e.message) }
+  } else {
+    console.warn('latestTitleFor: model found no title in this resume; role row will be unknown')
+  }
+  return title
+}
 
 // The key is a hash of both inputs, so any change to either produces a different key
 // and a cache miss. A user editing their resume in Profile therefore does NOT get a
@@ -179,7 +225,7 @@ const AnalyzeCache = mongoose.model('AnalyzeCache', analyzeCacheSchema)
 // built from half the inputs. Bumping the prefix makes every old entry a miss, and
 // the 30-day TTL cleans them up. The job title is part of the key because the
 // core-role check depends on it.
-const ANALYZE_CACHE_VERSION = 'v2'
+const ANALYZE_CACHE_VERSION = 'v7'   // v5: role by family; v6: keywords must appear in posting; v7: vendor-prefix dedupe
 function analyzeCacheKey(resumeText, jobText, jobTitle = '') {
   return ANALYZE_CACHE_VERSION + ':' + crypto.createHash('sha256')
     .update(resumeText + '\u0000' + jobText + '\u0000' + jobTitle).digest('hex')
@@ -657,17 +703,24 @@ const MODEL_FALLBACK = process.env.OPENAI_FALLBACK_MODEL     || 'gpt-5.6-terra'
 // model now labels every entry with a kind, code drops the phrases, and this guard
 // catches the ones it mislabels. A student is never asked "have you used
 // stakeholder requirements?".
-const JUNK_WORDS = /\b(incidents?|issues?|requirements?|stakeholders?|environments?|processe?s?|experience|ability|understanding|knowledge|skills?|practices?|principles?|concepts?|fundamentals?|best|strong|excellent|proven|curated|collaboration|cross-functional)\b/i
+const JUNK_WORDS = /\b(incidents?|issues?|requirements?|stakeholders?|environments?|processe?s?|experience|ability|understanding|knowledge|skills?|practices?|principles?|concepts?|fundamentals?|best|strong|excellent|proven|curated|collaboration|cross-functional|capabilit(?:y|ies)|solutions?|workflows?|tasks?|activities)\b/i
 // Seen in real output: "Snowflake (data platform) specifically", "Cloud Platform
 // emphasis on Snowflake + dbt", "data ingestion pipelines in Snowflake/dbt-centric
 // stack". A parenthetical or one of these words means the model pasted a clause.
 // A parenthetical is fine when it is an acronym, "(ADLS)"; it is a pasted clause when
 // it holds words, "(data platform)".
 const JUNK_SHAPE = /\((?![A-Z0-9]{2,8}\))|\b(specifically|emphasis|centric|stack|focus(?:ed)?|preferably|including)\b/i
+const TITLE_NOUN = /\b(manager|engineer|analyst|developer|scientist|architect|director|specialist|consultant|administrator|coordinator)$/i
 function looksLikeJunk(term) {
   const t = String(term || '').trim()
   const words = t.split(/\s+/)
   if (JUNK_SHAPE.test(t)) return true
+  // "Product Manager" is a title, not a skill. Nobody can tap "I have used Product
+  // Manager".
+  if (words.length <= 4 && TITLE_NOUN.test(t)) return true
+  // A multi-word term ending in a filler noun is a clause: "SAP solutions",
+  // "stakeholder requirements", "Distribution & Transportation capabilities".
+  if (words.length >= 2 && JUNK_WORDS.test(words[words.length - 1])) return true
   // Four or more words is a clause unless it is a product name, and product names are
   // Title Case: "Azure Data Lake Storage" keeps, "data ingestion pipelines in" drops.
   if (words.length >= 4) {
@@ -683,6 +736,137 @@ function looksLikeJunk(term) {
 // the base: parenthetical stripped, lowercased, trailing qualifier words removed.
 function keywordBase(term) {
   return String(term || '').toLowerCase().replace(/\(.*?\)/g, '').replace(/\b(specifically|platform)\b/g, '').replace(/\s+/g, ' ').trim()
+}
+// "Glue" and "AWS Glue" are one skill; the posting said both and the resume said
+// "Glue", so the student would have been asked to tap AWS Glue. The vendor prefix is
+// stripped for comparison only. "GitHub" vs "GitHub Actions" is not a prefix case and
+// stays as two skills.
+const VENDOR_PREFIX = /^(aws|amazon|azure|microsoft|google|gcp|apache)\s+/
+function keywordCore(term) {
+  return keywordBase(term).replace(VENDOR_PREFIX, '')
+}
+
+// ── CORE ROLE (A5 scoring law) ─────────────────────────────────────────────
+//
+// "Senior Data Engineer" and "Data Engineer II" are the same job. "Data Analyst" and
+// "Data Engineer" are not, however many keywords overlap. Seniority words are
+// stripped, then the cores are compared; equal or one-contains-the-other is a match
+// with no model call ("azure data engineer" contains "data engineer"). Only a real
+// disagreement asks the nano model a yes/no, and that answer is cached with the rest
+// of the extract so it is paid for once per resume+job.
+const SENIORITY_TOKENS = /\b(senior|sr|junior|jr|lead|staff|principal|associate|entry[- ]level|mid[- ]level|intern|internship|i|ii|iii|iv|1|2|3)\b/g
+function coreRole(title) {
+  return String(title || '').toLowerCase()
+    .replace(/\(.*?\)/g, ' ')
+    .replace(/[-–—,/|:]/g, ' ')
+    .replace(SENIORITY_TOKENS, ' ')
+    .replace(/\s+/g, ' ').trim()
+}
+// When the cores differ, the model does not get a yes/no it can wave through: it
+// files each title under one family from this fixed list and code compares the two
+// strings. The first version asked "same job family?" and nano said YES to Data
+// Engineer vs Product Manager. Classification is harder to get wrong than agreement.
+const ROLE_FAMILIES = [
+  'data engineering', 'data analysis / BI', 'data science / ML', 'software engineering',
+  'devops / infrastructure / SRE', 'security', 'QA / testing', 'product management',
+  'project / program management', 'design / UX', 'sales', 'marketing', 'finance / accounting',
+  'HR / recruiting', 'operations / supply chain', 'customer support', 'legal', 'healthcare',
+  'education', 'other',
+]
+async function roleMatch(resumeTitle, jobTitle) {
+  const a = coreRole(resumeTitle), b = coreRole(jobTitle)
+  if (!a || !b) return null
+  if (a === b || a.includes(b) || b.includes(a)) return true
+  try {
+    const reply = await askModel({
+      // Budget covers nano's invisible reasoning tokens; 5 starved it and every call
+      // came back empty and scored as "unknown". Same lesson as the extract call.
+      model: MODEL_EXTRACT, maxTokens: 2000, reasoningEffort: 'minimal',
+      messages: [{ role: 'user', content: `Classify each job title into exactly one family from this list:\n${ROLE_FAMILIES.map(f => '- ' + f).join('\n')}\n\nTitle A: ${resumeTitle}\nTitle B: ${jobTitle}\n\nRespond in this exact JSON format with no extra text:\n{"a": "<family>", "b": "<family>"}` }],
+    })
+    const cleaned = reply.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+    const parsed = JSON.parse(cleaned)
+    const fa = String(parsed.a || '').toLowerCase().trim()
+    const fb = String(parsed.b || '').toLowerCase().trim()
+    if (!fa || !fb) throw new Error('empty family in reply: ' + cleaned)
+    const verdict = fa === fb
+    console.log(`roleMatch: "${resumeTitle}" [${fa}] vs "${jobTitle}" [${fb}] -> ${verdict ? 'same family' : 'different'}`)
+    return verdict
+  } catch (e) {
+    // Loud on purpose. Unknown awards the full 20, so a silent failure here inflates
+    // every score for every job. If this line shows up in the logs, fix the call.
+    console.error('roleMatch: MODEL CALL FAILED, scoring role as unknown (full credit):', e.message)
+    return null
+  }
+}
+
+// ── SCORE RUBRIC (A5 changes 4 + 5) ────────────────────────────────────────
+//
+// One function, one law, both screens. keywords 40 · bullet relevance 30 · core role
+// 20 · years 10. The tap screen calls it with the skills tapped so far; the result
+// screen calls it with the skills that landed; step 3's gate makes those the same set,
+// so the preview and the delivery are the same number by construction.
+//
+// Missing data never penalizes. A posting that states no years is not asking for
+// any; a resume with no title has nothing to mismatch; a grade the model failed to
+// return is not a 1. Each such row is awarded in full and labelled so the modal can
+// say why. The student cannot fix data we failed to read, so they are not charged
+// for it.
+function scoreRubric({ matched = [], missing = [], confirmed = [], bulletRelevance = null, roleMatch = null, resumeTitle = '', jobTitle = '', yearsRequired = null, expMonths = null }) {
+  const total = matched.length + missing.length
+  const have  = matched.length + confirmed.filter(k => missing.includes(k)).length
+  const kwPts = total ? Math.round(40 * have / total) : 0
+
+  const grade = Number.isInteger(bulletRelevance) && bulletRelevance >= 1 && bulletRelevance <= 5 ? bulletRelevance : null
+  const brPts = grade === null ? 30 : Math.round(30 * (grade - 1) / 4)
+
+  const rolePts = roleMatch === false ? 0 : 20
+
+  const haveYears = expMonths === null ? null : Math.round(expMonths / 12 * 10) / 10
+  const yrPts = yearsRequired === null || haveYears === null ? 10 : (haveYears >= yearsRequired ? 10 : 0)
+
+  return {
+    total: kwPts + brPts + rolePts + yrPts,
+    rows: {
+      keywords: { pts: kwPts,   max: 40, have, total },
+      bullets:  { pts: brPts,   max: 30, grade, note: grade === null ? 'not graded' : null },
+      role:     { pts: rolePts, max: 20, match: roleMatch, resumeTitle, jobTitle, note: roleMatch === null ? 'no title to compare' : null },
+      years:    { pts: yrPts,   max: 10, required: yearsRequired, have: haveYears,
+                  note: yearsRequired === null ? 'posting states no minimum' : haveYears === null ? 'could not read your dates' : null },
+    },
+  }
+}
+
+// ── PRESENT IS DECIDED IN CODE ─────────────────────────────────────────────
+//
+// Two runs of the extract on the same resume and posting disagreed on whether "dbt"
+// was present. The model's `present` flag is the honesty gate: a skill marked present
+// is never offered for tapping and the rewrite treats it as fact, so a false present
+// is a fabrication with no checkbox in front of it. A false missing costs one tap.
+// So the model proposes and this decides: present means the term literally appears
+// in the resume. Punctuation is flattened on both sides ("CI/CD" ~ "ci cd") and a
+// trailing plural is tolerated ("APIs" ~ "API"); nothing looser.
+function flattenForMatch(text) {
+  return ' ' + String(text || '').toLowerCase().replace(/[^a-z0-9+#]+/g, ' ').replace(/\s+/g, ' ').trim() + ' '
+}
+function resumeHas(resumeFlat, term) {
+  const t = flattenForMatch(term).trim()
+  if (!t) return false
+  // "AWS Glue" in the posting, "Glue" in the resume: same skill. Try the
+  // vendor-stripped form as well (keywordCore is defined above).
+  const core = flattenForMatch(keywordCore(term)).trim()
+  if (core && core !== t && resumeHas(resumeFlat, core)) return true
+  // Whole words only: "Java" must not match "JavaScript", "SQL" must not match
+  // "sqlite". The only slack is a plural or gerund on the last word, so "APIs" finds
+  // "API" and "data models" finds "data modeling".
+  const stems = [t]
+  if (t.endsWith('s') && t.length > 3) stems.push(t.slice(0, -1))
+  for (const c of stems) {
+    if (resumeFlat.includes(' ' + c + ' ')) return true
+    if (resumeFlat.includes(' ' + c + 's ')) return true
+    if (resumeFlat.includes(' ' + c + 'ing ')) return true
+  }
+  return false
 }
 
 // jobTitle is optional: the standalone /optimize fallback path does not have it, and
@@ -700,27 +884,17 @@ async function extractKeywords(resumeText, jobText, jobTitle = '') {
       latestTitle:     hit.latestTitle || '',
       yearsRequired:   typeof hit.yearsRequired === 'number' ? hit.yearsRequired : null,
       bulletRelevance: typeof hit.bulletRelevance === 'number' ? hit.bulletRelevance : null,
+      roleMatch:       typeof hit.roleMatch === 'boolean' ? hit.roleMatch : null,
     }
   } catch (e) {
     console.warn('analyze cache read failed:', e.message)
   }
 
-  const replyText = await askModel({
-    model: MODEL_EXTRACT,
-    // Budget covers invisible reasoning tokens too. Sized generously on purpose:
-    // if reasoning_effort is refused outright the model thinks at full effort, and
-    // a starved budget returns an empty string rather than a short answer.
-    maxTokens: 8000,
-    // gpt-5-nano refuses temperature: 0, so the determinism this call used to have
-    // is gone. 'minimal' keeps it as close to stable as we can get — this is
-    // mechanical matching, not a task that benefits from thinking. ('none' is
-    // refused by this model; minimal is its floor.)
-    reasoningEffort: 'minimal',
-    messages: [{
-      role: 'user',
-      content: `You are an ATS specialist.
+  const prompt = `You are an ATS specialist.
 
-Read the job description and identify the specific skills, technologies, tools, and qualifications it screens for. Use the exact wording the posting uses (e.g. "PySpark", not "Spark"). Pick the 6-10 most important.
+You are screening ONE resume against ONE job posting. Work in this order and do not skip ahead.
+
+STEP 1 — read the JOB POSTING below and list the 6-10 specific skills, technologies, tools, and qualifications IT screens for. Use the exact wording the posting uses (e.g. "PySpark", not "Spark"). This list comes from the posting only. Do not look at the resume yet. A list built from the resume is wrong: if every item you list turns out to be present in the resume, you read the wrong document.
 
 Ignore generic filler. An ATS does not screen on "strong attention to detail", "good communication skills", "strong organizational skills", "team player", or "ability to work independently". Skip all of it. Only list concrete, checkable things: named technologies, named tools, named platforms, specific technical practices.
 
@@ -729,61 +903,114 @@ Label each entry with a kind:
 - "practice": a specific, nameable technical method someone can say they have done (data modeling, unit testing, CI/CD, dimensional modeling).
 - "phrase": a duty or situation lifted from the posting that is not a skill anyone "has" (production data incidents, stakeholder requirements, cross-functional collaboration). A student cannot tick "I have used production data incidents". Label these honestly; they are dropped.
 
-Then check the resume against that list.
+STEP 2 — now read the RESUME and mark each posting skill present or absent. Present means the resume actually names it.
 
-Also report, from the same read:
-- latestTitle: the job title of the candidate's most recent role, exactly as the resume writes it. Empty string if there is no work history.
-- yearsRequired: the minimum years of experience the posting asks for, as a whole number. null if the posting states no number. If it gives a range ("3-5 years") use the low end.
-- bulletRelevance: an integer 1-5 grading how closely the WORK described in the candidate's experience bullets matches the core duties of this posting. Judge the work, not the vocabulary: a bullet about building ELT pipelines is relevant to a pipeline job even if it never says "ELT". 5 = they have done this job; 4 = most of it; 3 = an adjacent role with real overlap; 2 = a different role with a little overlap; 1 = unrelated. Grade the bullets as written, not the summary.
+STEP 3 — from the same read of both documents:
+- yearsRequired: the minimum years of experience the POSTING asks for, as a whole number. null if the posting states no number. If it gives a range ("3-5 years") use the low end.
+- bulletRelevance: an integer 1-5 grading how closely the WORK described in the resume's experience bullets matches the core duties of THIS POSTING. Judge the work, not the vocabulary: a bullet about building ELT pipelines is relevant to a pipeline job even if it never says "ELT". Calibration: 5 = the bullets describe this exact job; 4 = most of its duties; 3 = an adjacent role with real overlap (data engineer bullets for an analytics engineer posting); 2 = a different role that touches this one (data engineer bullets for a BI analyst posting); 1 = a different profession (data engineer bullets for a product manager or sales posting). A candidate whose whole history is in another job family cannot score above 2. Grade the bullets as written, not the summary.
 
-Resume:
-${resumeText}
-
-Job Description:
+JOB POSTING:
 ${jobText}
+
+RESUME:
+${resumeText}
 
 Respond in this exact JSON format with no extra text:
 {
-  "keywords": [{"term": "<exact wording>", "kind": "tool|practice|phrase", "present": true|false}],
-  "latestTitle": "<string>",
+  "keywords": [{"term": "<exact wording from the posting>", "kind": "tool|practice|phrase", "present": true|false}],
   "yearsRequired": <number or null>,
   "bulletRelevance": <1-5>
 }`
-    }]
-  })
-  const cleaned = replyText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
-  const parsed = JSON.parse(cleaned)
 
-  // Certifications are removed before the checkbox list is ever built. The box says
-  // "Tap if you have", and next to Kubernetes that means "I have used this" while
-  // next to VMCE it means "I passed this exam" — a claim a recruiter verifies in one
-  // search. The two are indistinguishable in a list of chips, and the person who
-  // wrote this product's anti-fabrication rule still ticked VMCE and VMCSE by
-  // mistake. A student will not do better. So the option is not offered.
-  // Same filter drops phrases: the model's label first, the code guard second.
-  const entries = Array.isArray(parsed.keywords) ? parsed.keywords : []
-  const usable = []
-  const dropped = []
-  for (const e of entries) {
-    const term = String(e?.term || '').trim()
-    if (!term) continue
-    if (e.kind === 'phrase' || looksLikeJunk(term) || !keepAsSkill(term)) { dropped.push(term); continue }
-    if (usable.some(u => keywordBase(u.term) === keywordBase(term))) continue
-    usable.push({ term, present: e.present === true })
+  // One extract, optionally repeated. nano ignores "6-10": across four real jobs it
+  // returned 2, 3, 4 and 12. Two keywords make the 40-point row a coin flip, so a
+  // thin list gets one more try and the fuller result wins.
+  const runExtract = async (nudge = '') => {
+    const replyText = await askModel({
+      model: MODEL_EXTRACT,
+      // Budget covers invisible reasoning tokens too. Sized generously on purpose:
+      // if reasoning_effort is refused outright the model thinks at full effort, and
+      // a starved budget returns an empty string rather than a short answer.
+      maxTokens: 8000,
+      // gpt-5-nano refuses temperature: 0, so the determinism this call used to have
+      // is gone. 'minimal' keeps it as close to stable as we can get — this is
+      // mechanical matching, not a task that benefits from thinking. ('none' is
+      // refused by this model; minimal is its floor.)
+      reasoningEffort: 'minimal',
+      messages: [{ role: 'user', content: prompt + nudge }],
+    })
+    const cleaned = replyText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+    const parsed = JSON.parse(cleaned)
+
+    // Certifications are removed before the checkbox list is ever built. The box says
+    // "Tap if you have", and next to Kubernetes that means "I have used this" while
+    // next to VMCE it means "I passed this exam" — a claim a recruiter verifies in one
+    // search. The two are indistinguishable in a list of chips, and the person who
+    // wrote this product's anti-fabrication rule still ticked VMCE and VMCSE by
+    // mistake. A student will not do better. So the option is not offered.
+    // Same filter drops phrases: the model's label first, the code guard second.
+    const entries = Array.isArray(parsed.keywords) ? parsed.keywords : []
+    const usable = []
+    const dropped = []
+    const overclaimed = []
+    const notInPosting = []
+    const resumeFlat = flattenForMatch(resumeText)
+    const jobFlat = flattenForMatch(jobText)
+    for (const e of entries) {
+      const term = String(e?.term || '').trim()
+      if (!term) continue
+      if (e.kind === 'phrase' || looksLikeJunk(term) || !keepAsSkill(term)) { dropped.push(term); continue }
+      // The same literal test in the other direction. The prompt asks for the
+      // posting's exact wording, so a term that is not in the posting did not come
+      // from it: it came from the resume, which is the anchoring bug again. On a Data
+      // Scientist posting the model listed Airflow, Kubernetes and Azure Data Factory,
+      // all from the candidate's resume. Dropped, logged.
+      if (!resumeHas(jobFlat, term)) { notInPosting.push(term); continue }
+      const present = resumeHas(resumeFlat, term)
+      if (e.present === true && !present) overclaimed.push(term)
+      const twin = usable.find(u => keywordCore(u.term) === keywordCore(term))
+      if (twin) {
+        // Keep the longer wording, present if either form is in the resume.
+        if (term.length > twin.term.length) twin.term = term
+        twin.present = twin.present || present
+        continue
+      }
+      usable.push({ term, present })
+    }
+    if (dropped.length) console.log('extract: dropped ' + dropped.length + ' non-skill(s): ' + dropped.join(' | '))
+    if (notInPosting.length) console.log('extract: model listed ' + notInPosting.length + ' term(s) NOT in the posting (resume-anchored), dropped: ' + notInPosting.join(' | '))
+    if (overclaimed.length) console.log('extract: model said present, not in resume, moved to missing: ' + overclaimed.join(' | '))
+    return { parsed, usable }
   }
-  if (dropped.length) console.log('extract: dropped ' + dropped.length + ' non-skill(s): ' + dropped.join(' | '))
+  let { parsed, usable } = await runExtract()
+  if (usable.length < 5) {
+    console.log('extract: only ' + usable.length + ' usable keyword(s), retrying once')
+    try {
+      const again = await runExtract('\n\nYour previous answer listed fewer than 5 concrete skills. Read the JOB POSTING again and list every named tool, technology, platform and technical practice it mentions, up to 10.')
+      if (again.usable.length > usable.length) ({ parsed, usable } = again)
+    } catch (e) {
+      console.warn('extract: retry failed, keeping first result:', e.message)
+    }
+  }
+
+  // Resume fact, not a resume+job fact. Own call, own cache.
+  const latestTitle = await latestTitleFor(resumeText)
 
   const rel = Number(parsed.bulletRelevance)
+  // 0 is the model's way of saying "not stated" (a real posting never asks for zero
+  // years), so it is read as null and the years row is awarded like any silent JD.
   const yrs = parsed.yearsRequired === null || parsed.yearsRequired === undefined ? null : Number(parsed.yearsRequired)
   const result = {
     matchedKeywords: usable.filter(u => u.present).map(u => u.term),
     missingKeywords: usable.filter(u => !u.present).map(u => u.term),
-    latestTitle:     typeof parsed.latestTitle === 'string' ? parsed.latestTitle.trim() : '',
+    latestTitle,
     // Out-of-range or unparseable grades become null, and the scorer treats null as
     // "could not read" rather than as a zero. A missing figure beats a wrong one.
     bulletRelevance: Number.isInteger(rel) && rel >= 1 && rel <= 5 ? rel : null,
-    yearsRequired:   Number.isFinite(yrs) && yrs >= 0 && yrs <= 30 ? Math.floor(yrs) : null,
+    yearsRequired:   Number.isFinite(yrs) && yrs >= 1 && yrs <= 30 ? Math.floor(yrs) : null,
+    roleMatch:       null,
   }
+  result.roleMatch = await roleMatch(result.latestTitle, jobTitle)
 
   // Store for next time. upsert so a race between two identical requests cannot throw
   // a duplicate-key error. Best-effort again: a write failure must not fail the call
@@ -793,7 +1020,7 @@ Respond in this exact JSON format with no extra text:
       { key: cacheKey },
       { key: cacheKey, matched: result.matchedKeywords, missing: result.missingKeywords,
         latestTitle: result.latestTitle, yearsRequired: result.yearsRequired,
-        bulletRelevance: result.bulletRelevance, createdAt: new Date() },
+        bulletRelevance: result.bulletRelevance, roleMatch: result.roleMatch, createdAt: new Date() },
       { upsert: true }
     )
   } catch (e) {
@@ -806,7 +1033,7 @@ Respond in this exact JSON format with no extra text:
 // ── ANALYZE — what this job screens for, and what the resume already has.
 // No rewrite, so it is fast. The modal shows gaps in ~2s.
 app.post('/analyze', async (req, res) => {
-  const { resumeText, jobText, jobTitle = '' } = req.body
+  const { resumeText, jobText, jobTitle = '', yearsMin = null } = req.body
   if (!resumeText || !jobText) {
     return res.status(400).json({ error: 'Please provide both resume text and job description.' })
   }
@@ -814,15 +1041,29 @@ app.post('/analyze', async (req, res) => {
     const found = await extractKeywords(resumeText, jobText, String(jobTitle || ''))
     const { matchedKeywords, missingKeywords } = found
     const total = matchedKeywords.length + missingKeywords.length
+
+    // The pipeline's yearsMin (parsed from the posting at fetch time) wins when it
+    // exists; the model's read of the same posting is the fallback.
+    const yearsRequired = Number.isFinite(Number(yearsMin)) && yearsMin !== null ? Number(yearsMin) : found.yearsRequired
+    const inputs = {
+      matched: matchedKeywords, missing: missingKeywords,
+      bulletRelevance: found.bulletRelevance, roleMatch: found.roleMatch,
+      resumeTitle: found.latestTitle, jobTitle: String(jobTitle || ''),
+      yearsRequired, expMonths: totalExperienceMonths(resumeText),
+    }
+    const rubric = scoreRubric(inputs)
+    // What the student reaches if they tap every missing skill. When role or years
+    // mismatch this is below 100, and the modal says so instead of pretending.
+    const maxScore = scoreRubric({ ...inputs, confirmed: missingKeywords }).total
+
     res.json({
       matchedKeywords,
       missingKeywords,
+      // Old keyword-only score. The shipped modal still reads this; step 5 switches
+      // it to rubric.total and this line goes.
       scoreBefore: total ? Math.round((matchedKeywords.length / total) * 100) : 0,
-      // Rubric inputs. Step 2 turns these into the scored rows; for now they are
-      // passed through so the shape can be checked against real output.
-      latestTitle:     found.latestTitle,
-      yearsRequired:   found.yearsRequired,
-      bulletRelevance: found.bulletRelevance,
+      rubric,
+      maxScore,
     })
   } catch (error) {
     console.error('Analyze error:', error)
@@ -1271,21 +1512,20 @@ function mergedBullets(text) {
 }
 
 app.post('/optimize', async (req, res) => {
-  const { resumeText, jobText, confirmedSkills = [] } = req.body
+  const { resumeText, jobText, confirmedSkills = [], jobTitle = '', yearsMin = null } = req.body
   if (!resumeText || !jobText) {
     return res.status(400).json({ error: 'Please provide both resume text and job description.' })
   }
 
   try {
-    // Use the lists the modal already has. Only extract if the caller didn't send
-    // them (the standalone Resume Tool doesn't run /analyze first).
-    let matchedKeywords = Array.isArray(req.body.matchedKeywords) ? req.body.matchedKeywords : null
-    let missingKeywords = Array.isArray(req.body.missingKeywords) ? req.body.missingKeywords : null
-    if (!matchedKeywords || !missingKeywords) {
-      const found = await extractKeywords(resumeText, jobText)
-      matchedKeywords = found.matchedKeywords
-      missingKeywords = found.missingKeywords
-    }
+    // The rubric needs the extract's grade, title and years, so the extract is always
+    // consulted. When the modal sent the same jobTitle it sent to /analyze this is a
+    // cache hit and costs nothing; the standalone Resume Tool pays one nano call.
+    const found = await extractKeywords(resumeText, jobText, String(jobTitle || ''))
+    // Use the lists the modal already has when it sent them: those are the chips the
+    // student saw and tapped, and a re-extract could rank a different ten.
+    const matchedKeywords = Array.isArray(req.body.matchedKeywords) ? req.body.matchedKeywords : found.matchedKeywords
+    const missingKeywords = Array.isArray(req.body.missingKeywords) ? req.body.missingKeywords : found.missingKeywords
 
     const confirmed = (Array.isArray(confirmedSkills) ? confirmedSkills : [])
       .filter(k => missingKeywords.includes(k))
@@ -1586,6 +1826,17 @@ Respond in this exact JSON format with no extra text:
     const scoreBefore = total ? Math.round((matchedKeywords.length / total) * 100) : 0
     const scoreAfter = total ? Math.round(((matchedKeywords.length + landed.length) / total) * 100) : 0
 
+    // Same rubric as /analyze, scored on what landed. Until step 3's gate makes
+    // landed === confirmed, this can come in under the tap-screen preview; that gap
+    // is the A5-4 bug and step 3 closes it.
+    const yearsRequired = Number.isFinite(Number(yearsMin)) && yearsMin !== null ? Number(yearsMin) : found.yearsRequired
+    const rubricAfter = scoreRubric({
+      matched: matchedKeywords, missing: missingKeywords, confirmed: landed,
+      bulletRelevance: found.bulletRelevance, roleMatch: found.roleMatch,
+      resumeTitle: found.latestTitle, jobTitle: String(jobTitle || ''),
+      yearsRequired, expMonths,
+    })
+
     res.json({
       matchedKeywords,
       missingKeywords,
@@ -1595,6 +1846,7 @@ Respond in this exact JSON format with no extra text:
       scoreBefore,
       scoreAfter,
       score: scoreBefore,   // keeps the existing Resume Tool working
+      rubricAfter,
     })
   } catch (error) {
     console.error('AI API error:', error)
