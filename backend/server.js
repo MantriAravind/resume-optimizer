@@ -1511,6 +1511,57 @@ function mergedBullets(text) {
     .map(l => l.trim().slice(0, 140))
 }
 
+// ── PLACEMENTS (A5 changes 2 + 3) ──────────────────────────────────────────
+//
+// The model reports where each confirmed skill went. Nothing it reports is trusted:
+// a "bullet" placement stands only if its fragment is literally in the output and
+// the fragment names the skill. Anything else is downgraded to "skills", which the
+// modal shows as a card with no ✕, because there is no verified fragment to remove.
+// A confirmed skill the model did not report at all gets a "skills" card too.
+function verifyPlacements(raw, out, confirmed, skillsHeader) {
+  const list = Array.isArray(raw) ? raw : []
+  const outFlat = flattenForMatch(out)
+  const result = []
+  for (const skill of confirmed) {
+    const p = list.find(x => x && typeof x.skill === 'string' && keywordCore(x.skill) === keywordCore(skill))
+    const fragment = typeof p?.fragment === 'string' ? p.fragment.trim() : ''
+    const employer = typeof p?.employer === 'string' ? p.employer.trim() : ''
+    const inBullet = p?.where === 'bullet' && fragment && out.includes(fragment) && resumeHas(flattenForMatch(fragment), skill)
+      // The fragment must sit on a bullet line, not in the skills section or summary.
+      && out.split('\n').some(l => l.includes(fragment) && /^\s*[•\-–▪]/.test(l))
+    if (inBullet) {
+      result.push({ skill, where: 'bullet', employer, fragment, removable: true })
+    } else {
+      if (p && p.where === 'bullet') console.warn('optimize: placement for "' + skill + '" claimed a bullet but the fragment did not verify; downgraded to skills')
+      result.push({ skill, where: 'skills', employer: '', fragment: '', removable: false, present: resumeHas(outFlat, skill) })
+    }
+  }
+  return result
+}
+
+// Rule 7 last resort. Appends the skills to the first "Label: a, b, c" line inside
+// the student's skills section. Their own category, their own line; only the list
+// after the colon grows. If the section has no such line, the skills go on one
+// plain line at the end of the section rather than under an invented label.
+function appendToSkills(out, skills, skillsHeader) {
+  const lines = out.split('\n')
+  const headerRe = new RegExp('^\\s*' + skillsHeader.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:?\\s*$', 'i')
+  const start = lines.findIndex(l => headerRe.test(l))
+  if (start === -1) return out.trimEnd() + '\n' + skillsHeader + '\n' + skills.join(', ') + '\n'
+  let end = lines.length
+  for (let i = start + 1; i < lines.length; i++) {
+    if (RESUME_SECTIONS.test(lines[i].trim().replace(/[:：]\s*$/, ''))) { end = i; break }
+  }
+  for (let i = start + 1; i < end; i++) {
+    if (/^[A-Za-z][A-Za-z /&+-]{1,48}:\s+\S/.test(lines[i].trim())) {
+      lines[i] = lines[i].replace(/\s*$/, '') + ', ' + skills.join(', ')
+      return lines.join('\n')
+    }
+  }
+  lines.splice(end, 0, skills.join(', '))
+  return lines.join('\n')
+}
+
 app.post('/optimize', async (req, res) => {
   const { resumeText, jobText, confirmedSkills = [], jobTitle = '', yearsMin = null } = req.body
   if (!resumeText || !jobText) {
@@ -1686,9 +1737,13 @@ ${resumeText}
 Job Description:
 ${jobText}
 
+═══ RULE 12 — REPORT EVERY PLACEMENT, EXACTLY ═══
+For EACH confirmed skill, one entry in "placements". If it went into a bullet: "where" is "bullet", "employer" is the company name of that role exactly as written, and "fragment" is the exact clause you added to that bullet, copied character for character from your own optimizedResume (so it can be found there and removed if the candidate disagrees). If it went into the skills section only: "where" is "skills", and "fragment" is the skill as you wrote it in the skills line. A skill placed in both gets ONE entry, the bullet one. Never report a placement you did not actually make.
+
 Respond in this exact JSON format with no extra text:
 {
   "feedback": "<2-3 sentences: what you added and where. If any confirmed skill ended up in the skills section ONLY, name it and say plainly: be ready to speak to where you used it, because your experience bullets do not show it.>",
+  "placements": [{"skill": "<confirmed skill, exactly as given>", "where": "bullet|skills", "employer": "<company or empty>", "fragment": "<exact text from optimizedResume>"}],
   "optimizedResume": "<the full rewritten resume>"
 }`
 
@@ -1730,8 +1785,14 @@ Respond in this exact JSON format with no extra text:
       const envGone = droppedEnvironmentLines(out, resumeText)
       const certs = certsOutsideCertSection(out, resumeText)
       const merged = mergedBullets(out)
+      // Rule 7 in code. The prompt says "never silently disappear"; the model still
+      // dropped confirmed skills, the result score counted only what landed, and the
+      // tap screen's promise was broken. Now a missing confirmed skill is a gate
+      // violation like any other.
+      const outFlat = flattenForMatch(out)
+      const dropped7 = confirmed.filter(k => !resumeHas(outFlat, k))
       if (!invented.length && !dashes.length && !pastT.length && !stray.length && !newSecs.length && !lost
-          && !sumCut && !envGone.length && !certs.length && !merged.length) break
+          && !sumCut && !envGone.length && !certs.length && !merged.length && !dropped7.length) break
       if (attempt === LAST_ATTEMPT) {
         if (invented.length) gateNote = ' (Please review the experience section: one or more bullets may describe work not in your original resume.)'
         // Last resort: strip it. A fabricated paragraph reaching a student's resume is
@@ -1771,10 +1832,18 @@ Respond in this exact JSON format with no extra text:
           out = out.replace(/,\s*,/g, ',').replace(/,\s*\./g, '.').replace(/\s{2,}/g, ' ')
           console.warn('optimize gate: stripped unclaimed certification code(s): ' + certs.join(', '))
         }
-        console.warn('optimize gate unresolved after retries: invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length + ' stray=' + stray.length + ' newSections=' + newSecs.length + ' bulletsLost=' + (lost ? lost.before + '->' + lost.after : 'no') + ' summaryCut=' + (sumCut ? sumCut.before + '->' + sumCut.after : 'no') + ' envDropped=' + envGone.length + ' certs=' + certs.length + ' merged=' + merged.length)
+        // Rule 7 last resort: the model would not carry the skill, so the code does,
+        // into the first category line of the student's own skills section. The tap
+        // screen promised this skill would be on the resume; that promise is kept here
+        // or the score above it is a lie.
+        if (dropped7.length) {
+          out = appendToSkills(out, dropped7, skillsHeader)
+          console.warn('optimize gate: code-appended to skills: ' + dropped7.join(', '))
+        }
+        console.warn('optimize gate unresolved after retries: invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length + ' stray=' + stray.length + ' newSections=' + newSecs.length + ' bulletsLost=' + (lost ? lost.before + '->' + lost.after : 'no') + ' summaryCut=' + (sumCut ? sumCut.before + '->' + sumCut.after : 'no') + ' envDropped=' + envGone.length + ' certs=' + certs.length + ' merged=' + merged.length + ' confirmedDropped=' + dropped7.length)
         break
       }
-      console.warn('optimize gate retry ' + (attempt + 1) + ': invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length + ' stray=' + stray.length + ' newSections=' + newSecs.length + ' bulletsLost=' + (lost ? lost.before + '->' + lost.after : 'no') + ' summaryCut=' + (sumCut ? sumCut.before + '->' + sumCut.after : 'no') + ' envDropped=' + envGone.length + ' certs=' + certs.length + ' merged=' + merged.length)
+      console.warn('optimize gate retry ' + (attempt + 1) + ': invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length + ' stray=' + stray.length + ' newSections=' + newSecs.length + ' bulletsLost=' + (lost ? lost.before + '->' + lost.after : 'no') + ' summaryCut=' + (sumCut ? sumCut.before + '->' + sumCut.after : 'no') + ' envDropped=' + envGone.length + ' certs=' + certs.length + ' merged=' + merged.length + ' confirmedDropped=' + dropped7.length)
       let corrections = 'Your draft breaks the rules below. Fix ONLY these problems and return the same JSON format.\n'
       // Every rule you have already satisfied must STAY satisfied. Without this line
       // the model treats each correction as the only constraint and trades one for
@@ -1811,6 +1880,9 @@ Respond in this exact JSON format with no extra text:
       if (merged.length) {
         corrections += '\nMERGED BULLETS. These lines contain two bullets joined with no line break:\n' + merged.map(l => '  - "' + l + '"').join('\n') + '\nPut each bullet on its own line.\n'
       }
+      if (dropped7.length) {
+        corrections += '\nDROPPED CONFIRMED SKILLS. The candidate confirmed these and your draft does not contain them anywhere:\n' + dropped7.map(k => '  - "' + k + '"').join('\n') + '\nEach one must appear: reframe an existing bullet if the candidate\'s own work supports it, otherwise add it to the fitting category line in the skills section. Report each in "placements".\n'
+      }
       if (pastT.length) {
         corrections += '\nTENSE. Your CURRENT role (its dates end in "Present") must be present tense throughout. These bullets open in PAST tense:\n' + pastT.map(l => '  - "' + l + '"').join('\n') + '\nRewrite each opening verb to present tense (Managed to Manage, Led to Lead, Built to Build, Optimized to Optimize). If a flagged word is actually an adjective or already present tense, leave it unchanged.\n'
       }
@@ -1818,9 +1890,13 @@ Respond in this exact JSON format with no extra text:
       messages.push({ role: 'user', content: corrections })
     }
 
-    // Only count a skill if it actually made it into the text. The score should be
-    // checkable against the document, not a promise that the rewrite worked.
-    const landed = confirmed.filter(k => out.toLowerCase().includes(k.toLowerCase()))
+    // Every confirmed skill is in the text now: the gate retried until it was, or
+    // appended it. landed is computed anyway so the log shows if that ever fails.
+    const finalFlat = flattenForMatch(out)
+    const landed = confirmed.filter(k => resumeHas(finalFlat, k))
+    if (landed.length !== confirmed.length) console.error('optimize: RULE 7 BROKEN after gate, missing: ' + confirmed.filter(k => !landed.includes(k)).join(', '))
+
+    const placements = verifyPlacements(parsed.placements, out, confirmed, skillsHeader)
 
     const total = matchedKeywords.length + missingKeywords.length
     const scoreBefore = total ? Math.round((matchedKeywords.length / total) * 100) : 0
@@ -1847,6 +1923,9 @@ Respond in this exact JSON format with no extra text:
       scoreAfter,
       score: scoreBefore,   // keeps the existing Resume Tool working
       rubricAfter,
+      // A5-2/3: one card per confirmed skill. where=bullet carries a code-verified
+      // fragment the modal can remove with ✕; where=skills has nothing to remove.
+      placements,
     })
   } catch (error) {
     console.error('AI API error:', error)
