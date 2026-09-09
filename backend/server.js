@@ -1935,6 +1935,128 @@ Respond in this exact JSON format with no extra text:
   }
 })
 
+// ── COVER LETTER (A6) ──────────────────────────────────────────────────────
+//
+// Lazy: the modal calls this only when the Cover letter tab is opened, so a student
+// who never wants one never pays for one. Resume-facts-only, enforced the same way
+// the optimizer is: the model is told the rules, and then code checks the output.
+//
+// What code can check in prose: (1) a skill from the posting the candidate did NOT
+// confirm appearing in the letter is a claim they never made; (2) a long run of the
+// posting's own words is the letter parroting the ad; (3) dashes are house style.
+// (1) and (2) get a correction round; the last resort for (1) cuts the sentence.
+
+// Longest run of consecutive words shared between two texts, in words.
+function longestSharedRun(a, b, minRun = 10) {
+  const wa = flattenForMatch(a).trim().split(' ')
+  const wb = flattenForMatch(b).trim().split(' ')
+  const grams = new Set()
+  for (let i = 0; i + minRun <= wb.length; i++) grams.add(wb.slice(i, i + minRun).join(' '))
+  const hits = []
+  for (let i = 0; i + minRun <= wa.length; i++) {
+    const g = wa.slice(i, i + minRun).join(' ')
+    if (grams.has(g)) hits.push(g)
+  }
+  return hits
+}
+
+function sentencesMentioning(text, terms) {
+  const out = []
+  for (const sent of String(text).split(/(?<=[.!?])\s+/)) {
+    const f = flattenForMatch(sent)
+    const hit = terms.find(t => resumeHas(f, t))
+    if (hit) out.push({ sentence: sent.trim(), term: hit })
+  }
+  return out
+}
+
+app.post('/cover-letter', async (req, res) => {
+  const { resumeText, jobText, jobTitle = '', company = '', confirmedSkills = [], missingKeywords = [], optimizedResume = '' } = req.body
+  if (!resumeText || !jobText) {
+    return res.status(400).json({ error: 'Please provide both resume text and job description.' })
+  }
+  try {
+    const facts = String(optimizedResume || resumeText)
+    const confirmed = (Array.isArray(confirmedSkills) ? confirmedSkills : []).map(String)
+    // Posting skills the candidate did not confirm. If the letter names one, it is
+    // claiming something the candidate never said. This is the fabrication check.
+    const unconfirmed = (Array.isArray(missingKeywords) ? missingKeywords : []).map(String)
+      .filter(k => !confirmed.some(c => keywordCore(c) === keywordCore(k)))
+    const expMonths = totalExperienceMonths(resumeText)
+    const expYears = expMonths === null ? null : Math.floor(expMonths / 12)
+
+    const basePrompt = `You are writing a cover letter for a real person applying to a real job. It will be read by a recruiter who will also read the resume, so anything the letter claims that the resume does not support ends the application.
+
+═══ THE ONLY FACTS YOU MAY USE ═══
+The resume below, and this list of skills the candidate has confirmed they have used: ${confirmed.length ? confirmed.join(', ') : '(none)'}.
+Every sentence about the candidate must trace back to the resume or that list. No projects, employers, results, numbers, tools or traits that are not there. Do not guess at motivation ("I have long admired..."). Do not describe the company beyond what the posting says.
+${expYears === null ? 'Do not state a number of years of experience.' : `If you state years of experience it must be "${expYears}+ years".`}
+${unconfirmed.length ? `The posting also asks for these, and the candidate has NOT confirmed them, so the letter must not mention them at all: ${unconfirmed.join(', ')}.` : ''}
+
+═══ FORM ═══
+- 3 or 4 short paragraphs, 180 to 260 words total. No greeting line, no sign-off line, no addresses, no date: the letter body only.
+- Paragraph 1: which role at which company, and in one sentence why this person fits, using the resume's own facts.
+- Middle: two or three concrete things from the resume that match what the posting asks for. Name the tool or practice the posting names, only where the resume or the confirmed list actually has it. Reuse the resume's facts; do not reuse the posting's sentences.
+- Last: one plain closing sentence.
+- Plain voice. No "I am writing to express my interest". No "passionate", "dynamic", "leverage", "synergy", "spearheaded". No exclamation marks. No em-dashes or en-dashes; use commas and full stops.
+- Write as the candidate, first person. Their name is not needed anywhere in the body.
+
+Role: ${jobTitle || '(see posting)'}
+Company: ${company || '(see posting)'}
+
+RESUME:
+${facts}
+
+JOB POSTING:
+${jobText}
+
+Respond in this exact JSON format with no extra text:
+{
+  "coverLetter": "<the letter body, paragraphs separated by a blank line>"
+}`
+
+    const messages = [{ role: 'user', content: basePrompt }]
+    let letter = ''
+    let stripped = []
+    for (let attempt = 0; attempt <= 2; attempt++) {
+      const replyText = await askModel({ model: MODEL_REWRITE, maxTokens: 6000, reasoningEffort: 'low', messages })
+      const parsed = JSON.parse(replyText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim())
+      letter = String(parsed.coverLetter || '').trim()
+      // Dashes are house style and deterministic: fixed here, never retried.
+      letter = letter.replace(/\s*[\u2014\u2013]\s*/g, ', ').replace(/\s--\s/g, ', ')
+
+      const claims = sentencesMentioning(letter, unconfirmed)
+      const copied = longestSharedRun(letter, jobText)
+      if (!claims.length && !copied.length) break
+      if (attempt === 2) {
+        // Last resort: a sentence claiming an unconfirmed skill is cut. A shorter
+        // letter beats a letter that lies.
+        for (const c of claims) letter = letter.replace(c.sentence, '').replace(/\s{2,}/g, ' ').replace(/\n\s*\n\s*\n/g, '\n\n').trim()
+        stripped = claims.map(c => c.term)
+        console.warn('cover-letter gate unresolved: stripped ' + claims.length + ' sentence(s) claiming ' + stripped.join(', ') + '; copied runs left: ' + copied.length)
+        break
+      }
+      console.warn('cover-letter gate retry ' + (attempt + 1) + ': unconfirmedClaims=' + claims.length + ' copiedRuns=' + copied.length)
+      let corrections = 'Your draft breaks the rules below. Fix ONLY these and return the same JSON format. Keep everything else as it is.\n'
+      if (claims.length) corrections += '\nUNCONFIRMED SKILLS. These sentences name skills from the posting that the candidate has NOT confirmed and the resume does not contain:\n' + claims.map(c => '  - "' + c.sentence + '"  (names: ' + c.term + ')').join('\n') + '\nRewrite each sentence without that skill, or delete it. The candidate never claimed it.\n'
+      if (copied.length) corrections += '\nCOPIED FROM THE POSTING. These runs of ten or more words are lifted from the job ad:\n' + copied.slice(0, 3).map(g => '  - "' + g + '"').join('\n') + '\nSay it in the candidate\'s own words, from the resume\'s facts, or leave it out.\n'
+      messages.push({ role: 'assistant', content: replyText })
+      messages.push({ role: 'user', content: corrections })
+    }
+
+    res.json({
+      coverLetter: letter,
+      wordCount: letter.split(/\s+/).filter(Boolean).length,
+      strippedSkills: stripped,
+    })
+  } catch (error) {
+    console.error('Cover letter error:', error)
+    if (error.status === 401) return res.status(401).json({ error: 'Invalid API key.' })
+    if (error.status === 402) return res.status(402).json({ error: 'No API credits remaining.' })
+    res.status(500).json({ error: 'Something went wrong. Please try again.' })
+  }
+})
+
 // ── JOB DETAIL — Fetch full description from Greenhouse
 // ── RESUME UPLOAD (PDF / Word) ──────────────────────────────────────────────
 //

@@ -9,6 +9,7 @@
 //   node probeOptimize.mjs --local --title "Data Engineer"
 //   node probeOptimize.mjs --local --job <jobId>
 //   node probeOptimize.mjs --local --job <jobId> --tap 2      tap only the first 2 missing
+//   node probeOptimize.mjs --local --job <jobId> --tap 2 --letter   also generate the cover letter
 //
 // Reads MONGODB_URI from the shell/.env. Never writes to Mongo itself.
 
@@ -74,3 +75,14 @@ console.log('\nskills section of output:')
 for (let i = si; i < lines.length && i < si + 8 && i !== -1; i++) { if (i > si && /^[A-Z][A-Z &/]{3,}$/.test(lines[i].trim())) break; console.log('  ' + lines[i]) }
 console.log('\nfeedback:', o.feedback)
 console.log('\nCheck: (1) PROMISE KEPT, (2) every bullet placement fragment reads as the candidate\'s own work + the skill, (3) skills-only placements are in the skills lines, (4) terminal 1 for "gate retry" / "code-appended" lines.')
+
+if (args.includes('--letter')) {
+  t = Date.now()
+  const c = await post('/cover-letter', { ...common, company: job.company, confirmedSkills: confirmed, missingKeywords: a.missingKeywords, optimizedResume: o.optimizedResume })
+  console.log('\n/cover-letter in', Date.now() - t, 'ms ·', c.wordCount, 'words', c.strippedSkills.length ? '· STRIPPED: ' + c.strippedSkills.join(', ') : '')
+  console.log('\n' + c.coverLetter)
+  const unconfirmed = a.missingKeywords.filter(k => !confirmed.includes(k))
+  const leaks = unconfirmed.filter(k => c.coverLetter.toLowerCase().includes(k.toLowerCase()))
+  console.log('\nunconfirmed skills named in letter:', leaks.length ? 'LEAK: ' + leaks.join(', ') : 'none')
+  console.log('Check: every claim in the letter is in the resume; no company facts beyond the posting; no dashes; 180-260 words.')
+}
