@@ -1593,6 +1593,34 @@ function mergedBullets(text) {
 // the fragment names the skill. Anything else is downgraded to "skills", which the
 // modal shows as a card with no ✕, because there is no verified fragment to remove.
 // A confirmed skill the model did not report at all gets a "skills" card too.
+// Where a fragment actually sits, read off the document: the section it is under and
+// the nearest company line (EXPERIENCE) or title line (PROJECTS) above it. The model's
+// "employer" said "New York Life" for a fragment that was in a project bullet; the
+// document is the only source that cannot be wrong about this.
+function locateFragment(out, fragment) {
+  const lines = out.split('\n')
+  const idx = lines.findIndex(l => l.includes(fragment))
+  if (idx === -1) return { section: '', context: '' }
+  let section = ''
+  let context = ''
+  for (let i = idx - 1; i >= 0; i--) {
+    const l = lines[i].trim()
+    if (!l) continue
+    if (RESUME_SECTIONS.test(l.replace(/[:：]\s*$/, ''))) { section = canonicalSection(l) || l.toUpperCase(); break }
+    if (!context) {
+      const isBullet = /^[•\-–▪*]/.test(l)
+      if (!isBullet) {
+        // Company line "New York Life Insurance | Manhattan, NY | Jan 2024 - Present" -> company.
+        // Project title line "Enterprise Data Platform Modernization" -> the title.
+        if (l.includes(' | ')) context = l.split(' | ')[0].trim()
+        else if (/\b(19|20)\d{2}\b/.test(l)) context = l.replace(/[|,]?\s*\b\w{3,9}\.?\s+(19|20)\d{2}\b.*$/, '').trim() || l
+        else context = l
+      }
+    }
+  }
+  return { section, context }
+}
+
 function verifyPlacements(raw, out, confirmed, skillsHeader) {
   const list = Array.isArray(raw) ? raw : []
   const outFlat = flattenForMatch(out)
@@ -1605,7 +1633,13 @@ function verifyPlacements(raw, out, confirmed, skillsHeader) {
       // The fragment must sit on a bullet line, not in the skills section or summary.
       && out.split('\n').some(l => l.includes(fragment) && /^\s*[•\-–▪]/.test(l))
     if (inBullet) {
-      result.push({ skill, where: 'bullet', employer, fragment, removable: true })
+      const loc = locateFragment(out, fragment)
+      // The label the card shows: "New York Life Insurance" under EXPERIENCE, or the
+      // project's title under PROJECTS. Falls back to the model's word only when the
+      // document gives nothing.
+      const label = loc.context || employer
+      const kind = loc.section === 'PROJECTS' ? 'project' : loc.section === 'EXPERIENCE' ? 'experience' : (loc.section || '').toLowerCase()
+      result.push({ skill, where: 'bullet', employer: label, section: kind, fragment, removable: true })
     } else {
       if (p && p.where === 'bullet') console.warn('optimize: placement for "' + skill + '" claimed a bullet but the fragment did not verify; downgraded to skills')
       result.push({ skill, where: 'skills', employer: '', fragment: '', removable: false, present: resumeHas(outFlat, skill) })
@@ -3655,7 +3689,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-10e three-row law: keywords 60 · role 30 · years 10'
+const SERVER_BUILD = '2026-09-10f placement location read from the document'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })

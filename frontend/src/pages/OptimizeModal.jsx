@@ -855,8 +855,8 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                               </div>
                               <div className="om-wov-w">
                                 {skillsOnly
-                                  ? (isRemoved ? <>→ Skills section only — removed from {p.employer || 'that bullet'}</> : <>→ Skills section only · be ready to say where you used it</>)
-                                  : <>→ Skills section <b>+ your {p.employer || 'experience'} bullet</b></>}
+                                  ? (isRemoved ? <>→ Skills section only — removed from {p.employer || 'that bullet'}{p.section === 'project' ? ' (project)' : ''}</> : <>→ Skills section only · be ready to say where you used it</>)
+                                  : <>→ Skills section <b>+ your {p.employer || 'experience'} {p.section === 'project' ? 'project' : 'bullet'}</b></>}
                               </div>
                               {!skillsOnly && p.fragment && <div className="om-wov-f">"{p.fragment}"</div>}
                             </div>
