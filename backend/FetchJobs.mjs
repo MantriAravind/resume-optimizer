@@ -302,6 +302,12 @@ const DISQUALIFIER_PATTERNS = [
   //     boundary here: "sponsorship is available, relocation unavailable" must
   //     not fire.
   /\bsponsorship\b[^.!?;,\n]{0,40}?\b(is\s+|are\s+|will\s+be\s+)?(unavailable|not\s+available)\b/,
+  // (c) Refusal about the CANDIDATES, not the sponsorship (Pirkey Barber, three
+  //     jobs, filterCheck 2026-09-09): "This position is not available to
+  //     candidates who now or in the future will require U.S. visa sponsorship".
+  //     "open to candidates who require sponsorship" must stay clean.
+  /\b(not\s+available|not\s+open|unavailable|closed)\s+to\s+(candidates?|applicants?|individuals?|those|anyone)\b[^.!?;\n]{0,60}\b(require|need)\b[^.!?;\n]{0,25}\bsponsorship\b/,
+  /\b(cannot|can\s+not|unable\s+to|will\s+not|do(?:es)?\s+not)\s+(consider|accept|hire|employ)\s+(candidates?|applicants?|individuals?|anyone)\b[^.!?;\n]{0,60}\bsponsorship\b/,
   // (b) INDEFINITE / PERMANENT WORK AUTHORIZATION: employer-speak for "no visa
   //     holders" that never says sponsorship. An F1 student's authorization is by
   //     definition not indefinite. Bound to only/required/must so "we do not
@@ -318,6 +324,27 @@ const DISQUALIFIER_PATTERNS = [
   /\b(ci|fs|full[\s-]scope|counter[\s-]?intelligence)\s+poly(graph)?\b/,
   // Verb form the clearance family lacked: "must hold a current X clearance".
   /\bmust\s+(hold|possess|have|maintain|obtain)\s+(a\s+|an\s+)?(current\s+|active\s+|valid\s+)?([\w\/-]+\s+){0,2}clearance\b/,
+  // Full clearance vocabulary probe, 2026-09-09 (24 phrasings, 9 missed):
+  // plain "clearance is required" sat between "security clearance is required"
+  // and "clearance required" and matched neither. "DOE L clearance is required".
+  /\bclearance\s+is\s+(required|mandatory|a\s+(requirement|must))\b/,
+  // Label with neither colon nor "required" (Mobius, filterCheck 2026-09-09):
+  // "Clearance Active Secret or higher".
+  /\bclearance\s+(active|current)\s+(secret|top\s+secret|ts\/?sci|public\s+trust|q)\b/,
+  // "cleared" as the adjective, the commonest contractor phrasing, never says
+  // clearance. Bounded: "cleared checks" and "cleared for takeoff" stay clean.
+  /\b(actively|fully|currently)\s+cleared\b/,
+  /\bcleared\s+(candidates?|applicants?|professionals?|personnel|individuals?|positions?|roles?|only)\b/,
+  /\bmust\s+be\s+cleared\b/,
+  // The investigation named instead of the clearance.
+  /\btier\s+[1-5]\s+(background\s+)?investigation\b/,
+  /\b(favou?rable\s+)?naci\b/,
+  // Special Access Program. Never the bare acronym: SAP is also the ERP.
+  /\bspecial\s+access\s+program/,
+  // The clearance form and the DoD card.
+  /\bsf[\s-]?86\b/,
+  /\b(obtain|hold|possess|maintain)\s+(a\s+)?cac\b/,
+  /\bcac\s+(card|eligib\w*|required)\b/,
   /\bpermanent\s+resident\s+(is\s+)?required\b/,
   /\bmust\s+be\s+(us\s+|u s\s+|united states\s+)?citizens?\b/,
   /\bcitizens?\s+or\s+(lawful\s+)?permanent\s+residents?\b/,
@@ -408,7 +435,11 @@ const DISQUALIFIER_PATTERNS = [
   /\b(must|required?s?|already)\b[^.]{0,80}\bwork\s+authoriz\w+\b[^.]{0,80}\bpermanent(ly)?\b/,
   /\bpermanent\s+(us\s+|u\.?s\.?\s+)?work\s+authoriz\w+\s+(is\s+)?required\b/,
   /\b(obtain|maintain|hold|eligible\s+for|able\s+to\s+obtain)\b[^.]{0,40}\bpublic\s+trust\b/,
-  /\bpolygraph\b/,
+  // Guarded 2026-09-09 (filterCheck 100-run): the bare form fired on the
+  // "Employee Polygraph Protection Act (EPPA)" labor-law poster line that
+  // Elastic and others print under every posting; 4 of 15 sampled blocks were
+  // that sentence. A polygraph requirement never reads "polygraph protection".
+  /(?<!employee\s)\bpolygraph\b(?!\s+protection)/,
   // ---- Hedged / softened non-sponsorship wording (found via a live Roblox posting) ----
   // Catches "may not be able to ... support future H-1B sponsorship" and the coordinated
   // "work authorization related to certain U.S. visa categories" phrasing the tighter

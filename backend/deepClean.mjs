@@ -24,7 +24,7 @@ const LIMIT = lIdx > -1 ? Number(process.argv[lIdx + 1]) : Infinity
 const uri = PROD ? process.env.MONGODB_URI_PROD : process.env.MONGODB_URI
 if (!uri) { console.error('❌ URI not set'); process.exit(1) }
 const API = 'https://resume-optimizer-cuii.onrender.com'
-const STAMP = '2026-09-09'   // bump when the pattern list changes materially (09-09: sponsorship-gap, indefinite work auth, polygraph)
+const STAMP = '2026-09-09b'  // bump when the pattern list changes materially (09-09: sponsorship-gap, indefinite work auth, polygraph; b: cleared/tier/SAP/SF-86/CAC)
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 await mongoose.connect(uri)
