@@ -1551,6 +1551,20 @@ function verifyPlacements(raw, out, confirmed, skillsHeader) {
   return result
 }
 
+// The lines of the student's skills section, so "is it in the skills section" is a
+// question about that section and not about the whole document.
+function skillsSectionText(out, skillsHeader) {
+  const lines = out.split('\n')
+  const headerRe = new RegExp('^\\s*' + skillsHeader.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:?\\s*$', 'i')
+  const start = lines.findIndex(l => headerRe.test(l))
+  if (start === -1) return ''
+  let end = lines.length
+  for (let i = start + 1; i < lines.length; i++) {
+    if (RESUME_SECTIONS.test(lines[i].trim().replace(/[:：]\s*$/, ''))) { end = i; break }
+  }
+  return lines.slice(start + 1, end).join('\n')
+}
+
 // Rule 7 last resort. Appends the skills to the first "Label: a, b, c" line inside
 // the student's skills section. Their own category, their own line; only the list
 // after the colon grows. If the section has no such line, the skills go on one
@@ -1564,11 +1578,17 @@ function appendToSkills(out, skills, skillsHeader) {
   for (let i = start + 1; i < lines.length; i++) {
     if (RESUME_SECTIONS.test(lines[i].trim().replace(/[:：]\s*$/, ''))) { end = i; break }
   }
+  // Which category line. "Programming Languages" is usually first and is the wrong
+  // shelf for dbt or Looker; a catch-all label (Tools, Technologies, Platforms,
+  // Other) is preferred, then the last line, never blindly the first.
+  const catLines = []
   for (let i = start + 1; i < end; i++) {
-    if (/^[A-Za-z][A-Za-z /&+-]{1,48}:\s+\S/.test(lines[i].trim())) {
-      lines[i] = lines[i].replace(/\s*$/, '') + ', ' + skills.join(', ')
-      return lines.join('\n')
-    }
+    if (/^[A-Za-z][A-Za-z /&+-]{1,48}:\s+\S/.test(lines[i].trim())) catLines.push(i)
+  }
+  if (catLines.length) {
+    const pick = catLines.find(i => /\b(tools?|technolog\w*|platforms?|other|misc\w*|additional|software|frameworks?)\b/i.test(lines[i].split(':')[0])) ?? catLines[catLines.length - 1]
+    lines[pick] = lines[pick].replace(/\s*$/, '') + ', ' + skills.join(', ')
+    return lines.join('\n')
   }
   lines.splice(end, 0, skills.join(', '))
   return lines.join('\n')
@@ -1907,6 +1927,17 @@ Respond in this exact JSON format with no extra text:
     const finalFlat = flattenForMatch(out)
     const landed = confirmed.filter(k => resumeHas(finalFlat, k))
     if (landed.length !== confirmed.length) console.error('optimize: RULE 7 BROKEN after gate, missing: ' + confirmed.filter(k => !landed.includes(k)).join(', '))
+
+    // The card says "Skills section + your <employer> bullet". The model wove dbt,
+    // Looker and Superset into a bullet and never touched the skills section, so the
+    // card lied. Now the skills-section half is done in code for every confirmed
+    // skill the model left out of it: a plain string append to the student's own
+    // category line, the same last resort Rule 7 already uses.
+    const notInSkills = confirmed.filter(k => !resumeHas(flattenForMatch(skillsSectionText(out, skillsHeader)), k))
+    if (notInSkills.length) {
+      out = appendToSkills(out, notInSkills, skillsHeader)
+      console.log('optimize: added to skills section by code (model placed in bullets only): ' + notInSkills.join(', '))
+    }
 
     const placements = verifyPlacements(parsed.placements, out, confirmed, skillsHeader)
 
@@ -3541,7 +3572,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-10 A6 letter downloads (kind=letter on /download-word and /download-pdf)'
+const SERVER_BUILD = '2026-09-10 A6 letter downloads + confirmed skills always in skills section'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })

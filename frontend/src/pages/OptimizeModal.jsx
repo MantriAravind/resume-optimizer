@@ -498,15 +498,22 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   // ── placement cards: ✕ pulls a skill out of the bullet it was woven into
   function removePlacement(p) {
     const current = docRef.current?.innerText || optimized
-    const next = ensureInSkills(stripFragment(current, p.fragment), p.skill)
-    setRemoved(r => ({ ...r, [p.skill]: current }))
+    let next = ensureInSkills(stripFragment(current, p.fragment), p.skill)
+    // Two skills can share one fragment ("used by internal Looker and Superset
+    // dashboards"). Removing it takes both out of the bullet, so every card whose
+    // fragment is no longer in the document flips with this one and shares its Undo.
+    const alsoGone = placements.filter(q => q.removable && q.skill !== p.skill && removed[q.skill] === undefined && q.fragment && !next.includes(q.fragment))
+    for (const q of alsoGone) next = ensureInSkills(next, q.skill)
+    setRemoved(r => { const c = { ...r, [p.skill]: current }; for (const q of alsoGone) c[q.skill] = current; return c })
     setOptimized(next)
     setDocVersion(v => v + 1)
   }
   function undoPlacement(p) {
     const snap = removed[p.skill]
     if (snap === undefined) return
-    setRemoved(r => { const c = { ...r }; delete c[p.skill]; return c })
+    // Cards that were flipped by the same ✕ hold the same snapshot; restoring it
+    // brings them all back, so they are cleared together.
+    setRemoved(r => { const c = { ...r }; for (const k of Object.keys(c)) if (c[k] === snap) delete c[k]; return c })
     setOptimized(snap)
     setDocVersion(v => v + 1)
   }
