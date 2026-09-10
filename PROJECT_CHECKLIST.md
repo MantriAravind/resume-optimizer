@@ -1009,3 +1009,64 @@ text) / ↩, "✓ your best honest score" when total === maxScore, cover letter 
 calling /cover-letter on click, score switched to `rubric.total` / `rubricAfter.total`,
 send `jobTitle` + `yearsMin` on /analyze and /optimize. Highlighter: confirmed
 skills only (currently marks "years", "dependable", "use").
+
+### Filter session — 2026-09-09 night (`36c4de9`, `a5497e3`, + clearance batch)
+Trigger: Bosch "Engineering Intern" live on the board with "Indefinite U.S. work
+authorized individuals only. Future sponsorship for work authorization unavailable."
+
+VERIFIED (closes the C-item from 09-08): `isDisqualified(fullText, …)` runs on the
+FULL posting before the 500-char preview is stored. The trim never touched the filter.
+The leak was wording the 314 patterns did not know.
+
+Shipped, each tested on the leaked sentence + clean controls, then `filterCheck 100`
+twice (2,566 and 2,637 postings; passed-but-flagged 100 -> 4):
+- sponsorship … unavailable with words between (Bosch)
+- indefinite / permanent / unrestricted work authorization + only/required/must
+- "work authorized individuals only"
+- polygraph family: "poly clearance", "CI/FS/full-scope poly", "must hold a … clearance"
+  (Elevi Associates, 28 of 37 postings, Annapolis Junction)
+- full clearance vocabulary probe (24 phrasings, 9 were missed): "clearance is
+  required" (no "security"), "actively/fully cleared", "cleared candidates only",
+  Tier 1-5 investigation, NACI, Special Access Program, SF-86, CAC, "Clearance
+  Active Secret" label without colon (Mobius)
+- "position is not available to candidates who … require sponsorship" and
+  "cannot consider candidates who … sponsorship" (Pirkey Barber, 3 jobs)
+- FIXED over-block: bare `\bpolygraph\b` fired on the "Employee Polygraph Protection
+  Act (EPPA)" poster line; 4 of 15 sampled blocks were Elastic engineering jobs
+  hidden for it. Guarded.
+- FIXED over-block: bare "sponsorship now or in the future" fired on welcoming
+  sentences; now needs a preceding negation.
+- deepClean STAMP 2026-09-09b. Greenhouse/Ashby re-judge on fetch; WD/SR on stamp.
+- Internship on the board is NOT a leak: CPT internships are tagged on purpose.
+  "Full-time roles only" badge means no contract/part-time; wording is arguable.
+
+NEW CLASS — gates in APPLICATION FORM QUESTIONS (evidence): 9 Elevi postings have
+clean text and a required form question "Do you possess the required active
+security clearance with poly?". Greenhouse list endpoint (`?content=true`) does
+NOT return questions; only `/jobs/{id}?questions=true` does — one request per job.
+Sibling of the license class: the barrier is not a sentence in the posting.
+
+Design for Phase C (decided in principle 09-09, build later):
+- [ ] C-sem-1: Monthly full-board AI sweep (semanticAudit scope = all). ~67k postings
+      x ~2k tokens on nano ≈ $10. Model must QUOTE the refusing sentence; code
+      verifies the quote exists in the posting; unverifiable = not closed. Every
+      verified catch becomes a pattern.
+- [ ] C-sem-2: Daily AI judge on NEW/CHANGED postings that passed patterns but
+      contain a topic word (sponsorship, citizen, clearance, authorization, visa,
+      ITAR, US person). Same script, narrower scope. Runs in deep-clean, not fetch.
+- [ ] C-forms: Fetch Greenhouse `questions` for jobs at companies whose text
+      already smells federal (or that failed pattern-free but were flagged), and
+      run required-question labels through the same patterns. Scope decision needed.
+- [ ] C-policy: AlphaSights "we do not sponsor visas but will consider applicants
+      with STEM/OPT eligibility" is BLOCKED today. An OPT student could apply.
+      Decide: does the board show take-OPT-now / no-H-1B-later employers?
+      Banner says "won't reject you for needing a visa" — cuts both ways.
+- [ ] C-loc: real US cities dropped as unknown (Ft Lauderdale, Walnut Creek,
+      Milpitas, Cheyenne, Las Cruces, Missoula, Rapid City, Hattiesburg, Gulfport,
+      Philly-PA); "International Plaza, Tampa, FL" loses to the word
+      "international"; "Melbourne, FL" and "Dublin, OH" lose to the city name.
+      State suffix should beat a foreign city match.
+- [ ] Pre-existing near-miss to review: `(u.s.|united states|american) citizens?`
+      fired on a compliance sentence about "non-United States citizens" contractors.
+
+Still owed: A5 done-when test on optyply.com (7 checks) — NOT yet run.
