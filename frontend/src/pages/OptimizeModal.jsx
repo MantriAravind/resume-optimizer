@@ -628,7 +628,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
-        className={`om-modal ${phase === 'result' ? 'om-modal-result' : ''}`}
+        className={`om-modal ${phase === 'result' ? 'om-modal-result' : phase === 'pick' ? 'om-modal-pick' : ''}`}
         style={{ '--om-w': phase === 'result' ? 'min(1180px, 96vw)' : 'min(760px, 94vw)', outline: 'none' }}
         onClick={e => e.stopPropagation()}
       >
@@ -938,6 +938,9 @@ const CSS = `
 /* The result screen is a document viewer, not a form: it takes the screen. Fixed
    height so the paper gets the whole column instead of stopping at its content. */
 .om-modal-result { height: 94vh; max-height: 94vh; }
+/* The tap screen too: a fixed column so the score rows and the whole checkbox list
+   are on one screen on a laptop, instead of a short box that scrolls inside. */
+.om-modal-pick { height: 92vh; }
 .om-modal-result .om-rail { width: 300px; }
 .om-modal-result .om-pane { padding: 24px 28px; }
 .om-modal-result .om-resume { font-size: 12.5px; line-height: 1.6; }
@@ -1113,7 +1116,7 @@ const CSS = `
 @media (max-width: 720px) {
   .om-split { flex-direction: column; }
   .om-rail { width: 100%; border-left: none; border-top: 1px solid #F1EDE7; }
-  .om-modal-result { height: auto; }
+  .om-modal-result, .om-modal-pick { height: auto; }
   .om-modal-result .om-rail { width: 100%; }
   .om-modal-result .om-pane { padding: 16px; }
 }
