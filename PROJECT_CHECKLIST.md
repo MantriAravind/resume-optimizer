@@ -1070,3 +1070,22 @@ Design for Phase C (decided in principle 09-09, build later):
       fired on a compliance sentence about "non-United States citizens" contractors.
 
 Still owed: A5 done-when test on optyply.com (7 checks) — NOT yet run.
+
+### A5 CLOSED — 2026-09-10 morning
+Done-when met on optyply.com with own resume on two real jobs (Domino's Senior DE,
+AbbVie Associate DE II) and a third (SmithRx) for the fixes: score rows, honest-max
+note, junk line, placement cards, ✕/↩, cover letter tab, Word/PDF for both documents.
+Fixed during the test:
+- Word/PDF on the letter tab downloaded the resume. Now `kind: 'letter'` on both
+  download endpoints renders a letter document (letterhead from the resume, date,
+  "Dear <company> Hiring Team", body, sign-off) as cover-letter.pdf / .docx.
+  (First attempt hid the buttons — wrong; a student facing an upload field needs a file.)
+- Card said "Skills section + your <employer> bullet" while the skills section had
+  none of dbt/Looker/Superset. Now every confirmed skill is appended to the skills
+  section by code when the model leaves it out, on a catch-all category line
+  (Tools/Technologies/Platforms/Other, else last), never "Programming Languages".
+- Two skills sharing one fragment: ✕ on one now flips both cards; ↩ restores both.
+Observed, no action: years rule removed "5+ years" from the summary when the posting
+asked for 8+; amber marks are the rewrite's changed words (shipped design); junk
+line dropped "data security"/"GxP compliance" alongside real filler (visible, not hidden).
+Builds: server `2026-09-10 A6 letter downloads + confirmed skills always in skills section`.
