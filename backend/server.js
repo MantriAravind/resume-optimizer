@@ -3486,20 +3486,20 @@ function buildResumeHTML(resumeText, font, length) {
   }
 
   body += `<div style="text-align:${align};padding-bottom:10pt;margin-bottom:14pt;border-bottom:1pt solid ${cfg.rule}">`
-  body += `<div style="font-size:${isCompact ? '20pt' : '24pt'};font-weight:900;color:#111;letter-spacing:0.02em;text-transform:uppercase">${esc(name)}</div>`
-  if (titleLine) body += `<div style="font-size:${isCompact ? '10pt' : '12pt'};font-weight:600;color:${cfg.accent};margin-top:4pt;letter-spacing:0.01em">${esc(titleLine)}</div>`
+  body += `<div data-l="name" style="font-size:${isCompact ? '20pt' : '24pt'};font-weight:900;color:#111;letter-spacing:0.02em;text-transform:uppercase">${esc(name)}</div>`
+  if (titleLine) body += `<div data-l="line" style="font-size:${isCompact ? '10pt' : '12pt'};font-weight:600;color:${cfg.accent};margin-top:4pt;letter-spacing:0.01em">${esc(titleLine)}</div>`
   for (let i = contactStart; i < header.length; i++) {
-    body += `<div style="font-size:8pt;color:#555;margin-top:5pt">${esc(header[i])}</div>`
+    body += `<div data-l="line" style="font-size:8pt;color:#555;margin-top:5pt">${esc(header[i])}</div>`
   }
   body += `</div>`
 
   for (let i = 0; i < bodyLines.length; i++) {
     const line = bodyLines[i]
-    if (!line) { body += `<div style="height:${isCompact ? '3pt' : '5pt'}"></div>`; continue }
+    if (!line) { body += `<div data-l="blank" style="height:${isCompact ? '3pt' : '5pt'}"></div>`; continue }
 
     if (isSection(line)) {
       body += `
-        <div style="margin-top:${sgap};margin-bottom:5pt">
+        <div data-l="section" style="margin-top:${sgap};margin-bottom:5pt">
           <div style="font-size:9.5pt;font-weight:800;color:${cfg.accent};letter-spacing:0.08em;text-transform:uppercase;display:flex;align-items:center;gap:8pt">
             
             ${esc(line)}
@@ -3511,7 +3511,7 @@ function buildResumeHTML(resumeText, font, length) {
 
     if (isBullet(line)) {
       const clean = line.replace(/^[•\-]\s*/, '')
-      body += `<div style="display:flex;gap:6pt;font-size:${fs};line-height:${lh};margin-bottom:${isCompact ? '2pt' : '3.5pt'};color:#222"><span style="flex-shrink:0;margin-top:1pt;color:${cfg.accent};font-weight:700">•</span><span>${esc(clean)}</span></div>`
+      body += `<div data-l="bullet" style="display:flex;gap:6pt;font-size:${fs};line-height:${lh};margin-bottom:${isCompact ? '2pt' : '3.5pt'};color:#222"><span contenteditable="false" style="flex-shrink:0;margin-top:1pt;color:${cfg.accent};font-weight:700">•</span><span>${esc(clean)}</span></div>`
       continue
     }
 
@@ -3524,11 +3524,11 @@ function buildResumeHTML(resumeText, font, length) {
         // isTitleLine), so here the company is medium weight and the meta is italic —
         // the title leads, the company supports.
         body += `
-          <div style="font-size:${isCompact ? '8.5pt' : '9pt'};color:#333;margin-bottom:2pt">
+          <div data-l="line" style="font-size:${isCompact ? '8.5pt' : '9pt'};color:#333;margin-bottom:2pt">
             <span style="font-weight:600;color:#222">${esc(company)}</span><span style="color:${cfg.muted};font-style:italic"> | ${esc(rest)}</span>
           </div>`
       } else {
-        body += `<div style="font-size:${fs};font-weight:700;color:${cfg.accent};margin-top:${gap};margin-bottom:2pt">${esc(line)}</div>`
+        body += `<div data-l="line" style="font-size:${fs};font-weight:700;color:${cfg.accent};margin-top:${gap};margin-bottom:2pt">${esc(line)}</div>`
       }
       continue
     }
@@ -3536,18 +3536,18 @@ function buildResumeHTML(resumeText, font, length) {
     // "Languages: Python, SQL" → bold label, inline skills, tight spacing
     const skill = isSkillLine(line)
     if (skill) {
-      body += `<div style="font-size:${fs};line-height:${lh};color:#222;margin-bottom:${isCompact ? '1.5pt' : '2.5pt'}"><span style="font-weight:700;color:#111">${esc(skill.label)}:</span> ${esc(skill.values)}</div>`
+      body += `<div data-l="line" style="font-size:${fs};line-height:${lh};color:#222;margin-bottom:${isCompact ? '1.5pt' : '2.5pt'}"><span style="font-weight:700;color:#111">${esc(skill.label)}:</span> ${esc(skill.values)}</div>`
       continue
     }
 
     // A job TITLE (line sitting right above a company/date line) → bold and prominent,
     // more weight than the company below it. This is the thing a recruiter scans for.
     if (isTitleLine(line)) {
-      body += `<div style="font-size:${isCompact ? '10.5pt' : '11.5pt'};font-weight:800;color:#111;break-after:avoid;page-break-after:avoid;break-inside:avoid;margin-top:${gap};margin-bottom:1pt">${esc(line)}</div>`
+      body += `<div data-l="line" style="font-size:${isCompact ? '10.5pt' : '11.5pt'};font-weight:800;color:#111;break-after:avoid;page-break-after:avoid;break-inside:avoid;margin-top:${gap};margin-bottom:1pt">${esc(line)}</div>`
       continue
     }
 
-    body += `<div style="font-size:${fs};line-height:${lh};color:#222;margin-bottom:2pt">${esc(line)}</div>`
+    body += `<div data-l="line" style="font-size:${fs};line-height:${lh};color:#222;margin-bottom:2pt">${esc(line)}</div>`
   }
 
   return `<!DOCTYPE html>
@@ -3689,7 +3689,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-10f placement location read from the document'
+const SERVER_BUILD = '2026-09-10g rendered lines carry data-l so the sheet is editable'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })

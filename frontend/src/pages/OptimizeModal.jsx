@@ -48,6 +48,55 @@ function ensureInSkills(text, skill) {
   return text
 }
 
+// The rendered sheet is the editor. Every line the server renders carries data-l
+// (name | line | bullet | section | blank), so an edited sheet turns back into resume
+// text line by line: bullets get their "- " back, blanks stay blank, everything else
+// is its visible text. This is what downloads, what ✕ edits, what the letter reads.
+function sheetToText(root) {
+  if (!root) return ''
+  const out = []
+  for (const el of root.querySelectorAll('[data-l]')) {
+    const kind = el.getAttribute('data-l')
+    if (kind === 'blank') { out.push(''); continue }
+    // textContent, not innerText: innerText applies the sheet's text-transform and
+    // would hand back "ARAVIND MANTRI" for a name typed "Aravind Mantri".
+    const t = (el.textContent || '').replace(/\s+/g, ' ').trim()
+    if (kind === 'bullet') out.push('- ' + t.replace(/^[•\-–]\s*/, ''))
+    else out.push(t)
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
+// Green marks on the skills that were tapped, amber on words the rewrite introduced.
+// Applied to the text runs of the rendered HTML, never inside a tag. The name and
+// section headers are left alone.
+function decorateHtml(html, skills, originalText) {
+  if (!html) return html
+  const orig = new Set((originalText || '').toLowerCase().match(/[a-z][\w+#.-]*/g) || [])
+  const skillRe = skills.length ? new RegExp('(' + skills.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi') : null
+  const decorateRun = run => {
+    const parts = skillRe ? run.split(skillRe) : [run]
+    return parts.map((seg, i) => {
+      if (skillRe && i % 2 === 1) return `<mark class="om-mark">${seg}</mark>`
+      return seg.replace(/\b([A-Za-z][\w+#.-]{3,})\b/g, w => (STOP.has(w.toLowerCase()) || orig.has(w.toLowerCase())) ? w : `<mark class="om-mark-new" title="Changed or added by the optimizer. Review before sending.">${w}</mark>`)
+    }).join('')
+  }
+  // Walk the markup: tags are copied through; text runs inside skippable lines are copied through too.
+  let depthSkip = 0, out = ''
+  const tokens = html.split(/(<[^>]+>)/)
+  for (const tok of tokens) {
+    if (!tok) continue
+    if (tok[0] === '<') {
+      if (/^<div[^>]*data-l="(name|section|blank)"/.test(tok)) depthSkip = 1
+      else if (depthSkip && /^<\/div>/.test(tok)) depthSkip = 0
+      out += tok
+    } else {
+      out += depthSkip ? tok : decorateRun(tok)
+    }
+  }
+  return out
+}
+
 function ResumeView({ text, skills, originalText }) {
   const skillList = Array.isArray(skills) ? skills.filter(Boolean) : []
   const origVocab = new Set(wordsOf(originalText))
@@ -124,7 +173,6 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   const [placements, setPlacements] = useState([])   // one card per tapped skill, server-verified
   const [html, setHtml]             = useState('')   // the sheet, rendered by the same code as the PDF
   const [changes, setChanges]       = useState([])   // "What changed" list from the rewrite
-  const [sheetMode, setSheetMode]   = useState('formatted')  // formatted | edit
   const [promised, setPromised]     = useState(null) // the score step 2 showed when rewrite was clicked
   const [removed, setRemoved]       = useState({})   // skill -> document text before ✕, for ↩
   const [docVersion, setDocVersion] = useState(0)    // remount the editable sheet when ✕/↩ change its text
@@ -267,7 +315,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       el.removeEventListener('input', snapshot)
       el.removeEventListener('keydown', onKey)
     }
-  }, [phase, optimized, added, sheetMode])
+  }, [phase, optimized, added, html])
 
   // ── step 1: load resume + full job description, then analyze
   useEffect(() => {
@@ -360,7 +408,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   // Edits made in the document are only in the DOM. Re-optimizing overwrites them, so ask
   // first rather than throwing away work silently.
   function backToSkills() {
-    const edited = docRef.current && docRef.current.innerText.trim() !== optimized.trim()
+    const edited = docRef.current && sheetToText(docRef.current).trim() !== optimized.trim()
     if (edited && !window.confirm('Your edits to this resume will be lost when you optimize again. Go back anyway?')) return
     setPhase('pick')
   }
@@ -392,7 +440,6 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       setPlacements(Array.isArray(d.placements) ? d.placements : [])
       setHtml(d.optimizedHtml || '')
       setChanges(Array.isArray(d.changes) ? d.changes : [])
-      setSheetMode('formatted')
       setRemoved({})
       setDocVersion(v => v + 1)
       setTab('resume')
@@ -428,7 +475,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
 
   // ── placement cards: ✕ pulls a skill out of the bullet it was woven into
   function removePlacement(p) {
-    const current = docRef.current?.innerText || optimized
+    const current = sheetToText(docRef.current) || optimized
     let next = ensureInSkills(stripFragment(current, p.fragment), p.skill)
     // Two skills can share one fragment ("used by internal Looker and Superset
     // dashboards"). Removing it takes both out of the bullet, so every card whose
@@ -446,18 +493,6 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       const res = await fetch(`${BACKEND}/render-resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resumeText: text, font: DOC_FONT }) })
       if (res.ok) { const d = await res.json(); setHtml(d.html || '') }
     } catch {}
-  }
-  // Formatted ↔ edit. Leaving edit mode commits the edited text and re-renders.
-  function toggleSheet() {
-    if (sheetMode === 'edit') {
-      const text = docRef.current?.innerText || optimized
-      setOptimized(text)
-      setDocVersion(v => v + 1)
-      rerender(text)
-      setSheetMode('formatted')
-    } else {
-      setSheetMode('edit')
-    }
   }
   function undoPlacement(p) {
     const snap = removed[p.skill]
@@ -483,7 +518,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
           resumeText, jobText,
           jobTitle: job.title || '', company: job.company || '',
           confirmedSkills: confirmedList, missingKeywords: missing,
-          optimizedResume: docRef.current?.innerText || optimized,
+          optimizedResume: sheetToText(docRef.current) || optimized,
         }),
       })
       if (!res.ok) throw new Error('cover letter failed')
@@ -550,7 +585,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
         headers: { 'Content-Type': 'application/json' },
         // Whatever is on screen is what downloads, edits included.
         body: JSON.stringify({
-          resumeText: docRef.current?.innerText || optimized,
+          resumeText: sheetToText(docRef.current) || optimized,
           font: DOC_FONT,
           length: 'standard',
           ...(isLetter ? { kind: 'letter', letterText: letterRef.current?.innerText || letter, company: job.company || '' } : {}),
@@ -788,16 +823,23 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                 <div className="om-tabs">
                   <button className={`om-tab ${tab === 'resume' ? 'on' : ''}`} onClick={() => setTab('resume')}><FileText size={12} />Optimized resume</button>
                   <button className={`om-tab ${tab === 'letter' ? 'on' : ''}`} onClick={openLetter}><PenLine size={12} />Cover letter</button>
-                  {tab === 'resume' && html && (
-                    <button className="om-tab om-tab-r" onClick={toggleSheet}>{sheetMode === 'edit' ? <><Check size={12} />Done editing</> : <><PenLine size={12} />Edit text</>}</button>
-                  )}
+                  {tab === 'resume' && <span className="om-tab-hint">Click anywhere to edit · <mark className="om-mark">green</mark> = skills you tapped · <mark className="om-mark-new">amber</mark> = wording the rewrite changed</span>}
                 </div>
                 {tab === 'resume' ? (
-                  sheetMode === 'formatted' && html ? (
-                    <div className="om-sheet" dangerouslySetInnerHTML={{ __html: html }} />
+                  html ? (
+                    /* The sheet IS the editor. Keyed on docVersion so ✕/↩ remount it. */
+                    <div
+                      key={docVersion}
+                      ref={docRef}
+                      className="om-sheet"
+                      contentEditable
+                      suppressContentEditableWarning
+                      spellCheck={false}
+                      dangerouslySetInnerHTML={{ __html: decorateHtml(html, added, resumeText) }}
+                    />
                   ) : (
                     <div className="om-paper">
-                      <div className="om-paper-h"><span>Click anywhere to edit · {DOC_FONT}</span><span>Done editing re-renders the sheet</span></div>
+                      <div className="om-paper-h"><span>Click anywhere to edit · {DOC_FONT}</span><span /></div>
                       <pre key={docVersion} ref={docRef} className="om-resume" contentEditable suppressContentEditableWarning spellCheck={false}>
                         <ResumeView text={optimized} skills={added} originalText={resumeText} />
                       </pre>
@@ -1050,8 +1092,10 @@ const CSS = `
 .om-tab { background: none; border: 0; border-bottom: 2px solid transparent; padding: 6px 12px 9px; font: inherit; font-size: 13px; font-weight: 700; color: var(--mute); cursor: pointer; display: inline-flex; gap: 7px; align-items: center; }
 .om-tab.on { color: var(--blue); border-bottom-color: var(--blue); }
 .om-tab:hover { color: var(--ink); }
-.om-tab-r { margin-left: auto; font-size: 12px; color: var(--ink2); border: 1px solid var(--line2); border-radius: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line2); }
-.om-tab-r:hover { border-color: #CBD5E1; }
+.om-tab-hint { margin-left: auto; font-size: 11px; color: var(--mute); }
+.om-tab-hint mark { font-size: 11px; }
+.om-sheet:focus { outline: 2px solid var(--blue3); outline-offset: 4px; }
+.om-sheet mark { font-family: inherit; }
 .om-sheet { background: #fff; border: 1px solid var(--line2); border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.08); padding: 44px 52px; max-width: 820px; margin: 0 auto;
   font-family: ${DOC_FONT_CSS}; color: #222; font-size: 10.5pt; line-height: 1.4; }
 .om-paper { background: #fff; border: 1px solid var(--line2); border-radius: 10px; max-width: 820px; margin: 0 auto; overflow: hidden; }
