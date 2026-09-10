@@ -294,12 +294,39 @@ const DISQUALIFIER_PATTERNS = [
   // Filler-verb variant (Allegion, caught live by Aravind 2026-09-07 night):
   // "does not INTEND TO provide sponsorship for employment visa status".
   /\b(we|company|employer)?\s*(do|does|will)\s+not\s+(currently\s+)?((intend|plan|expect|be\s+able)\s+to\s+)?(offer|provide|sponsor)\b[^.\n]{0,50}(sponsorship|visa\s+status|work\s+visa)/,
+  // Live catch, Bosch "Engineering Intern" via Greenhouse, 2026-09-09 (Aravind,
+  // from the board): "Indefinite U.S. work authorized individuals only. Future
+  // sponsorship for work authorization unavailable." Two families, both new.
+  // (a) "sponsorship ... unavailable" with words in between. The adjacent form
+  //     (line ~214) needs "sponsorship unavailable" back to back. Comma is a
+  //     boundary here: "sponsorship is available, relocation unavailable" must
+  //     not fire.
+  /\bsponsorship\b[^.!?;,\n]{0,40}?\b(is\s+|are\s+|will\s+be\s+)?(unavailable|not\s+available)\b/,
+  // (b) INDEFINITE / PERMANENT WORK AUTHORIZATION: employer-speak for "no visa
+  //     holders" that never says sponsorship. An F1 student's authorization is by
+  //     definition not indefinite. Bound to only/required/must so "we do not
+  //     require permanent work authorization" stays clean.
+  /\b(indefinite|permanent|unrestricted)\s+(us\s+)?work[\s-]+authoriz(ed|ation)\b[^.!?;\n]{0,40}?\b(only|required|requirement|must)\b/,
+  /\b(must|required\s+to|need\s+to)\s+(have|possess|hold|maintain)\s+(indefinite|permanent|unrestricted)\s+(us\s+)?(work\s+|employment\s+)?authorization\b/,
+  /\bwork[\s-]+authorized\s+(individuals|candidates|applicants|persons)\s+only\b/,
+  // POLYGRAPH CLEARANCE (filterCheck 100-run 2026-09-09: five Elevi Associates
+  // postings at Annapolis Junction passed with "must hold a current Poly
+  // clearance" / "CI Poly Clearance"). A polygraph clearance is an NSA gate;
+  // no visa holder gets one. "poly" never fires alone (poly bag, polymer): it
+  // must sit next to clearance, or carry its CI/FS/full-scope prefix.
+  /\bpoly(graph)?\s+clearance\b/,
+  /\b(ci|fs|full[\s-]scope|counter[\s-]?intelligence)\s+poly(graph)?\b/,
+  // Verb form the clearance family lacked: "must hold a current X clearance".
+  /\bmust\s+(hold|possess|have|maintain|obtain)\s+(a\s+|an\s+)?(current\s+|active\s+|valid\s+)?([\w\/-]+\s+){0,2}clearance\b/,
   /\bpermanent\s+resident\s+(is\s+)?required\b/,
   /\bmust\s+be\s+(us\s+|u s\s+|united states\s+)?citizens?\b/,
   /\bcitizens?\s+or\s+(lawful\s+)?permanent\s+residents?\b/,
   /\bpermanent\s+residents?\s+or\s+citizens?\b/,
   /\b(must\s+not|not|does\s+not|will\s+not|cannot|can not)\s+require\s+(visa\s+)?sponsorship\b/,
-  /\bsponsorship\s+(now\s+or\s+in\s+the\s+future|in\s+the\s+future)\b/,
+  // Guarded 2026-09-09: the bare form fired on "we welcome candidates who will
+  // need sponsorship now or in the future" and hid the job. A negation must
+  // precede "sponsorship" in the same sentence.
+  /\b(no|not|without|unable|cannot|can not|never)\b[^.!?;\n]{0,40}?\bsponsorship\s+(now\s+or\s+in\s+the\s+future|in\s+the\s+future)\b/,
   /\bmust\s+be\s+a?\s*(lawful\s+)?permanent\s+residents?\b/,
   // "work authorization that does not now or in the future require sponsorship of a visa"
   // — a no-sponsorship demand written as a property of the candidate. Found on 53 jobs.
