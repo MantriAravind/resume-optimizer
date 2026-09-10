@@ -768,12 +768,19 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                 </div>
               </div>
               <div className="om-actionbar-sp" />
-              <button className="om-dl" onClick={() => handleDownload('word')} disabled={!!dlLoading}>
-                <FileText size={13} />{dlLoading === 'word' ? '…' : 'Word'}
-              </button>
-              <button className="om-dl" onClick={() => handleDownload('pdf')} disabled={!!dlLoading}>
-                <Download size={13} />{dlLoading === 'pdf' ? '…' : 'PDF'}
-              </button>
+              {/* Word / PDF download the resume. On the letter tab they would download
+                  a different document than the one on screen, so they are hidden there;
+                  the letter's action is Copy, in the rail. */}
+              {tab === 'resume' && (
+                <>
+                  <button className="om-dl" onClick={() => handleDownload('word')} disabled={!!dlLoading}>
+                    <FileText size={13} />{dlLoading === 'word' ? '…' : 'Word'}
+                  </button>
+                  <button className="om-dl" onClick={() => handleDownload('pdf')} disabled={!!dlLoading}>
+                    <Download size={13} />{dlLoading === 'pdf' ? '…' : 'PDF'}
+                  </button>
+                </>
+              )}
               <a
                 className="om-apply"
                 href={job.applyUrl}
