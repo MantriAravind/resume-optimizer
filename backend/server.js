@@ -1463,6 +1463,35 @@ function summarySentences(text) {
   return body.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(s => s.length > 15)
 }
 /**
+ * The summary keeps its SHAPE. The original had one paragraph; a rewrite returned the
+ * same sentences on three lines, and the sheet showed three paragraphs. Sentence count
+ * is gated elsewhere; this restores line structure: if the original summary was N
+ * lines and the draft has more, the draft's lines are re-joined to N (one line → one
+ * paragraph). Code, deterministic, no model call. Returns the whole text.
+ */
+function keepSummaryShape(optimized, original) {
+  const find = text => {
+    const m = String(text || '').match(/^[ \t]*(?:PROFESSIONAL\s+|EXECUTIVE\s+|CAREER\s+)?(?:SUMMARY|PROFILE|OBJECTIVE)[ \t]*:?[ \t]*$/mi)
+    if (!m) return null
+    const start = String(text).indexOf(m[0]) + m[0].length
+    const after = String(text).slice(start)
+    const nextHdr = after.search(/^[ \t]*[A-Z][A-Z\s&/]{2,39}:?[ \t]*$/m)
+    const end = nextHdr === -1 ? String(text).length : start + nextHdr
+    return { start, end, body: String(text).slice(start, end) }
+  }
+  const a = find(original), b = find(optimized)
+  if (!a || !b) return optimized
+  const aLines = a.body.split('\n').map(l => l.trim()).filter(Boolean)
+  const bLines = b.body.split('\n').map(l => l.trim()).filter(Boolean)
+  if (aLines.length === 0 || bLines.length <= aLines.length) return optimized
+  // Re-join into as many lines as the original had: the extra breaks become spaces.
+  const per = Math.ceil(bLines.length / aLines.length)
+  const joined = []
+  for (let i = 0; i < bLines.length; i += per) joined.push(bLines.slice(i, i + per).join(' '))
+  return String(optimized).slice(0, b.start) + '\n' + joined.join('\n') + '\n' + String(optimized).slice(b.end)
+}
+
+/**
  * Summary sentence count that moved in EITHER direction.
  *
  * The first version of this only caught shrinking, because the observed failure was a
@@ -1968,6 +1997,8 @@ Respond in this exact JSON format with no extra text:
     // card lied. Now the skills-section half is done in code for every confirmed
     // skill the model left out of it: a plain string append to the student's own
     // category line, the same last resort Rule 7 already uses.
+    out = keepSummaryShape(out, resumeText)
+
     const notInSkills = confirmed.filter(k => !resumeHas(flattenForMatch(skillsSectionText(out, skillsHeader)), k))
     if (notInSkills.length) {
       out = appendToSkills(out, notInSkills, skillsHeader)
@@ -3624,7 +3655,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-10c v2 wizard data (kinds, work one-liners, optimizedHtml, changes, /render-resume)'
+const SERVER_BUILD = '2026-09-10d summary keeps its line shape'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })
