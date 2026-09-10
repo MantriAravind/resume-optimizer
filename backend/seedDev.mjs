@@ -6,7 +6,7 @@
 //
 // Reads two addresses from backend/.env (gitignored, local machine only):
 //   MONGODB_URI       = the dev database (what server.js uses locally)
-//   PROD_MONGODB_URI  = production, read-only here; this script never writes to it
+//   MONGODB_URI_PROD  = production, read-only here; this script never writes to it
 //
 // Usage (from backend/):   node seedDev.mjs           copies 300 jobs (100 per ATS)
 //                          node seedDev.mjs --n 500
@@ -21,8 +21,9 @@ const nArg = args.indexOf('--n')
 const PER_ATS = Math.max(20, Math.round((nArg === -1 ? 300 : Number(args[nArg + 1])) / 3))
 
 const devUri  = process.env.MONGODB_URI
-const prodUri = process.env.PROD_MONGODB_URI
-if (!devUri || !prodUri) { console.error('need MONGODB_URI and PROD_MONGODB_URI in backend/.env'); process.exit(1) }
+// MONGODB_URI_PROD is the name deepClean.mjs already used; accepted first.
+const prodUri = process.env.MONGODB_URI_PROD || process.env.PROD_MONGODB_URI
+if (!devUri || !prodUri) { console.error('need MONGODB_URI and MONGODB_URI_PROD in backend/.env'); process.exit(1) }
 if (devUri === prodUri) { console.error('refusing: MONGODB_URI and PROD_MONGODB_URI are the same database'); process.exit(1) }
 
 const prod = new MongoClient(prodUri)
