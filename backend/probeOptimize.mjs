@@ -74,6 +74,8 @@ const si = lines.findIndex(l => /skills|proficienc|competenc/i.test(l) && l.trim
 console.log('\nskills section of output:')
 for (let i = si; i < lines.length && i < si + 8 && i !== -1; i++) { if (i > si && /^[A-Z][A-Z &/]{3,}$/.test(lines[i].trim())) break; console.log('  ' + lines[i]) }
 console.log('\nfeedback:', o.feedback)
+console.log('changes :', (o.changes || []).length ? '\n  - ' + o.changes.join('\n  - ') : '(none)')
+console.log('optimizedHtml:', (o.optimizedHtml || '').length, 'chars', (o.optimizedHtml || '').includes('EXPERIENCE') || /experience/i.test(o.optimizedHtml || '') ? '· sections rendered' : '· CHECK')
 console.log('\nCheck: (1) PROMISE KEPT, (2) every bullet placement fragment reads as the candidate\'s own work + the skill, (3) skills-only placements are in the skills lines, (4) terminal 1 for "gate retry" / "code-appended" lines.')
 
 if (args.includes('--letter')) {

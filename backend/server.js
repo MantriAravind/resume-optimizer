@@ -170,6 +170,9 @@ const analyzeCacheSchema = new mongoose.Schema({
   // Job-ad phrases the extract refused to offer, shown on the tap screen so the
   // student sees why "production data incidents" is not a checkbox.
   dropped:         [String],
+  kinds:           { type: Map, of: String },
+  postingWork:     String,
+  resumeWork:      String,
   createdAt: { type: Date, default: Date.now, expires: '30d' },
 })
 const AnalyzeCache = mongoose.model('AnalyzeCache', analyzeCacheSchema)
@@ -228,7 +231,7 @@ async function latestTitleFor(resumeText) {
 // built from half the inputs. Bumping the prefix makes every old entry a miss, and
 // the 30-day TTL cleans them up. The job title is part of the key because the
 // core-role check depends on it.
-const ANALYZE_CACHE_VERSION = 'v8'   // v6: keywords must appear in posting; v7: vendor-prefix dedupe; v8: dropped phrases cached
+const ANALYZE_CACHE_VERSION = 'v10'  // v8: dropped phrases; v9: kinds + work one-liners; v10: 'X models' dedupe
 function analyzeCacheKey(resumeText, jobText, jobTitle = '') {
   return ANALYZE_CACHE_VERSION + ':' + crypto.createHash('sha256')
     .update(resumeText + '\u0000' + jobText + '\u0000' + jobTitle).digest('hex')
@@ -746,7 +749,15 @@ function keywordBase(term) {
 // stays as two skills.
 const VENDOR_PREFIX = /^(aws|amazon|azure|microsoft|google|gcp|apache)\s+/
 function keywordCore(term) {
-  return keywordBase(term).replace(VENDOR_PREFIX, '')
+  // "SQLMesh models" is SQLMesh; "dbt jobs" is dbt. Only when what is left is a
+  // single token, so "data models" (a practice) stays itself.
+  const core = keywordBase(term).replace(VENDOR_PREFIX, '')
+  const m = core.match(/^(\S+)\s+(models?|pipelines?|jobs?|scripts?)$/)
+  if (!m) return core
+  // Only when the head looks like a product: "SQLMesh models" yes, "data models" no.
+  const head = String(term || '').trim().split(/\s+/)[0]
+  const productShaped = /[A-Z0-9]/.test(head) || /^(dbt|kafka|spark|airflow|snowflake|redshift|bigquery|databricks|terraform|docker|kubernetes|k8s|fivetran|airbyte)$/i.test(head)
+  return productShaped ? m[1] : core
 }
 
 // ── CORE ROLE (A5 scoring law) ─────────────────────────────────────────────
@@ -872,6 +883,14 @@ function resumeHas(resumeFlat, term) {
   return false
 }
 
+// The model ignores "12 words"; cut at a word boundary, never mid-token, and drop a
+// dangling separator.
+function oneLiner(v, max = 100) {
+  const t = typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : ''
+  if (t.length <= max) return t
+  return t.slice(0, max).replace(/\s+\S*$/, '').replace(/[;,:\-–—\s]+$/, '') + '…'
+}
+
 // jobTitle is optional: the standalone /optimize fallback path does not have it, and
 // the core-role check then simply reports unknown.
 async function extractKeywords(resumeText, jobText, jobTitle = '') {
@@ -889,6 +908,9 @@ async function extractKeywords(resumeText, jobText, jobTitle = '') {
       bulletRelevance: typeof hit.bulletRelevance === 'number' ? hit.bulletRelevance : null,
       roleMatch:       typeof hit.roleMatch === 'boolean' ? hit.roleMatch : null,
       dropped:         Array.isArray(hit.dropped) ? hit.dropped : [],
+      kinds:           hit.kinds instanceof Map ? Object.fromEntries(hit.kinds) : (hit.kinds || {}),
+      postingWork:     hit.postingWork || '',
+      resumeWork:      hit.resumeWork || '',
     }
   } catch (e) {
     console.warn('analyze cache read failed:', e.message)
@@ -911,6 +933,8 @@ STEP 2 — now read the RESUME and mark each posting skill present or absent. Pr
 
 STEP 3 — from the same read of both documents:
 - yearsRequired: the minimum years of experience the POSTING asks for, as a whole number. null if the posting states no number. If it gives a range ("3-5 years") use the low end.
+- postingWork: in at most 12 words, what this job's day-to-day work is, from the posting. Plain nouns, no adjectives ("production pipelines, governed metrics, self-serve data for analysts").
+- resumeWork: in at most 12 words, what the candidate's day-to-day work has been, from the experience bullets ("Azure pipelines, validation and reconciliation, Spark tuning").
 - bulletRelevance: an integer 1-5 grading how closely the WORK described in the resume's experience bullets matches the core duties of THIS POSTING. Judge the work, not the vocabulary: a bullet about building ELT pipelines is relevant to a pipeline job even if it never says "ELT". Calibration: 5 = the bullets describe this exact job; 4 = most of its duties; 3 = an adjacent role with real overlap (data engineer bullets for an analytics engineer posting); 2 = a different role that touches this one (data engineer bullets for a BI analyst posting); 1 = a different profession (data engineer bullets for a product manager or sales posting). A candidate whose whole history is in another job family cannot score above 2. Grade the bullets as written, not the summary.
 
 JOB POSTING:
@@ -923,7 +947,9 @@ Respond in this exact JSON format with no extra text:
 {
   "keywords": [{"term": "<exact wording from the posting>", "kind": "tool|practice|phrase", "present": true|false}],
   "yearsRequired": <number or null>,
-  "bulletRelevance": <1-5>
+  "bulletRelevance": <1-5>,
+  "postingWork": "<string>",
+  "resumeWork": "<string>"
 }`
 
   // One extract, optionally repeated. nano ignores "6-10": across four real jobs it
@@ -979,7 +1005,7 @@ Respond in this exact JSON format with no extra text:
         twin.present = twin.present || present
         continue
       }
-      usable.push({ term, present })
+      usable.push({ term, present, kind: e.kind === 'practice' ? 'practice' : 'tool' })
     }
     if (dropped.length) console.log('extract: dropped ' + dropped.length + ' non-skill(s): ' + dropped.join(' | '))
     if (notInPosting.length) console.log('extract: model listed ' + notInPosting.length + ' term(s) NOT in the posting (resume-anchored), dropped: ' + notInPosting.join(' | '))
@@ -1020,6 +1046,10 @@ Respond in this exact JSON format with no extra text:
     // Only the phrase-shaped ones, not certifications: the cert filter is a different
     // honesty rule with its own explanation.
     dropped:         dropped.filter(t => !/^[A-Z0-9-]{3,8}$/.test(t)).slice(0, 6),
+    // tool | practice per keyword, so the tap screen can group them.
+    kinds:           Object.fromEntries(usable.map(u => [u.term, u.kind])),
+    postingWork:     oneLiner(parsed.postingWork),
+    resumeWork:      oneLiner(parsed.resumeWork),
   }
   result.roleMatch = await roleMatch(result.latestTitle, jobTitle)
 
@@ -1031,7 +1061,8 @@ Respond in this exact JSON format with no extra text:
       { key: cacheKey },
       { key: cacheKey, matched: result.matchedKeywords, missing: result.missingKeywords,
         latestTitle: result.latestTitle, yearsRequired: result.yearsRequired,
-        bulletRelevance: result.bulletRelevance, roleMatch: result.roleMatch, dropped: result.dropped, createdAt: new Date() },
+        bulletRelevance: result.bulletRelevance, roleMatch: result.roleMatch, dropped: result.dropped,
+        kinds: result.kinds, postingWork: result.postingWork, resumeWork: result.resumeWork, createdAt: new Date() },
       { upsert: true }
     )
   } catch (e) {
@@ -1076,6 +1107,9 @@ app.post('/analyze', async (req, res) => {
       rubric,
       maxScore,
       droppedPhrases: found.dropped || [],
+      keywordKinds:   found.kinds || {},
+      postingWork:    found.postingWork || '',
+      resumeWork:     found.resumeWork || '',
     })
   } catch (error) {
     console.error('Analyze error:', error)
@@ -1776,6 +1810,7 @@ Respond in this exact JSON format with no extra text:
 {
   "feedback": "<${confirmed.length ? '2-3 sentences: what you added and where. If any confirmed skill ended up in the skills section ONLY, name it and say plainly: be ready to speak to where you used it, because your experience bullets do not show it.' : '1-2 sentences: what you reframed. The candidate confirmed NO new skills, so do not mention confirmed skills, additions, or the skills section.'}>",
   "placements": [{"skill": "<confirmed skill, exactly as given>", "where": "bullet|skills", "employer": "<company or empty>", "fragment": "<exact text from optimizedResume>"}],
+  "changes": ["<2-4 short items, one line each, plain past tense, what you changed and where: e.g. 'Summary reframed toward production pipelines — same facts, this job's words'>"],
   "optimizedResume": "<the full rewritten resume>"
 }`
 
@@ -1969,6 +2004,10 @@ Respond in this exact JSON format with no extra text:
       // A5-2/3: one card per confirmed skill. where=bullet carries a code-verified
       // fragment the modal can remove with ✕; where=skills has nothing to remove.
       placements,
+      // v2 modal: the sheet is rendered by the same code the PDF uses, so what the
+      // student sees on screen is what downloads. Body markup only.
+      optimizedHtml: resumeBodyHtml(out, 'times'),
+      changes: Array.isArray(parsed.changes) ? parsed.changes.map(c => String(c).trim()).filter(Boolean).slice(0, 5) : [],
     })
   } catch (error) {
     console.error('AI API error:', error)
@@ -3349,6 +3388,19 @@ function buildLetterHTML(resumeText, letterText, font, company) {
 </html>`
 }
 
+// Body-only render for the on-screen sheet. Same markup the PDF prints.
+function resumeBodyHtml(resumeText, font) {
+  const full = buildResumeHTML(resumeText, font || 'calibri', 'standard')
+  const m = full.match(/<body>([\s\S]*)<\/body>/)
+  return m ? m[1] : ''
+}
+// Re-render on demand: the student edits the text, the sheet re-renders from it.
+app.post('/render-resume', (req, res) => {
+  const { resumeText, font } = req.body || {}
+  if (!resumeText) return res.status(400).json({ error: 'No resume text provided.' })
+  res.json({ html: resumeBodyHtml(String(resumeText), font || 'times') })
+})
+
 function buildResumeHTML(resumeText, font, length) {
   const cfg       = { accent: ACCENT_CSS, rule: RULE_CSS, muted: MUTED_CSS, font: fontFor(font).css }
   const isCompact = length === 'concise'
@@ -3572,7 +3624,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-10b feedback honest when nothing tapped'
+const SERVER_BUILD = '2026-09-10c v2 wizard data (kinds, work one-liners, optimizedHtml, changes, /render-resume)'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })

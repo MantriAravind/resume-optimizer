@@ -73,6 +73,9 @@ if (!res.ok) { console.error(body); process.exit(1) }
 console.log('matched  (' + body.matchedKeywords.length + '):', body.matchedKeywords.join(' | '))
 console.log('missing  (' + body.missingKeywords.length + '):', body.missingKeywords.join(' | '))
 console.log('old keyword-only scoreBefore:', body.scoreBefore)
+console.log('kinds   :', Object.entries(body.keywordKinds || {}).map(([k, v]) => k + '=' + v).join(' | ') || '(none)')
+console.log('posting work:', JSON.stringify(body.postingWork), '| resume work:', JSON.stringify(body.resumeWork))
+console.log('dropped :', (body.droppedPhrases || []).join(' | ') || '(none)')
 
 const r = body.rubric
 if (!r) { console.log('\nNO rubric in response — old server code still deployed?'); process.exit(1) }
