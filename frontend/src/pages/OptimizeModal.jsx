@@ -935,7 +935,7 @@ const CSS = `
   --blue:#2563EB; --blue2:#EFF6FF; --blue3:#DBEAFE; --green:#047857; --green2:#ECFDF5; --green3:#A7F3D0;
   --amber:#92400E; --amber2:#FFFBEB; --amber3:#FDE68A; --red:#991B1B; --red2:#FEF2F2; --red3:#FECACA; --r:14px;
   position: fixed; inset: 0; background: rgba(10,10,11,.55); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 18px;
-  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif; color: var(--ink); }
+  font-family: inherit; color: var(--ink); }   /* the site's font (Space Grotesk); only the document uses the resume's font */
 .om-overlay * { box-sizing: border-box; }
 .om-modal { width: min(1240px, 100%); height: min(94vh, 900px); background: #fff; border-radius: 24px; box-shadow: 0 30px 80px rgba(0,0,0,.3);
   display: flex; flex-direction: column; overflow: hidden; }
