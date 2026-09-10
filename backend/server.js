@@ -1774,7 +1774,7 @@ For EACH confirmed skill, one entry in "placements". If it went into a bullet: "
 
 Respond in this exact JSON format with no extra text:
 {
-  "feedback": "<2-3 sentences: what you added and where. If any confirmed skill ended up in the skills section ONLY, name it and say plainly: be ready to speak to where you used it, because your experience bullets do not show it.>",
+  "feedback": "<${confirmed.length ? '2-3 sentences: what you added and where. If any confirmed skill ended up in the skills section ONLY, name it and say plainly: be ready to speak to where you used it, because your experience bullets do not show it.' : '1-2 sentences: what you reframed. The candidate confirmed NO new skills, so do not mention confirmed skills, additions, or the skills section.'}>",
   "placements": [{"skill": "<confirmed skill, exactly as given>", "where": "bullet|skills", "employer": "<company or empty>", "fragment": "<exact text from optimizedResume>"}],
   "optimizedResume": "<the full rewritten resume>"
 }`
@@ -3572,7 +3572,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-10 A6 letter downloads + confirmed skills always in skills section'
+const SERVER_BUILD = '2026-09-10b feedback honest when nothing tapped'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })
