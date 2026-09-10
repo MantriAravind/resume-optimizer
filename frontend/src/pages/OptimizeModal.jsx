@@ -341,7 +341,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   const kwHave = matched.length + confirmedList.length
   // Same formula as scoreRubric() on the server: only the keyword row moves with taps.
   const liveScore = rubric
-    ? rubric.total - (rubric.rows?.keywords?.pts || 0) + (total ? Math.round(40 * kwHave / total) : 0)
+    ? rubric.total - (rubric.rows?.keywords?.pts || 0) + (total ? Math.round(60 * kwHave / total) : 0)
     : (total ? Math.round((kwHave / total) * 100) : 0)
   const stillGap = missing.filter(k => !checked[k])
   const allTapped = missing.length > 0 && confirmedList.length === missing.length
@@ -578,13 +578,13 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   const ringColor = v => v >= 80 ? '#047857' : v >= 60 ? '#B45309' : '#DC2626'
   const tools = missing.filter(k => kinds[k] !== 'practice')
   const practices = missing.filter(k => kinds[k] === 'practice')
-  const perTap = total ? Math.round(40 / total) : 0
+  const perTap = total ? Math.round(60 / total) : 0
   const verdict = (() => {
     if (!rows) return { t: 'Analyzed.', s: '' }
     if (rows.role.match === false) return { t: 'Different core role.', s: `The posting is for "${job.title}"; your latest title reads "${rows.role.resumeTitle || 'unknown'}". Keywords can't close that gap, and the score says so.` }
     if (rows.years.pts === 0) return { t: 'Years short — everything else fits.', s: `${rows.years.required}+ asked, ${rows.years.have} on your resume. That row stays at zero no matter what you tap.` }
-    if (missing.length) return { t: 'Partial match — and most of the gap is tappable.', s: `Same core role, years covered. What's missing is ${missing.length} ${missing.length === 1 ? 'skill' : 'skills'} the posting names and your resume doesn't.` }
-    return { t: 'Strong match already.', s: 'Every skill the posting names is on your resume. The rewrite will speak this job\'s language without adding anything.' }
+    if (missing.length) return { t: 'Partial match — and the whole gap is tappable.', s: `Same core role, years covered. What's missing is ${missing.length} ${missing.length === 1 ? 'skill' : 'skills'} the posting names and your resume doesn't. Confirm the true ones and this reads 100.` }
+    return { t: 'Full match.', s: 'Same role, years covered, every skill the posting names is on your resume. The rewrite speaks this job\'s language without adding anything.' }
   })()
   const promiseKept = promised === null || scoreAfter === promised
 
@@ -677,13 +677,11 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                 </div>
                 <div className="om-card-h om-card-h-line">How this score is built</div>
                 <div className="om-rows">
-                  <Row name="Core role match" pts={rows.role.pts} max={20}
+                  <Row name="Core role match" pts={rows.role.pts} max={30}
                     detail={rows.role.match === null ? (rows.role.note || 'not compared') : `"${job.title}" ↔ "${rows.role.resumeTitle || 'your latest title'}" · seniority ignored → ${rows.role.match ? 'same core role' : 'different role'}`} />
                   <Row name="Years of experience" pts={rows.years.pts} max={10}
                     detail={rows.years.required === null ? 'posting states no minimum' : rows.years.have === null ? `${rows.years.required}+ required · could not read your dates` : `${rows.years.required}+ required · ${rows.years.have} on your resume`} />
-                  <Row name="Bullet relevance" pts={rows.bullets.pts} max={30}
-                    detail={rows.bullets.grade === null ? 'not graded' : `how closely your work stories mirror this job's work · ${rows.bullets.grade} / 5`} />
-                  <Row name="Keywords" pts={rows.keywords.pts} max={40}
+                  <Row name="Keywords" pts={rows.keywords.pts} max={60}
                     detail={`${matched.length} of ${total} the posting names are on your resume${missing.length ? ' · the rest are yours to confirm in step 2' : ''}`} />
                 </div>
               </div>
@@ -758,17 +756,16 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                 <div className="om-bar-l"><span>today {scoreBefore}</span>{maxScore !== null && <span>honest max {maxScore}</span>}</div>
                 <div className={`om-max ${allTapped ? 'on' : ''}`}>
                   {allTapped
-                    ? <><b>✓ {liveScore} — your best honest score for this job.</b> Every keyword is covered{liveScore < 100 ? '; the rest of the gap is the rows above, not something to fix on a resume' : ''}.</>
+                    ? <><b>✓ {liveScore} — your best honest score for this job.</b> Every keyword is covered{liveScore < 100 ? (rows?.role?.match === false ? '; the rest is the core-role row, and no resume edit can honestly move it' : '; the rest is the years row, and no resume edit can honestly move it') : '.'}</>
                     : confirmedList.length > 0
                       ? <>Projected <b>{liveScore}</b>. {stillGap.length} untapped {stillGap.length === 1 ? 'skill' : 'skills'} left — tap only what's true.</>
                       : <>Tap only what's true. Each skill you confirm is worth about {perTap} points; nothing else on this screen can move the number.</>}
                 </div>
                 {rows && (
                   <div className="om-mini">
-                    <Row name="Core role" pts={rows.role.pts} max={20} />
+                    <Row name="Core role" pts={rows.role.pts} max={30} />
                     <Row name="Years" pts={rows.years.pts} max={10} />
-                    <Row name="Bullet relevance" pts={rows.bullets.pts} max={30} />
-                    <Row name="Keywords" pts={total ? Math.round(40 * kwHave / total) : 0} max={40} />
+                    <Row name="Keywords" pts={total ? Math.round(60 * kwHave / total) : 0} max={60} />
                   </div>
                 )}
                 <div className="om-promise">The number you see here is the number step 3 delivers. Every tapped skill is guaranteed to land on the resume — in a bullet where your own work supports it, otherwise in your Skills section, and the card will say which.</div>

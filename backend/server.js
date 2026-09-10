@@ -816,8 +816,12 @@ async function roleMatch(resumeTitle, jobTitle) {
 
 // ── SCORE RUBRIC (A5 changes 4 + 5) ────────────────────────────────────────
 //
-// One function, one law, both screens. keywords 40 · bullet relevance 30 · core role
-// 20 · years 10. The tap screen calls it with the skills tapped so far; the result
+// One function, one law, both screens. keywords 60 · core role 30 · years 10.
+// Three rows, every one decided by code: a keyword is on the resume or it is not, the
+// title matches or it does not, the years add up or they do not. Bullet relevance
+// (2026-09-09 to 09-10) was the one row a model judged; it wobbled a point between
+// runs, a student could not check it against their document, and a true match
+// capped at 93. Dropped 2026-09-10 (Aravind): honest means checkable. The tap screen calls it with the skills tapped so far; the result
 // screen calls it with the skills that landed; step 3's gate makes those the same set,
 // so the preview and the delivery are the same number by construction.
 //
@@ -826,25 +830,21 @@ async function roleMatch(resumeTitle, jobTitle) {
 // return is not a 1. Each such row is awarded in full and labelled so the modal can
 // say why. The student cannot fix data we failed to read, so they are not charged
 // for it.
-function scoreRubric({ matched = [], missing = [], confirmed = [], bulletRelevance = null, roleMatch = null, resumeTitle = '', jobTitle = '', yearsRequired = null, expMonths = null }) {
+function scoreRubric({ matched = [], missing = [], confirmed = [], roleMatch = null, resumeTitle = '', jobTitle = '', yearsRequired = null, expMonths = null }) {
   const total = matched.length + missing.length
   const have  = matched.length + confirmed.filter(k => missing.includes(k)).length
-  const kwPts = total ? Math.round(40 * have / total) : 0
+  const kwPts = total ? Math.round(60 * have / total) : 0
 
-  const grade = Number.isInteger(bulletRelevance) && bulletRelevance >= 1 && bulletRelevance <= 5 ? bulletRelevance : null
-  const brPts = grade === null ? 30 : Math.round(30 * (grade - 1) / 4)
-
-  const rolePts = roleMatch === false ? 0 : 20
+  const rolePts = roleMatch === false ? 0 : 30
 
   const haveYears = expMonths === null ? null : Math.round(expMonths / 12 * 10) / 10
   const yrPts = yearsRequired === null || haveYears === null ? 10 : (haveYears >= yearsRequired ? 10 : 0)
 
   return {
-    total: kwPts + brPts + rolePts + yrPts,
+    total: kwPts + rolePts + yrPts,
     rows: {
-      keywords: { pts: kwPts,   max: 40, have, total },
-      bullets:  { pts: brPts,   max: 30, grade, note: grade === null ? 'not graded' : null },
-      role:     { pts: rolePts, max: 20, match: roleMatch, resumeTitle, jobTitle, note: roleMatch === null ? 'no title to compare' : null },
+      keywords: { pts: kwPts,   max: 60, have, total },
+      role:     { pts: rolePts, max: 30, match: roleMatch, resumeTitle, jobTitle, note: roleMatch === null ? 'no title to compare' : null },
       years:    { pts: yrPts,   max: 10, required: yearsRequired, have: haveYears,
                   note: yearsRequired === null ? 'posting states no minimum' : haveYears === null ? 'could not read your dates' : null },
     },
@@ -1089,7 +1089,7 @@ app.post('/analyze', async (req, res) => {
     const yearsRequired = Number.isFinite(Number(yearsMin)) && yearsMin !== null ? Number(yearsMin) : found.yearsRequired
     const inputs = {
       matched: matchedKeywords, missing: missingKeywords,
-      bulletRelevance: found.bulletRelevance, roleMatch: found.roleMatch,
+      roleMatch: found.roleMatch,
       resumeTitle: found.latestTitle, jobTitle: String(jobTitle || ''),
       yearsRequired, expMonths: totalExperienceMonths(resumeText),
     }
@@ -2017,7 +2017,7 @@ Respond in this exact JSON format with no extra text:
     const yearsRequired = Number.isFinite(Number(yearsMin)) && yearsMin !== null ? Number(yearsMin) : found.yearsRequired
     const rubricAfter = scoreRubric({
       matched: matchedKeywords, missing: missingKeywords, confirmed: landed,
-      bulletRelevance: found.bulletRelevance, roleMatch: found.roleMatch,
+      roleMatch: found.roleMatch,
       resumeTitle: found.latestTitle, jobTitle: String(jobTitle || ''),
       yearsRequired, expMonths,
     })
@@ -3655,7 +3655,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-10d summary keeps its line shape'
+const SERVER_BUILD = '2026-09-10e three-row law: keywords 60 · role 30 · years 10'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })
