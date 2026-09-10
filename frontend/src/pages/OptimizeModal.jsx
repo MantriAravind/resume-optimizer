@@ -1055,7 +1055,8 @@ const CSS = `
 .om-tab:hover { color: var(--ink); }
 .om-tab-r { margin-left: auto; font-size: 12px; color: var(--ink2); border: 1px solid var(--line2); border-radius: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line2); }
 .om-tab-r:hover { border-color: #CBD5E1; }
-.om-sheet { background: #fff; border: 1px solid var(--line2); border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.08); padding: 44px 52px; max-width: 820px; margin: 0 auto; }
+.om-sheet { background: #fff; border: 1px solid var(--line2); border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.08); padding: 44px 52px; max-width: 820px; margin: 0 auto;
+  font-family: ${DOC_FONT_CSS}; color: #222; font-size: 10.5pt; line-height: 1.4; }
 .om-paper { background: #fff; border: 1px solid var(--line2); border-radius: 10px; max-width: 820px; margin: 0 auto; overflow: hidden; }
 .om-paper-h { display: flex; justify-content: space-between; padding: 8px 14px; font-size: 10.5px; color: var(--mute); border-bottom: 1px solid var(--line); background: #FBFAF8; }
 .om-resume { font-family: ${DOC_FONT_CSS}; font-size: 12.5px; line-height: 1.6; color: #1F2937; padding: 22px 26px; margin: 0; white-space: pre-wrap; word-wrap: break-word; outline: none; min-height: 300px; }
