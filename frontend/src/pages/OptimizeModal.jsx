@@ -580,6 +580,10 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
 
   async function handleDownload(type) {
     if (!optimized) return
+    // The tab decides the document. On the letter tab the same buttons download the
+    // letter as a file, because application forms have upload fields, not paste boxes.
+    const isLetter = tab === 'letter'
+    if (isLetter && letterState !== 'ready') return
     setDlLoading(type)
     try {
       const res = await fetch(`${BACKEND}/download-${type}`, {
@@ -590,6 +594,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
           resumeText: docRef.current?.innerText || optimized,
           font: DOC_FONT,
           length: 'standard',
+          ...(isLetter ? { kind: 'letter', letterText: letterRef.current?.innerText || letter, company: job.company || '' } : {}),
         }),
       })
       if (!res.ok) { alert('Download failed. Please try again.'); return }
@@ -597,7 +602,8 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = type === 'pdf' ? 'optimized-resume.pdf' : 'optimized-resume.docx'
+      const base = isLetter ? 'cover-letter' : 'optimized-resume'
+      a.download = type === 'pdf' ? `${base}.pdf` : `${base}.docx`
       a.click()
       URL.revokeObjectURL(url)
     } catch {
@@ -768,19 +774,14 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                 </div>
               </div>
               <div className="om-actionbar-sp" />
-              {/* Word / PDF download the resume. On the letter tab they would download
-                  a different document than the one on screen, so they are hidden there;
-                  the letter's action is Copy, in the rail. */}
-              {tab === 'resume' && (
-                <>
-                  <button className="om-dl" onClick={() => handleDownload('word')} disabled={!!dlLoading}>
-                    <FileText size={13} />{dlLoading === 'word' ? '…' : 'Word'}
-                  </button>
-                  <button className="om-dl" onClick={() => handleDownload('pdf')} disabled={!!dlLoading}>
-                    <Download size={13} />{dlLoading === 'pdf' ? '…' : 'PDF'}
-                  </button>
-                </>
-              )}
+              {/* Word / PDF download whichever tab is showing: the resume, or the cover
+                  letter as a proper letter document. */}
+              <button className="om-dl" onClick={() => handleDownload('word')} disabled={!!dlLoading || (tab === 'letter' && letterState !== 'ready')}>
+                <FileText size={13} />{dlLoading === 'word' ? '…' : 'Word'}
+              </button>
+              <button className="om-dl" onClick={() => handleDownload('pdf')} disabled={!!dlLoading || (tab === 'letter' && letterState !== 'ready')}>
+                <Download size={13} />{dlLoading === 'pdf' ? '…' : 'PDF'}
+              </button>
               <a
                 className="om-apply"
                 href={job.applyUrl}

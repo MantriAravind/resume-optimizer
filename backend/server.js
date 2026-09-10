@@ -3111,8 +3111,42 @@ function fontFor(id) {
 
 // ── DOWNLOAD WORD
 app.post('/download-word', async (req, res) => {
-  const { resumeText, font, length } = req.body
+  const { resumeText, font, length, kind, letterText, company } = req.body
   if (!resumeText) return res.status(400).json({ error: 'No resume text provided.' })
+
+  // Cover letter as a .docx: letterhead from the resume, date, greeting, body, sign-off.
+  if (kind === 'letter') {
+    if (!letterText) return res.status(400).json({ error: 'No letter text provided.' })
+    try {
+      const FONT = fontFor(font).word
+      const { name, contact, date, greeting, paragraphs } = letterParts(resumeText, letterText, company)
+      const line = (text, opts = {}) => new Paragraph({
+        spacing: { after: opts.after ?? 120 },
+        children: [new TextRun({ text, bold: !!opts.bold, size: opts.size || 21, color: opts.color || '222222', font: FONT })],
+      })
+      const children = [
+        line(name, { bold: true, size: 40, color: '111111', after: 60 }),
+        ...contact.map(c => line(c, { size: 17, color: '555555', after: 40 })),
+        new Paragraph({ spacing: { after: 240 }, border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: 'DDDDDD' } }, children: [new TextRun({ text: '', font: FONT })] }),
+        line(date, { after: 240 }),
+        line(greeting, { after: 200 }),
+        ...paragraphs.map(p => line(p, { after: 200 })),
+        line('Sincerely,', { after: 300 }),
+        line(name, { bold: true, color: '111111', after: 0 }),
+      ]
+      const doc = new Document({ sections: [{ properties: { page: { margin: { top: 1300, right: 1440, bottom: 1300, left: 1440 } } }, children }] })
+      const buffer = await Packer.toBuffer(doc)
+      res.set({
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Disposition': 'attachment; filename="cover-letter.docx"',
+        'Content-Length': buffer.length,
+      })
+      return res.send(buffer)
+    } catch (error) {
+      console.error('Letter Word error:', error)
+      return res.status(500).json({ error: 'Failed to generate Word document. Please try again.' })
+    }
+  }
 
   try {
     const { header, bodyLines, isSection, isBullet, isRoleLine, isSkillLine, isTitleLine } = parseResume(resumeText)
@@ -3242,6 +3276,48 @@ app.post('/download-word', async (req, res) => {
 })
 
 // ── BUILD HTML for PDF
+// ── COVER LETTER DOCUMENT (A6) ─────────────────────────────────────────────
+//
+// The letter the student sees is body paragraphs only. A file they upload needs
+// to look like a letter: their name and contact lines (taken from the resume they
+// just optimized, so the two documents match), the date, a greeting, the body,
+// a sign-off. Same font as the resume download.
+function letterParts(resumeText, letterText, company) {
+  const { header } = parseResume(String(resumeText || ''))
+  const name = header[0] || ''
+  const contact = header.slice(1).filter(l => l.includes('|') || l.includes('@') || /\d{3}[-.\s]\d{3}/.test(l))
+  const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+  const greeting = company ? `Dear ${company} Hiring Team,` : 'Dear Hiring Team,'
+  const paragraphs = String(letterText || '').split(/\n\s*\n/).map(p => p.replace(/\s+/g, ' ').trim()).filter(Boolean)
+  return { name, contact, date, greeting, paragraphs }
+}
+
+function buildLetterHTML(resumeText, letterText, font, company) {
+  const cfg = { accent: ACCENT_CSS, rule: RULE_CSS, font: fontFor(font).css }
+  const { name, contact, date, greeting, paragraphs } = letterParts(resumeText, letterText, company)
+  let body = `<div style="padding-bottom:10pt;margin-bottom:18pt;border-bottom:1pt solid ${cfg.rule}">`
+  body += `<div style="font-size:20pt;font-weight:900;color:#111;letter-spacing:0.02em;text-transform:uppercase">${esc(name)}</div>`
+  for (const c of contact) body += `<div style="font-size:8.5pt;color:#555;margin-top:4pt">${esc(c)}</div>`
+  body += `</div>`
+  body += `<div style="font-size:10.5pt;color:#222;margin-bottom:14pt">${esc(date)}</div>`
+  body += `<div style="font-size:10.5pt;color:#222;margin-bottom:12pt">${esc(greeting)}</div>`
+  for (const p of paragraphs) body += `<div style="font-size:10.5pt;line-height:1.55;color:#222;margin-bottom:11pt">${esc(p)}</div>`
+  body += `<div style="font-size:10.5pt;color:#222;margin-top:16pt">Sincerely,</div>`
+  body += `<div style="font-size:10.5pt;font-weight:700;color:#111;margin-top:14pt">${esc(name)}</div>`
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  @page { size: letter; margin: 0.9in 1in; }
+  body { font-family: ${cfg.font}; color: #222; background: #fff; }
+</style>
+</head>
+<body>${body}</body>
+</html>`
+}
+
 function buildResumeHTML(resumeText, font, length) {
   const cfg       = { accent: ACCENT_CSS, rule: RULE_CSS, muted: MUTED_CSS, font: fontFor(font).css }
   const isCompact = length === 'concise'
@@ -3430,10 +3506,14 @@ async function renderPdfViaPdfShift(html) {
 }
 
 app.post('/download-pdf', async (req, res) => {
-  const { resumeText, font, length } = req.body
+  const { resumeText, font, length, kind, letterText, company } = req.body
   if (!resumeText) return res.status(400).json({ error: 'No resume text provided.' })
+  if (kind === 'letter' && !letterText) return res.status(400).json({ error: 'No letter text provided.' })
 
-  const html = buildResumeHTML(resumeText, font || 'calibri', length || 'standard')
+  const isLetter = kind === 'letter'
+  const html = isLetter
+    ? buildLetterHTML(resumeText, letterText, font || 'calibri', company)
+    : buildResumeHTML(resumeText, font || 'calibri', length || 'standard')
   let pdfBuffer = null
 
   try {
@@ -3453,7 +3533,7 @@ app.post('/download-pdf', async (req, res) => {
 
   res.set({
     'Content-Type': 'application/pdf',
-    'Content-Disposition': 'attachment; filename="optimized-resume.pdf"',
+    'Content-Disposition': `attachment; filename="${isLetter ? 'cover-letter' : 'optimized-resume'}.pdf"`,
     'Content-Length': pdfBuffer.length
   })
   res.send(pdfBuffer)
@@ -3461,7 +3541,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-09 A5 step 5a (droppedPhrases on /analyze, cache v8)'
+const SERVER_BUILD = '2026-09-10 A6 letter downloads (kind=letter on /download-word and /download-pdf)'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })
