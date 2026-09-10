@@ -2199,6 +2199,7 @@ Respond in this exact JSON format with no extra text:
 
     res.json({
       coverLetter: letter,
+      letterHtml: letterBodyHtml(facts, letter, 'times', company),
       wordCount: letter.split(/\s+/).filter(Boolean).length,
       strippedSkills: stripped,
     })
@@ -3427,6 +3428,29 @@ function letterParts(resumeText, letterText, company) {
   return { name, contact, date, greeting, paragraphs }
 }
 
+// Body-only render of the letter for the on-screen sheet, marked line by line like
+// the resume so the sheet can be edited and turned back into text. The letterhead,
+// date, greeting and sign-off are fixed lines (data-l="fixed"); only data-l="para"
+// lines are the letter body the student edits and that downloads as letterText.
+function letterBodyHtml(resumeText, letterText, font, company) {
+  const { name, contact, date, greeting, paragraphs } = letterParts(resumeText, letterText, company)
+  let b = `<div data-l="fixed" contenteditable="false" style="padding-bottom:10pt;margin-bottom:18pt;border-bottom:1pt solid ${RULE_CSS}">`
+  b += `<div style="font-size:20pt;font-weight:900;color:#111;letter-spacing:0.02em;text-transform:uppercase">${esc(name)}</div>`
+  for (const c of contact) b += `<div style="font-size:8.5pt;color:#555;margin-top:4pt">${esc(c)}</div>`
+  b += `</div>`
+  b += `<div data-l="fixed" contenteditable="false" style="font-size:10.5pt;color:#222;margin-bottom:14pt">${esc(date)}</div>`
+  b += `<div data-l="fixed" contenteditable="false" style="font-size:10.5pt;color:#222;margin-bottom:12pt">${esc(greeting)}</div>`
+  for (const p of paragraphs) b += `<div data-l="para" style="font-size:10.5pt;line-height:1.55;color:#222;margin-bottom:11pt">${esc(p)}</div>`
+  b += `<div data-l="fixed" contenteditable="false" style="font-size:10.5pt;color:#222;margin-top:16pt">Sincerely,</div>`
+  b += `<div data-l="fixed" contenteditable="false" style="font-size:10.5pt;font-weight:700;color:#111;margin-top:14pt">${esc(name)}</div>`
+  return b
+}
+app.post('/render-letter', (req, res) => {
+  const { resumeText, letterText, font, company } = req.body || {}
+  if (!resumeText || !letterText) return res.status(400).json({ error: 'Need resumeText and letterText.' })
+  res.json({ html: letterBodyHtml(String(resumeText), String(letterText), font || 'times', company || '') })
+})
+
 function buildLetterHTML(resumeText, letterText, font, company) {
   const cfg = { accent: ACCENT_CSS, rule: RULE_CSS, font: fontFor(font).css }
   const { name, contact, date, greeting, paragraphs } = letterParts(resumeText, letterText, company)
@@ -3689,7 +3713,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-10g rendered lines carry data-l so the sheet is editable'
+const SERVER_BUILD = '2026-09-10h letter renders as a sheet on screen (letterhead, date, greeting, sign-off)'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })

@@ -67,6 +67,13 @@ function sheetToText(root) {
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim()
 }
 
+// The letter sheet: only the paragraph lines are the letter; letterhead, date, greeting
+// and sign-off are re-created by the download from the resume, so they are not text.
+function letterSheetToText(root) {
+  if (!root) return ''
+  return [...root.querySelectorAll('[data-l="para"]')].map(el => (el.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n\n')
+}
+
 // Green marks on the skills that were tapped, amber on words the rewrite introduced.
 // Applied to the text runs of the rendered HTML, never inside a tag. The name and
 // section headers are left alone.
@@ -178,6 +185,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   const [docVersion, setDocVersion] = useState(0)    // remount the editable sheet when ✕/↩ change its text
   const [tab, setTab]               = useState('resume')   // resume | letter
   const [letter, setLetter]         = useState('')
+  const [letterHtml, setLetterHtml] = useState('')
   const [letterState, setLetterState] = useState('idle')  // idle | loading | ready | error
   const [copied, setCopied]         = useState(false)
   const letterRef = useRef(null)
@@ -444,6 +452,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       setDocVersion(v => v + 1)
       setTab('resume')
       setLetter('')
+      setLetterHtml('')
       setLetterState('idle')
       setPhase('result')
 
@@ -524,6 +533,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       if (!res.ok) throw new Error('cover letter failed')
       const d = await res.json()
       setLetter(d.coverLetter || '')
+      setLetterHtml(d.letterHtml || '')
       setLetterState('ready')
     } catch {
       setLetterState('error')
@@ -531,7 +541,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   }
   async function copyLetter() {
     try {
-      await navigator.clipboard.writeText(letterRef.current?.innerText || letter)
+      await navigator.clipboard.writeText(letterSheetToText(letterRef.current) || letter)
       setCopied(true)
       setTimeout(() => setCopied(false), 1600)
     } catch {}
@@ -588,7 +598,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
           resumeText: sheetToText(docRef.current) || optimized,
           font: DOC_FONT,
           length: 'standard',
-          ...(isLetter ? { kind: 'letter', letterText: letterRef.current?.innerText || letter, company: job.company || '' } : {}),
+          ...(isLetter ? { kind: 'letter', letterText: letterSheetToText(letterRef.current) || letter, company: job.company || '' } : {}),
         }),
       })
       if (!res.ok) { alert('Download failed. Please try again.'); return }
@@ -824,6 +834,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                   <button className={`om-tab ${tab === 'resume' ? 'on' : ''}`} onClick={() => setTab('resume')}><FileText size={12} />Optimized resume</button>
                   <button className={`om-tab ${tab === 'letter' ? 'on' : ''}`} onClick={openLetter}><PenLine size={12} />Cover letter</button>
                   {tab === 'resume' && <span className="om-tab-hint">Click anywhere to edit · <mark className="om-mark">green</mark> = skills you tapped · <mark className="om-mark-new">amber</mark> = wording the rewrite changed</span>}
+                  {tab === 'letter' && letterState === 'ready' && <span className="om-tab-hint">Click a paragraph to edit · letterhead and sign-off come from your resume</span>}
                 </div>
                 {tab === 'resume' ? (
                   html ? (
@@ -846,8 +857,8 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                     </div>
                   )
                 ) : (
-                  <div className="om-paper om-paper-letter">
-                    <div className="om-paper-h"><span>{letterState === 'ready' ? 'Click anywhere to edit' : 'Cover letter'}</span><span>Built only from your resume's facts</span></div>
+                  <div className={letterState === 'ready' && letterHtml ? '' : 'om-paper om-paper-letter'}>
+                    {!(letterState === 'ready' && letterHtml) && <div className="om-paper-h"><span>{letterState === 'ready' ? 'Click anywhere to edit' : 'Cover letter'}</span><span>Built only from your resume's facts</span></div>}
                     {letterState === 'loading' && (
                       <div className="om-load" style={{ padding: '36px 0' }}><div className="om-spin" /><div className="om-load-t">Writing your cover letter…</div><div className="om-load-s">From your resume's facts and the skills you tapped. Nothing else.</div></div>
                     )}
@@ -855,7 +866,9 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                       <div className="om-load" style={{ padding: '36px 0' }}><AlertCircle size={22} color="#DC2626" /><div className="om-load-t" style={{ marginTop: 8 }}>Couldn't write the letter</div><button className="om-closed-btn" onClick={() => { setLetterState('idle'); openLetter() }}>Try again</button></div>
                     )}
                     {letterState === 'ready' && (
-                      <pre ref={letterRef} className="om-resume om-letter" contentEditable suppressContentEditableWarning spellCheck={false}>{letter}</pre>
+                      letterHtml
+                        ? <div ref={letterRef} className="om-sheet om-letter-sheet" contentEditable suppressContentEditableWarning spellCheck={false} dangerouslySetInnerHTML={{ __html: letterHtml }} />
+                        : <pre ref={letterRef} className="om-resume om-letter" contentEditable suppressContentEditableWarning spellCheck={false}>{letter}</pre>
                     )}
                   </div>
                 )}
@@ -1096,6 +1109,8 @@ const CSS = `
 .om-tab-hint mark { font-size: 11px; }
 .om-sheet:focus { outline: 2px solid var(--blue3); outline-offset: 4px; }
 .om-sheet mark { font-family: inherit; }
+.om-letter-sheet [data-l="fixed"] { cursor: default; }
+.om-letter-sheet [data-l="para"]:hover { outline: 1px dashed var(--blue3); outline-offset: 3px; border-radius: 3px; }
 .om-sheet { background: #fff; border: 1px solid var(--line2); border-radius: 6px; box-shadow: 0 10px 30px rgba(0,0,0,.08); padding: 44px 52px; max-width: 820px; margin: 0 auto;
   font-family: ${DOC_FONT_CSS}; color: #222; font-size: 10.5pt; line-height: 1.4; }
 .om-paper { background: #fff; border: 1px solid var(--line2); border-radius: 10px; max-width: 820px; margin: 0 auto; overflow: hidden; }
