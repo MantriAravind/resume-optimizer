@@ -1089,3 +1089,55 @@ Observed, no action: years rule removed "5+ years" from the summary when the pos
 asked for 8+; amber marks are the rewrite's changed words (shipped design); junk
 line dropped "data security"/"GxP compliance" alongside real filler (visible, not hidden).
 Builds: server `2026-09-10 A6 letter downloads + confirmed skills always in skills section`.
+
+### Optimizer v2 — CLOSED 2026-09-10 (`9fc39e6` backend, `cc4ecdb` frontend)
+Three-step wizard live: Where you stand (ring, verdict, rows, posting-vs-you table) →
+Tell the truth (tools/practices grouped, projected bar with honest-max marker, junk
+line) → Your resume (sheet rendered by the PDF renderer, Edit text toggle, tabs,
+cards ✕/↩, What changed, Word/PDF for resume AND letter). Chrome inherits the site
+font; the document uses the resume font (Times until A7).
+Backend for it: keywordKinds, postingWork/resumeWork one-liners, optimizedHtml,
+changes[], POST /render-resume, "X models" dedupe (cache v10), summary keeps its
+original line shape (keepSummaryShape), build stamp 2026-09-10d.
+Reference: Jobright. Their wizard is cleaner; their output put Terraform in a NYL
+bullet the candidate never used. Their polish, our honesty. Their rendered layout
+looks like the classic single-column resume because most resumes are that layout.
+
+### A7 — YOUR LAYOUT IN, YOUR LAYOUT OUT (next build)
+The rule: whatever the uploaded resume looks like — section order, every line's
+alignment (left/center/right), indents, line breaks, bold/italic, font, color,
+links — the output looks the same with the text updated. No template, no opinion
+from us. Font is theirs when the PDF server has it (Times, Arial, Calibri, Cambria,
+Garamond, Georgia, Helvetica, Verdana); closest match + on-screen note otherwise.
+Jobright does NOT do this (it renders its own template); this is where we pass them.
+
+Facts that make it buildable:
+- A PDF carries the position of every word, the font name per run ("Calibri-Bold"),
+  the fill color, and link annotations with their URLs. All readable.
+- The original file is already kept at upload (User.resumeFile, pending/saved).
+- The optimizer already preserves section order and bullet count, so output lines
+  map back to input lines nearly one-to-one.
+What stays out of reach for PDFs (for everyone): two-column layouts, tables,
+icons/graphics. Detect and say so; do not pretend.
+
+Build steps (each verified before the next; probes first, UI last):
+- [ ] A7-1 Position-aware PDF reader at upload (pdf.js). Per line: text, x/y,
+      alignment, indent, font family, bold, italic, size, color, link URL. Stored as
+      `layout[]` beside resumeText. Verified on own resume: every line's alignment
+      and font correct in a printed dump.
+- [ ] A7-2 Word reader at upload: same `layout[]` from .docx paragraphs (mammoth or
+      raw XML). Keep the .docx.
+- [ ] A7-3 Line mapping: optimized text lines ↔ original lines (by section + order;
+      new lines inherit the layout of the line they follow). Unit-tested on a real
+      optimize output.
+- [ ] A7-4 Renderer honors `layout[]`: alignment, indents, breaks, bold/italic,
+      font (with fallback + note), color, links. Same renderer for sheet, PDF, Word.
+- [ ] A7-5 Word in-place edit: for .docx uploads, new text written into the original
+      file's paragraphs — their file, updated. Download = their .docx.
+- [ ] A7-6 Detect unpreservable layouts (columns, tables, images); show a plain
+      note and fall back to the current clean layout.
+- [ ] A7-7 Verify: own resume as PDF and as Word — output matches input except font
+      (PDF) / exactly (Word). Then three other real resumes with different layouts.
+- [ ] A7-8 Checklist + push.
+Order: A7-1 → A7-4 → A7-7 (PDF path, most students) → A7-2 → A7-5 → A7-6.
+Estimate: multi-day. Start fresh, not at the end of a long session.
