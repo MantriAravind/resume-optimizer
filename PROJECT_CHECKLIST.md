@@ -1141,3 +1141,24 @@ Build steps (each verified before the next; probes first, UI last):
 - [ ] A7-8 Checklist + push.
 Order: A7-1 → A7-4 → A7-7 (PDF path, most students) → A7-2 → A7-5 → A7-6.
 Estimate: multi-day. Start fresh, not at the end of a long session.
+
+### 2026-09-10 afternoon — v2 refinements (all live)
+- SCORING LAW CHANGED: keywords 60 · core role 30 · years 10. Bullet relevance
+  dropped — the only model-judged row, wobbled ±1 between runs, not checkable by
+  the student against their document, capped a true match at 93. Now: same role +
+  years met + all keywords tapped = 100; different role → ceiling 70; years short → 90.
+  Weights are a judgment (no ATS publishes a formula); values inside are facts.
+- Placement location read from the DOCUMENT (locateFragment): company line under
+  EXPERIENCE, project title under PROJECTS. Model's "employer" label was wrong once
+  ("New York Life" for a project bullet) and is now a fallback only.
+- The rendered sheet IS the editor: no edit toggle. Every rendered line carries
+  data-l (name|line|bullet|section|blank); sheetToText() turns the edited sheet back
+  into resume text for downloads, ✕, and the letter. Green marks = tapped skills,
+  amber = wording the rewrite changed. textContent, not innerText (uppercase CSS).
+- Cover letter tab renders the full letter sheet (letterhead, date, greeting, body,
+  sign-off) exactly as the PDF; fixed lines locked; paragraphs editable and read back.
+- Summary keeps its original line shape; wizard chrome inherits the site font.
+- Builds: server 2026-09-10h; frontend at the last push.
+
+Tonight: A7 (see plan above). PDF path first: A7-1 → A7-4 → A7-7.
+Upload: backend/server.js, backend/package.json, own resume as PDF, PROJECT_CHECKLIST.md.
