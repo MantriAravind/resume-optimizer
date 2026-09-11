@@ -6,6 +6,8 @@ import OpenAI from 'openai'
 import { CATEGORIES, categorizeJob } from './jobCategory.mjs'
 import multer from 'multer'
 import { extractText, assessExtraction } from './resumeExtract.mjs'
+import { readPdfLayout } from './pdfLayout.mjs'
+import { renderWithLayout, buildLayoutPage, layoutSheetCss } from './layoutRender.mjs'
 import mongoose from 'mongoose'
 import crypto from 'crypto'
 import { Document, Packer, Paragraph, TextRun, AlignmentType, LevelFormat, BorderStyle } from 'docx'
@@ -298,6 +300,11 @@ const userSchema = new mongoose.Schema({
     size:       { type: Number, default: 0 },
     uploadedAt: { type: Date },
   },
+  // A7: the resume's own layout, read from the PDF at upload (pdfLayout.mjs). Lines
+  // with alignment, indents, font, bold/italic, size, links. Follows the file:
+  // pending until the profile is confirmed, then promoted.
+  resumeLayout:        { type: mongoose.Schema.Types.Mixed },
+  pendingResumeLayout: { type: mongoose.Schema.Types.Mixed },
 
   // Read out of the resume by Haiku at upload time, not on every page load.
   // Every one of these may be empty — a resume states some and not others.
@@ -640,6 +647,7 @@ app.get('/me/resume', requireUser, async (req, res) => {
       resumeText:     user?.resumeText     || '',
       resumeFileName: user?.resumeFileName || '',
       hasResumeFile:  Boolean(user?.resumeFile?.size),
+      resumeLayout:   user?.resumeLayout || null,
       updatedAt:      user?.updatedAt      || null,
       // The board reads profile.field from here to decide which jobs to show, so
       // it must come back on the same call the resume gate already makes — a
@@ -1692,7 +1700,7 @@ function appendToSkills(out, skills, skillsHeader) {
 }
 
 app.post('/optimize', async (req, res) => {
-  const { resumeText, jobText, confirmedSkills = [], jobTitle = '', yearsMin = null } = req.body
+  const { resumeText, jobText, confirmedSkills = [], jobTitle = '', yearsMin = null, resumeLayout = null } = req.body
   if (!resumeText || !jobText) {
     return res.status(400).json({ error: 'Please provide both resume text and job description.' })
   }
@@ -2071,7 +2079,8 @@ Respond in this exact JSON format with no extra text:
       placements,
       // v2 modal: the sheet is rendered by the same code the PDF uses, so what the
       // student sees on screen is what downloads. Body markup only.
-      optimizedHtml: resumeBodyHtml(out, 'times'),
+      optimizedHtml: resumeLayout ? renderWithLayout(out, resumeLayout).body : resumeBodyHtml(out, 'times'),
+      sheet: resumeLayout ? layoutSheetCss(resumeLayout) : null,
       changes: Array.isArray(parsed.changes) ? parsed.changes.map(c => String(c).trim()).filter(Boolean).slice(0, 5) : [],
     })
   } catch (error) {
@@ -2334,6 +2343,14 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
       const { text, pages, method } = await extractText(req.file.buffer, req.file.originalname)
       const assessment = assessExtraction(text)
 
+      // A7: layout beside the text. PDF only for now; a failure here never blocks the
+      // upload — the resume then renders in the default layout.
+      let layout = null
+      if (/\.pdf$/i.test(req.file.originalname || '') || req.file.mimetype === 'application/pdf') {
+        try { layout = await readPdfLayout(req.file.buffer) } catch (e) { console.warn('pdf layout read failed:', e.message) }
+      }
+      await User.updateOne({ clerkUserId: req.userId }, layout ? { $set: { pendingResumeLayout: layout } } : { $unset: { pendingResumeLayout: 1 } })
+
       // No text at all, or barely any. Returned as 200 with a status the client can
       // act on — this is an expected outcome for a scanned PDF, not a server error.
       if (assessment.status === 'empty' || assessment.status === 'short') {
@@ -2502,14 +2519,17 @@ app.post('/me/profile', requireUser, async (req, res) => {
       .lean()
     const parked = pending?.pendingResumeFile
     if (fileName && parked?.data && parked.name === fileName) {
+      const pl = await User.findOne({ clerkUserId: req.userId }).select('pendingResumeLayout').lean()
+      const setDoc = { resumeFile: parked }
+      if (pl?.pendingResumeLayout) setDoc.resumeLayout = pl.pendingResumeLayout
       await User.updateOne(
         { clerkUserId: req.userId },
-        { $set: { resumeFile: parked }, $unset: { pendingResumeFile: 1 } },
+        { $set: setDoc, $unset: { pendingResumeFile: 1, pendingResumeLayout: 1, ...(pl?.pendingResumeLayout ? {} : { resumeLayout: 1 }) } },
       )
     } else {
       await User.updateOne(
         { clerkUserId: req.userId },
-        { $unset: { resumeFile: 1, pendingResumeFile: 1 } },
+        { $unset: { resumeFile: 1, pendingResumeFile: 1, resumeLayout: 1, pendingResumeLayout: 1 } },
       )
     }
 
@@ -3485,8 +3505,9 @@ function resumeBodyHtml(resumeText, font) {
 }
 // Re-render on demand: the student edits the text, the sheet re-renders from it.
 app.post('/render-resume', (req, res) => {
-  const { resumeText, font } = req.body || {}
+  const { resumeText, font, resumeLayout } = req.body || {}
   if (!resumeText) return res.status(400).json({ error: 'No resume text provided.' })
+  if (resumeLayout) return res.json({ html: renderWithLayout(String(resumeText), resumeLayout).body, sheet: layoutSheetCss(resumeLayout) })
   res.json({ html: resumeBodyHtml(String(resumeText), font || 'times') })
 })
 
@@ -3685,7 +3706,7 @@ app.post('/download-pdf', async (req, res) => {
   const isLetter = kind === 'letter'
   const html = isLetter
     ? buildLetterHTML(resumeText, letterText, font || 'calibri', company)
-    : buildResumeHTML(resumeText, font || 'calibri', length || 'standard')
+    : (req.body.resumeLayout ? buildLayoutPage(resumeText, req.body.resumeLayout) : buildResumeHTML(resumeText, font || 'calibri', length || 'standard'))
   let pdfBuffer = null
 
   try {
@@ -3713,7 +3734,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-10h letter renders as a sheet on screen (letterhead, date, greeting, sign-off)'
+const SERVER_BUILD = '2026-09-11 A7: layout read at upload; sheet + PDF rendered in the resume\'s own layout'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
-})
+})

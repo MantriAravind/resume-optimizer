@@ -159,6 +159,8 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   const [error, setError]   = useState('')
 
   const [resumeText, setResumeText] = useState('')
+  const [resumeLayout, setResumeLayout] = useState(null)   // A7: the resume's own layout, from the PDF
+  const [sheetStyle, setSheetStyle]     = useState(null)   // { fontFamily, family, fontKnown, page }
   const [jobText, setJobText]       = useState('')
 
   const [matched, setMatched]   = useState([])
@@ -360,6 +362,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
         const resume = me.resumeText
         const jd = full.description || job.description || ''
         setResumeText(resume)
+        setResumeLayout(me.resumeLayout || null)
         setJobText(jd)
 
         const aRes = await fetch(`${BACKEND}/analyze`, {
@@ -437,6 +440,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
           missingKeywords: missing,
           jobTitle: job.title || '',  // same key as /analyze, so the rubric inputs are a cache hit
           yearsMin: job.yearsMin ?? null,
+          resumeLayout,               // A7: render in the resume's own layout when we have it
         }),
       })
       if (!res.ok) throw new Error('optimize failed')
@@ -447,6 +451,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       setFeedback(d.feedback || '')
       setPlacements(Array.isArray(d.placements) ? d.placements : [])
       setHtml(d.optimizedHtml || '')
+      setSheetStyle(d.sheet || null)
       setChanges(Array.isArray(d.changes) ? d.changes : [])
       setRemoved({})
       setDocVersion(v => v + 1)
@@ -499,7 +504,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   // The formatted sheet is server-rendered from text, so any text change re-renders it.
   async function rerender(text) {
     try {
-      const res = await fetch(`${BACKEND}/render-resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resumeText: text, font: DOC_FONT }) })
+      const res = await fetch(`${BACKEND}/render-resume`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ resumeText: text, font: DOC_FONT, resumeLayout }) })
       if (res.ok) { const d = await res.json(); setHtml(d.html || '') }
     } catch {}
   }
@@ -598,6 +603,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
           resumeText: sheetToText(docRef.current) || optimized,
           font: DOC_FONT,
           length: 'standard',
+          ...(tab === 'letter' ? {} : { resumeLayout }),
           ...(isLetter ? { kind: 'letter', letterText: letterSheetToText(letterRef.current) || letter, company: job.company || '' } : {}),
         }),
       })
@@ -833,7 +839,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                 <div className="om-tabs">
                   <button className={`om-tab ${tab === 'resume' ? 'on' : ''}`} onClick={() => setTab('resume')}><FileText size={12} />Optimized resume</button>
                   <button className={`om-tab ${tab === 'letter' ? 'on' : ''}`} onClick={openLetter}><PenLine size={12} />Cover letter</button>
-                  {tab === 'resume' && <span className="om-tab-hint">Click anywhere to edit · <mark className="om-mark">green</mark> = skills you tapped · <mark className="om-mark-new">amber</mark> = wording the rewrite changed</span>}
+                  {tab === 'resume' && <span className="om-tab-hint">{sheetStyle ? (sheetStyle.fontKnown ? `Your layout, your font (${sheetStyle.family}) · ` : `Your layout · ${sheetStyle.family} isn't available here, closest match shown · `) : ''}Click anywhere to edit · <mark className="om-mark">green</mark> = skills you tapped · <mark className="om-mark-new">amber</mark> = wording the rewrite changed</span>}
                   {tab === 'letter' && letterState === 'ready' && <span className="om-tab-hint">Click a paragraph to edit · letterhead and sign-off come from your resume</span>}
                 </div>
                 {tab === 'resume' ? (
@@ -843,6 +849,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                       key={docVersion}
                       ref={docRef}
                       className="om-sheet"
+                      style={sheetStyle ? { fontFamily: sheetStyle.fontFamily, padding: `${sheetStyle.page.top}pt ${sheetStyle.page.right}pt 48pt ${sheetStyle.page.left}pt`, maxWidth: `${sheetStyle.page.width}pt` } : undefined}
                       contentEditable
                       suppressContentEditableWarning
                       spellCheck={false}
