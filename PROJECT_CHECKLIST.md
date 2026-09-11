@@ -1162,3 +1162,45 @@ Estimate: multi-day. Start fresh, not at the end of a long session.
 
 Tonight: A7 (see plan above). PDF path first: A7-1 → A7-4 → A7-7.
 Upload: backend/server.js, backend/package.json, own resume as PDF, PROJECT_CHECKLIST.md.
+
+### A7 — 2026-09-10 night / 09-11: PDF path built, then the approach changed
+Built and pushed (fallback layout from now on):
+- backend/pdfLayout.mjs: position-aware PDF reader (pdfjs-dist 5 via pdf-parse). Per
+  line: text, align (left/center/right/split), indent, font family (Liberation→Times/
+  Arial mapping), bold/italic, size, colour, links per run, drawn rules (path bbox:
+  wide + <3pt tall) attached above a header or below a line, page furniture, page
+  metrics. Margin = leftmost x shared by ≥3 lines (NOT the mode: bullet-heavy resumes
+  broke that). Verified line-by-line on two real resumes (Arial and Century Gothic).
+- backend/layoutRender.mjs: style profile from the layout (name, header lines,
+  section, company left/right, bullet glyph+indent+hang, skill label/value, para,
+  rhythm) → same data-l markup as the default renderer; split lines re-split on the
+  original's right text; links wrapped on exact runs; rules as borders.
+- server: layout read at upload (pendingResumeLayout → resumeLayout on confirm),
+  /me/resume returns it, /optimize + /render-resume + /download-pdf honour it, modal
+  passes it through and styles the sheet with the resume's font (substitution noted).
+- Rule 11b: date lines are copied verbatim — gate check + code restore
+  (restoreDateLines); dash gate exempts date ranges. The rewrite had moved
+  "Jan 2024 – Present" onto the company line and turned the en dash into a hyphen.
+- Skill labels rendered inline with a space; tab-aligned labels keep their column.
+Result on the Century Gothic resume: structure, header, bullets, rules, links right;
+fonts substituted; wrapping differs. Good fallback, not "looks like their PDF".
+
+DECISION 2026-09-11 (Aravind, after a developer friend's handoff doc — kept as
+Optyply_PDF_Layout_Preservation_Implementation_Guide.docx): move to the SURGICAL
+approach. The student's PDF is the template; replace text inside its boxes; touch
+nothing else. Fit rule: rewritten text must fit its original box in its original
+font, shorten until it does, never shrink the font. Adapted: run MuPDF inside Node
+(`mupdf` npm, WASM) instead of a Python service; the on-screen sheet becomes an image
+of the real optimized PDF; HTML sheet stays for editing and as the fallback renderer.
+
+- [ ] A7-S1 PROBE: mupdf in Node on own PDF — blocks with fonts/boxes; redact one
+      bullet; insert new text in its box with its font; save; open. Lines, margins,
+      links untouched? This is the bet; prove it before anything else.
+- [ ] A7-S2 Compatibility check (text-based, not locked, fonts readable, ≤2 columns);
+      else fallback + plain message.
+- [ ] A7-S3 Block extraction → JSON at upload, beside the file.
+- [ ] A7-S4 Per-block optimizer with the fit rule (measure in the original font).
+- [ ] A7-S5 Replacement on a copy; re-add link annotations over replaced linked text.
+- [ ] A7-S6 QA: page count, no overlap, nothing outside margins, links present.
+- [ ] A7-S7 Modal: PDF image as the sheet; Edit text → re-run; Word from the blocks.
+- [ ] A7-S8 Test: own resume, then five others. Estimate 5–7 working days.
