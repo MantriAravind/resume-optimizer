@@ -1204,3 +1204,21 @@ of the real optimized PDF; HTML sheet stays for editing and as the fallback rend
 - [ ] A7-S6 QA: page count, no overlap, nothing outside margins, links present.
 - [ ] A7-S7 Modal: PDF image as the sheet; Edit text → re-run; Word from the blocks.
 - [ ] A7-S8 Test: own resume, then five others. Estimate 5–7 working days.
+
+### A7-S1 DONE — 2026-09-11 (surgical probe proven on own resume)
+`backend/surgicalProbe.mjs` + `mupdf` npm (WASM, runs in Node — no Python service).
+What it proved on RESUME_ARAVIND MANTRI.pdf (Word export, Century Gothic subset):
+- structured text gives every fragment with font name, size, box; Word chops a visual
+  line into ~4 fragments → group by baseline (same y within h/3) into visual lines;
+  a lone bullet glyph is left out of the group and stays on the page
+- redact with an INSET box (middle 60% of line height) — MuPDF erases any glyph the
+  box touches, so a padded box ate the neighbour's tail
+- write text via addStream + Contents array, wrapped q…Q around the original content;
+  baseline point mapped through the INVERSE of page.getTransform() (no y arithmetic)
+- reuse the page's own embedded font resource (/F3 CenturyGothic subset) → new text
+  rendered in Century Gothic; the subset had every needed glyph
+- links (2) survived; rules, bold labels, blue links, wrapped tails all untouched
+- pitfall: PDF text extraction lists our stream LAST (drawing order) — judge by the
+  rendered PNG, not the extracted text order
+Tune later: use the exact font size (7.6, not the rounded 7); justification optional.
+Next: A7-S2 compatibility check, A7-S3 blocks stored at upload, A7-S4 fit rule.
