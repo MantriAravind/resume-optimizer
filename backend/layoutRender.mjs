@@ -85,6 +85,9 @@ export function buildProfile(layout) {
     const l = body.find(x => x.kindHint === k)
     if (l) kinds[k] = pick(l)
   }
+  const secL = body.find(x => x.kindHint === 'section')
+  if (secL) kinds.section.rule = secL.rule ? (secL.rule.side || 'below') : null
+  const linkColor = lines.find(l => (l.links || []).length && l.color)?.color || '#1155cc'
   const bul = body.find(x => x.kindHint === 'bullet')
   if (bul) { kinds.bullet.glyph = (bul.text.match(BULLET_RE) || [, '•'])[1]; kinds.bullet.hang = bul.hang ?? (bul.indent + Math.round(bodySize * 1.2)) }
   const sk = body.find(x => x.kindHint === 'skill')
@@ -111,7 +114,8 @@ export function buildProfile(layout) {
     family, fontKnown: KNOWN_FONTS.has(family),
     page: layout.page || { width: 612, height: 792, left: 54, right: 54, top: 54 },
     bodySize,
-    header: header.map(pick),
+    header: header.map(h => ({ ...pick(h), links: h.links || [], color: h.color || null, rule: h.rule ? (h.rule.side || 'below') : null })),
+    linkColor,
     kinds, rhythm,
     originals: lines,   // for text matching at render time
   }
@@ -126,6 +130,16 @@ function css(st, extra = '') {
   if (st.align === 'center') parts.push('text-align:center')
   if (st.align === 'right') parts.push('text-align:right')
   return parts.join(';') + (extra ? ';' + extra : '')
+}
+// Wrap each linked run's exact text in an <a>, coloured as in the original.
+function withLinks(escapedLine, links, color) {
+  let out = escapedLine
+  for (const l of links || []) {
+    const t = esc(l.text)
+    if (!t || !out.includes(t)) continue
+    out = out.replace(t, `<a href="${esc(l.url)}" style="color:${color};text-decoration:none">${t}</a>`)
+  }
+  return out
 }
 function fontStack(family) { return FONT_CSS[family] || `${JSON.stringify(family)}, Arial, sans-serif` }
 
@@ -162,7 +176,10 @@ export function renderWithLayout(optimizedText, layout) {
     if (!headerDone && !isSection) {
       const st = P.header[Math.min(headerIdx, P.header.length - 1)] || { size: P.bodySize, align: 'left' }
       const kind = headerIdx === 0 ? 'name' : 'line'
-      out += `<div data-l="${kind}" style="${css(st)};line-height:${lh};color:#111">${esc(line)}</div>`
+      const origH = P.originals[headerIdx]
+      const links = origH && sim(origH.text, line) >= 0.6 ? (origH.links || []) : []
+      const ruleCss = st.rule === 'below' ? `;padding-bottom:2pt;border-bottom:0.8pt solid #111` : st.rule === 'above' ? `;padding-top:2pt;border-top:0.8pt solid #111` : ''
+      out += `<div data-l="${kind}" style="${css(st)};line-height:${lh};color:#111${ruleCss}">${withLinks(esc(line), links, P.linkColor)}</div>`
       headerIdx++
       continue
     }
@@ -171,7 +188,8 @@ export function renderWithLayout(optimizedText, layout) {
     if (isSection) {
       section = line.replace(/[:：]\s*$/, '').toUpperCase()
       const st = K.section || { size: P.bodySize + 1, bold: true, align: 'left', indent: 0 }
-      out += `<div data-l="section" style="${css(st, pad(st.indent))};${gapTop('section')};margin-bottom:${Math.round(P.bodySize * 0.35)}pt;line-height:${lh};color:#111">${esc(line)}</div>`
+      const ruleCss = st.rule === 'below' ? `;padding-bottom:1.5pt;border-bottom:0.8pt solid #111` : st.rule === 'above' ? `;padding-top:2pt;border-top:0.8pt solid #111` : ''
+      out += `<div data-l="section" style="${css(st, pad(st.indent))};${gapTop('section')};margin-bottom:${Math.round(P.bodySize * 0.35)}pt;line-height:${lh};color:#111${ruleCss}">${esc(line)}</div>`
       prevKind = 'section'; continue
     }
 
@@ -187,9 +205,16 @@ export function renderWithLayout(optimizedText, layout) {
     // skill line "Label: values" inside a skills-ish section, or anywhere the profile has skill lines
     const skm = line.match(/^([A-Za-z][A-Za-z0-9 &/+\-().]{1,48}):\s+(\S.*)$/)
     if (skm && (/(SKILL|COMPETENC|PROFICIENC|TECHNOLOG)/.test(section) || K.skill)) {
-      const st = K.skill || { size: P.bodySize, indent: 0, valueIndent: 100, labelBold: true }
-      const vi = st.valueIndent || 100
-      out += `<div data-l="line" style="${css({ ...st, bold: false })};line-height:${lh};color:#222;display:flex;margin-top:${Math.round(P.rhythm.skill || 1)}pt;padding-left:${st.indent}pt"><span style="flex:0 0 ${vi - st.indent}pt;${st.labelBold ? 'font-weight:700' : ''};color:#111">${esc(skm[1])}:</span><span style="flex:1;${st.valueBold ? 'font-weight:700' : ''}">${esc(skm[2])}</span></div>`
+      if (K.skill && K.skill.valueIndent) {
+        // Tab-aligned labels in the original: keep the column.
+        const st = K.skill, vi = st.valueIndent
+        out += `<div data-l="line" style="${css({ ...st, bold: false })};line-height:${lh};color:#222;display:flex;margin-top:${Math.round(P.rhythm.skill || 1)}pt;padding-left:${st.indent}pt"><span style="flex:0 0 ${vi - st.indent}pt;${st.labelBold ? 'font-weight:700' : ''};color:#111">${esc(skm[1])}: </span><span style="flex:1;${st.valueBold ? 'font-weight:700' : ''}">${esc(skm[2])}</span></div>`
+      } else {
+        // Inline "Label: value" — bold label (as the original's first run), plain value.
+        const o = findOriginal(line, null)
+        const st = o ? pick(o) : (K.para || { size: P.bodySize, indent: 0, align: 'left' })
+        out += `<div data-l="line" style="${css({ ...st, bold: false }, pad(st.indent))};line-height:${lh};color:#222;margin-top:${Math.round(P.rhythm.para || 1)}pt"><span style="font-weight:700;color:#111">${esc(skm[1])}:</span> ${esc(skm[2])}</div>`
+      }
       prevKind = 'skill'; continue
     }
 
@@ -214,7 +239,8 @@ export function renderWithLayout(optimizedText, layout) {
       // (handled above when matched as company) — fallthrough for odd cases
     }
     const kindLabel = 'line'
-    out += `<div data-l="${kindLabel}" style="${css(st, pad(st.indent))};line-height:${lh};color:#222;margin-top:${prevKind === 'section' ? 0 : Math.round(P.rhythm.para || 1)}pt">${esc(line)}</div>`
+    const links = o2 ? (o2.links || []) : []
+    out += `<div data-l="${kindLabel}" style="${css(st, pad(st.indent))};line-height:${lh};color:#222;margin-top:${prevKind === 'section' ? 0 : Math.round(P.rhythm.para || 1)}pt">${withLinks(esc(line), links, P.linkColor)}</div>`
     prevKind = 'para'
   }
   return { body: out, profile: P }

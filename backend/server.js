@@ -1139,9 +1139,50 @@ const GATE_STOPWORDS = new Set('a an and the to of in for with on at by from int
 
 // Em-dash, en-dash, or double hyphen anywhere in the resume body. A correct
 // certification line uses a plain hyphen "-", which is NOT one of these.
+// ── DATE LINES ARE COPIED, NEVER RESTRUCTURED (A7) ────────────────────────
+//
+// The rewrite moved "Jan 2024 – Present" from the title line onto the company line
+// and turned the en dash into a hyphen. Neither is its job: employers, titles,
+// locations and dates are the student's facts in the student's format. Every
+// original line that carries a date range must reappear verbatim; if the model
+// still moves one, code puts it back where it was.
+const DATE_RANGE_RE = /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(?:19|20)\d{2}\s*[–—-]\s*(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+)?(?:(?:19|20)\d{2}|present|current|now)\b|\b(?:19|20)\d{2}\s*[–—-]\s*(?:(?:19|20)\d{2}|present|current)\b/i
+function dateLines(text) {
+  return String(text || '').split('\n').map(l => l.trim()).filter(l => l && DATE_RANGE_RE.test(l) && l.length < 160)
+}
+function movedDateLines(out, original) {
+  const have = new Set(String(out || '').split('\n').map(l => l.trim()))
+  return dateLines(original).filter(l => !have.has(l))
+}
+// Put a moved/altered date line back. Finds the output line that is the same line
+// minus the date range (the title or company text), replaces it with the original,
+// and removes the date range from a neighbouring line it was moved onto.
+function restoreDateLines(out, original) {
+  let lines = String(out || '').split('\n')
+  for (const L of movedDateLines(out, original)) {
+    const range = (L.match(DATE_RANGE_RE) || [''])[0]
+    const stem = L.replace(DATE_RANGE_RE, '').replace(/[\s|,–—-]+$/, '').replace(/^[\s|,–—-]+/, '').trim()
+    if (!stem) continue
+    const stemN = stem.toLowerCase()
+    let idx = lines.findIndex(l => { const t = l.trim().toLowerCase(); return t === stemN || t.startsWith(stemN + ' ') || t.startsWith(stemN + ' |') || t === stemN.replace(/\s*\|.*$/, '') })
+    if (idx === -1) idx = lines.findIndex(l => l.toLowerCase().includes(stemN))
+    if (idx === -1) continue
+    lines[idx] = L
+    // the range usually got appended to the next or previous line: strip it there
+    for (const j of [idx + 1, idx - 1]) {
+      if (j < 0 || j >= lines.length || j === idx) continue
+      if (DATE_RANGE_RE.test(lines[j]) && !dateLines(original).includes(lines[j].trim())) {
+        lines[j] = lines[j].replace(new RegExp('\\s*[|,–—-]?\\s*' + range.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/[–—-]/g, '[–—-]'), 'i'), '').replace(/\s*\|\s*$/, '').trimEnd()
+      }
+    }
+  }
+  return lines.join('\n')
+}
+
 function findBannedDashes(text) {
   const hits = []
   for (const line of String(text).split('\n')) {
+    if (DATE_RANGE_RE.test(line)) continue   // "Jan 2024 – Present" keeps its dash
     if (/[\u2014\u2013]|--/.test(line)) hits.push(line.trim())
   }
   return hits
@@ -1874,6 +1915,9 @@ ${resumeText}
 Job Description:
 ${jobText}
 
+═══ RULE 11b — DATE LINES ARE COPIED, NOT EDITED ═══
+Every line of the original that contains a date or date range (a job title with dates, a company line with dates, a degree line with a date) is copied character for character: same line, same order, same dash, same spacing. Never move a date from one line to another. Never reformat "Jan 2024 – Present".
+
 ═══ RULE 12 — REPORT EVERY PLACEMENT, EXACTLY ═══
 For EACH confirmed skill, one entry in "placements". If it went into a bullet: "where" is "bullet", "employer" is the company name of that role exactly as written, and "fragment" is the exact clause you added to that bullet, copied character for character from your own optimizedResume (so it can be found there and removed if the candidate disagrees). If it went into the skills section only: "where" is "skills", and "fragment" is the skill as you wrote it in the skills line. A skill placed in both gets ONE entry, the bullet one. Never report a placement you did not actually make.
 
@@ -1929,8 +1973,9 @@ Respond in this exact JSON format with no extra text:
       // violation like any other.
       const outFlat = flattenForMatch(out)
       const dropped7 = confirmed.filter(k => !resumeHas(outFlat, k))
+      const movedDates = movedDateLines(out, resumeText)
       if (!invented.length && !dashes.length && !pastT.length && !stray.length && !newSecs.length && !lost
-          && !sumCut && !envGone.length && !certs.length && !merged.length && !dropped7.length) break
+          && !sumCut && !envGone.length && !certs.length && !merged.length && !dropped7.length && !movedDates.length) break
       if (attempt === LAST_ATTEMPT) {
         if (invented.length) gateNote = ' (Please review the experience section: one or more bullets may describe work not in your original resume.)'
         // Last resort: strip it. A fabricated paragraph reaching a student's resume is
@@ -2018,6 +2063,9 @@ Respond in this exact JSON format with no extra text:
       if (merged.length) {
         corrections += '\nMERGED BULLETS. These lines contain two bullets joined with no line break:\n' + merged.map(l => '  - "' + l + '"').join('\n') + '\nPut each bullet on its own line.\n'
       }
+      if (movedDates.length) {
+        corrections += '\nDATE LINES CHANGED. These lines from the original carry dates and must appear EXACTLY as written, same line, same order, same dash character:\n' + movedDates.map(l => '  - "' + l + '"').join('\n') + '\nDo not move a date onto another line or change its punctuation.\n'
+      }
       if (dropped7.length) {
         corrections += '\nDROPPED CONFIRMED SKILLS. The candidate confirmed these and your draft does not contain them anywhere:\n' + dropped7.map(k => '  - "' + k + '"').join('\n') + '\nEach one must appear: reframe an existing bullet if the candidate\'s own work supports it, otherwise add it to the fitting category line in the skills section. Report each in "placements".\n'
       }
@@ -2040,6 +2088,9 @@ Respond in this exact JSON format with no extra text:
     // skill the model left out of it: a plain string append to the student's own
     // category line, the same last resort Rule 7 already uses.
     out = keepSummaryShape(out, resumeText)
+    // Dates back where the student put them, every time, model cooperation or not.
+    const movedFinal = movedDateLines(out, resumeText)
+    if (movedFinal.length) { out = restoreDateLines(out, resumeText); console.warn('optimize: restored ' + movedFinal.length + ' date line(s) by code') }
 
     const notInSkills = confirmed.filter(k => !resumeHas(flattenForMatch(skillsSectionText(out, skillsHeader)), k))
     if (notInSkills.length) {
@@ -3734,7 +3785,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-11 A7: layout read at upload; sheet + PDF rendered in the resume\'s own layout'
+const SERVER_BUILD = '2026-09-11b A7: date lines copied verbatim (gate + restore), dash gate exempts dates'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })
