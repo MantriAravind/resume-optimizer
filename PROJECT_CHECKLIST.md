@@ -1222,3 +1222,38 @@ What it proved on RESUME_ARAVIND MANTRI.pdf (Word export, Century Gothic subset)
   rendered PNG, not the extracted text order
 Tune later: use the exact font size (7.6, not the rounded 7); justification optional.
 Next: A7-S2 compatibility check, A7-S3 blocks stored at upload, A7-S4 fit rule.
+
+### A7-S2 DONE (code) — 2026-09-11 — pending local verify + push
+`backend/pdfCompat.mjs` (mupdf, sync, no model call) + server hooks: import,
+schema `resumeCompat`/`pendingResumeCompat`, upload runs `checkPdfCompat(buffer)`
+beside `readPdfLayout`, promoted on profile confirm with the file, returned by
+`/me/resume`, upload response carries `{ mode, reason, message }`.
+Gates in order: text-based (≥200 chars) → not locked (password OR edit permission
+withheld) → fonts writable → ≤1 column (≥5 rows on a page with two runs each ≥25%
+of page width, runs split at an 18pt gap; date split lines are ~14% wide, safe).
+FINDING that changed the plan: Word/Docs/LaTeX embed SUBSET fonts. Own resume:
+regular Century Gothic has no J U X Z ' : ; ? & – ; bold has no 5 6 7 8 9 ( ) / %.
+S1's "subset had every needed glyph" was true for that one line only. A rewrite
+hitting a missing glyph renders nothing. So "fonts readable" became "fonts
+WRITABLE": a font passes if we ship a substitute for its family OR its embedded
+subset covers the working set (A–Z a–z 0–9 . , ; : ' " - – ( ) / & % +) AND its
+encoding is WinAnsi/Standard/MacRoman (custom-ordered encodings — reportlab,
+some Docs exports — cannot be reused even with full Widths).
+DECISION B (2026-09-11): rewritten lines use the original font when its subset
+covers the whole rewrite, otherwise a shipped look-alike — per document, never
+per block. Substitutes (free): Liberation Sans/Serif/Mono (metric = Arial/Times/
+Courier), Carlito (= Calibri), Caladea (= Cambria), Gelasio (= Georgia);
+look-alikes: TeX Gyre Adventor (Century Gothic), EB Garamond, DejaVu Sans
+(Verdana). Century Gothic itself cannot be shipped (Monotype). The on-screen
+note must say when a look-alike was used (honesty rule).
+Verified in sandbox: own resume → surgical (both fonts → substitute); scanned
+image PDF → html/scanned; user-password PDF → html/encrypted; owner-password with
+edit withheld → html/encrypted; two-column (30pt gutter) → html/columns; one-
+column with split date lines → surgical; reportlab TTF (custom encoding) →
+surgical via substitute.
+S3 note: wrap hyphens ("Row-Level", "source-level") are soft hyphens mupdf drops
+from extracted text; block text must come from the glyphs on the page.
+Done when (local): upload own PDF → server log "pdf compat: surgical · Microsoft®
+Word LTSC"; /me/resume returns resumeCompat.mode 'surgical' after confirm;
+`node pdfCompat.mjs <a two-column pdf>` prints reason columns.
+Next: A7-S3 blocks → JSON at upload. Fonts to add to backend/fonts/ before S4.

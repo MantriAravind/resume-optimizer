@@ -7,6 +7,7 @@ import { CATEGORIES, categorizeJob } from './jobCategory.mjs'
 import multer from 'multer'
 import { extractText, assessExtraction } from './resumeExtract.mjs'
 import { readPdfLayout } from './pdfLayout.mjs'
+import { checkPdfCompat } from './pdfCompat.mjs'
 import { renderWithLayout, buildLayoutPage, layoutSheetCss } from './layoutRender.mjs'
 import mongoose from 'mongoose'
 import crypto from 'crypto'
@@ -305,6 +306,11 @@ const userSchema = new mongoose.Schema({
   // pending until the profile is confirmed, then promoted.
   resumeLayout:        { type: mongoose.Schema.Types.Mixed },
   pendingResumeLayout: { type: mongoose.Schema.Types.Mixed },
+  // A7-S2: can the PDF be edited in place? { mode: 'surgical' | 'html', reason,
+  // message, fonts[] } from pdfCompat.mjs. Independent of resumeLayout on purpose:
+  // the surgical path does not need the pdfjs layout read to have succeeded.
+  resumeCompat:        { type: mongoose.Schema.Types.Mixed },
+  pendingResumeCompat: { type: mongoose.Schema.Types.Mixed },
 
   // Read out of the resume by Haiku at upload time, not on every page load.
   // Every one of these may be empty — a resume states some and not others.
@@ -648,6 +654,7 @@ app.get('/me/resume', requireUser, async (req, res) => {
       resumeFileName: user?.resumeFileName || '',
       hasResumeFile:  Boolean(user?.resumeFile?.size),
       resumeLayout:   user?.resumeLayout || null,
+      resumeCompat:   user?.resumeCompat || null,
       updatedAt:      user?.updatedAt      || null,
       // The board reads profile.field from here to decide which jobs to show, so
       // it must come back on the same call the resume gate already makes — a
@@ -2397,10 +2404,19 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
       // A7: layout beside the text. PDF only for now; a failure here never blocks the
       // upload — the resume then renders in the default layout.
       let layout = null
+      let compat = null
       if (/\.pdf$/i.test(req.file.originalname || '') || req.file.mimetype === 'application/pdf') {
         try { layout = await readPdfLayout(req.file.buffer) } catch (e) { console.warn('pdf layout read failed:', e.message) }
+        // A7-S2: surgical or fallback, decided once here. checkPdfCompat never throws
+        // on a bad file (it returns mode 'html' with a reason); the catch is for mupdf
+        // itself failing to load.
+        try { compat = checkPdfCompat(req.file.buffer) } catch (e) { console.warn('pdf compat check failed:', e.message) }
+        if (compat) console.log(`pdf compat: ${compat.mode}${compat.reason ? ' (' + compat.reason + ': ' + compat.detail + ')' : ''} · ${compat.creator || ''}`)
       }
-      await User.updateOne({ clerkUserId: req.userId }, layout ? { $set: { pendingResumeLayout: layout } } : { $unset: { pendingResumeLayout: 1 } })
+      await User.updateOne({ clerkUserId: req.userId }, {
+        ...(layout || compat ? { $set: { ...(layout ? { pendingResumeLayout: layout } : {}), ...(compat ? { pendingResumeCompat: compat } : {}) } } : {}),
+        ...(!layout || !compat ? { $unset: { ...(layout ? {} : { pendingResumeLayout: 1 }), ...(compat ? {} : { pendingResumeCompat: 1 }) } } : {}),
+      })
 
       // No text at all, or barely any. Returned as 200 with a status the client can
       // act on — this is an expected outcome for a scanned PDF, not a server error.
@@ -2432,6 +2448,8 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
         method,
         fileName: req.file.originalname,
         profile: profile || null,
+        // A7-S2: the fallback sentence, if any, so the client can show it at upload
+        compat: compat ? { mode: compat.mode, reason: compat.reason, message: compat.message } : null,
       })
     } catch (error) {
       console.error('Resume upload error:', error)
@@ -2570,17 +2588,22 @@ app.post('/me/profile', requireUser, async (req, res) => {
       .lean()
     const parked = pending?.pendingResumeFile
     if (fileName && parked?.data && parked.name === fileName) {
-      const pl = await User.findOne({ clerkUserId: req.userId }).select('pendingResumeLayout').lean()
+      const pl = await User.findOne({ clerkUserId: req.userId }).select('pendingResumeLayout pendingResumeCompat').lean()
       const setDoc = { resumeFile: parked }
       if (pl?.pendingResumeLayout) setDoc.resumeLayout = pl.pendingResumeLayout
+      if (pl?.pendingResumeCompat) setDoc.resumeCompat = pl.pendingResumeCompat
       await User.updateOne(
         { clerkUserId: req.userId },
-        { $set: setDoc, $unset: { pendingResumeFile: 1, pendingResumeLayout: 1, ...(pl?.pendingResumeLayout ? {} : { resumeLayout: 1 }) } },
+        { $set: setDoc, $unset: {
+          pendingResumeFile: 1, pendingResumeLayout: 1, pendingResumeCompat: 1,
+          ...(pl?.pendingResumeLayout ? {} : { resumeLayout: 1 }),
+          ...(pl?.pendingResumeCompat ? {} : { resumeCompat: 1 }),
+        } },
       )
     } else {
       await User.updateOne(
         { clerkUserId: req.userId },
-        { $unset: { resumeFile: 1, pendingResumeFile: 1, resumeLayout: 1, pendingResumeLayout: 1 } },
+        { $unset: { resumeFile: 1, pendingResumeFile: 1, resumeLayout: 1, pendingResumeLayout: 1, resumeCompat: 1, pendingResumeCompat: 1 } },
       )
     }
 
@@ -3785,7 +3808,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-11b A7: date lines copied verbatim (gate + restore), dash gate exempts dates'
+const SERVER_BUILD = '2026-09-11c A7-S2: pdf compatibility check at upload (pdfCompat.mjs) → resumeCompat'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })
