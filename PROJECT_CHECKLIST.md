@@ -1399,6 +1399,43 @@ Harness verified with the REAL rewrite model: re-upload → 79 blocks pending �
 gpt-5.6-luna), reverted none, ALL BLOCKS FIT. (Harness's synthetic text prepends
 "Delivered" to every bullet including summary lines — the awkward shortened
 summaries are the harness's input, not a model failure.)
+
+### A7-S5 DONE (module + endpoint, sandbox-proven) — 2026-09-12 (build 2026-09-12c)
+`backend/pdfSurgical.mjs` — writeSurgical(pdfBuffer, compat, blocksDoc, texts)
+→ { pdf: Buffer, skipped[] }. Recipe (all found the hard way in the experiment):
+- coordinates: map every point device→user through the INVERSE page transform IN
+  JS; a `q <inv> cm` wrapper double-transforms and draws nothing visible.
+- redaction: FULL glyph height ±0.4pt white box per line; S1's middle-60% inset
+  left the old text's ascenders/descenders visible at 7.56pt.
+- text: substitute font per family+bold registered once via addSimpleFont
+  ('Latin'), original size at the ORIGINAL baselines, WinAnsi bytes (en dash →
+  0x96, escape ()\), non-Latin-1 → '?'; colour from the block (links stay blue).
+- skills: bold label kept, redact/write from the OLD value run's real x0 (a
+  computed label-end left a sliver of the old first glyph).
+- overflow at write time is skipped, never squeezed (belt over fitCheck's braces).
+- streams appended to the page's Contents array in q…Q; save with 'garbage'.
+- linked edited blocks get a fresh createLink over the new text extent (path
+  written; untested on a real case — this resume's links live in non-editable
+  contact block, which keeps its original annotations: p1=2 links in output).
+Demo CLI `node pdfSurgical.mjs resume.pdf`: 58 blocks written (all bullets
+reworded + all skill values reversed), skipped none, PNGs clean — labels bold,
+headings/dates/rules untouched, no ghosts.
+/me/surgical-fit extended: after fitAndShorten, writeSurgical(changed texts) →
+response gains pdf (base64) + pdfSkipped. Local verify via harness next session
+(extend testSurgicalFit to save the PDF), then S6 QA gate.
+
+### S5 CORRECTION: cover-up → true redaction — 2026-09-12
+Aravind's inspection of out.pdf caught it: white boxes HIDE old text but text
+extraction (= every ATS) still read BOTH versions of every bullet. "Judge by the
+rendered PNG" is not enough for ATS output — extracted text is a second judge.
+Fix: Redact annotations per line + page.applyRedactions(false,0,2,0) (removes
+text, keeps images/line art, no black boxes). Second bug from the fix:
+applyRedactions SANITIZES the page and strips fonts registered before it (the
+new text fell back to a serif) → register substitute fonts AFTER apply, against
+the fresh Resources dict. Verified: extraction old 0 / new 1, render clean in
+Adventor, links p1=2, 58 blocks, skipped none.
+New S6 check inherited from this: extracted text of the output must contain each
+replaced block's NEW text exactly once and its OLD text zero times.
 Next: S5 — extend /me/surgical-fit to write fitted blocks into a copy of the
 original PDF (redaction inset + addStream per S1) and return it; then link
 annotations back over replaced linked text.

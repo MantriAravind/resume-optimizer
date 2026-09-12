@@ -11,6 +11,7 @@ import { checkPdfCompat } from './pdfCompat.mjs'
 import { extractBlocks } from './pdfBlocks.mjs'
 import { buildFitContext } from './pdfFit.mjs'
 import { mapOptimizedToBlocks, fitAndShorten } from './pdfRewrite.mjs'
+import { writeSurgical } from './pdfSurgical.mjs'
 import { renderWithLayout, buildLayoutPage, layoutSheetCss } from './layoutRender.mjs'
 import mongoose from 'mongoose'
 import crypto from 'crypto'
@@ -2208,12 +2209,28 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
     const changed = result.blocks.filter(b => b.changed).length
     console.log(`surgical-fit: ${result.blocks.length} blocks · ${changed} changed · reverted ${result.reverted.length ? result.reverted.join(',') : 'none'}${result.notes?.bulletCountMismatch ? ' · BULLET COUNT MISMATCH — bullets unmapped' : ''}`)
 
+    // A7-S5: write the changed blocks into a copy of the original PDF
+    const texts = {}
+    for (const b of result.blocks) if (b.changed) texts[b.id] = b.text
+    let pdfB64 = null, skippedWrite = []
+    if (Object.keys(texts).length) {
+      try {
+        const w = writeSurgical(pdfBuffer, user.resumeCompat, user.resumeBlocks, texts)
+        pdfB64 = w.pdf.toString('base64')
+        skippedWrite = w.skipped
+        if (w.skipped.length) console.warn('surgical write skipped (post-fit overflow): ' + w.skipped.join(','))
+      } catch (e) { console.error('surgical write failed: ' + e.message) }
+    }
+
     res.json({
       surgical: true,
       blocks: result.blocks,
       reverted: result.reverted,
       // the modal shows this when mapping had to leave bullets untouched
       mappingNotes: result.notes,
+      // the edited PDF itself (base64); null when nothing changed or the write failed
+      pdf: pdfB64,
+      pdfSkipped: skippedWrite,
     })
   } catch (error) {
     console.error('surgical-fit error:', error)
@@ -3906,7 +3923,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-12b A7-S4 + fix: filename-less profile Save no longer clears the parked upload'
+const SERVER_BUILD = '2026-09-12c A7-S5: surgical-fit writes fitted blocks into a copy of the PDF (pdfSurgical.mjs)'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })
