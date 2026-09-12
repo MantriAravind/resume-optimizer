@@ -1367,6 +1367,41 @@ every bullet reworded, 3 made overlong; mock word-boundary shortener):
 own resume → 50/50 bullets mapped, 8/8 skills, 3 shortened in round 1,
 0 reverted, ALL CHANGED BLOCKS FIT.
 Done when (local): that command prints those numbers.
+
+### A7-S4 server wiring: /me/surgical-fit — 2026-09-12 (build 2026-09-12a)
+New authed endpoint POST /me/surgical-fit { optimizedResume } → { surgical,
+blocks[], reverted[], mappingNotes }. /optimize is untouched (it is
+unauthenticated and the public Resume Tool uses it); the modal will call
+/optimize then this. Loads resumeFile+resumeCompat+resumeBlocks from Mongo
+(BSON Binary → Buffer), buildFitContext, mapOptimizedToBlocks, fitAndShorten
+with a MODEL_REWRITE shortener (strict JSON id→text, ≤budget chars, no new
+facts, plain hyphens, badChars reworded). 409 when the stored resume is not
+surgical. Logs "surgical-fit: N blocks · M changed · reverted …".
+Local verify (modal not wired until S7): `node testSurgicalFit.mjs <dev-account
+email>` from backend/ — runs the identical core against the real Mongo doc and
+the REAL rewrite model (synthetic optimizer output with 3 overlong bullets).
+Done when: mapping 50/50, ≥1 real shorten round, reverted none-or-few, ALL
+BLOCKS FIT, and the shortened texts read like sane resume lines (READ THEM).
+testSurgicalFit.mjs is a keepable harness, never imported by the server.
+
+### BUG found+fixed while verifying: profile Save wiped the parked upload — 2026-09-12 (build 2026-09-12b)
+Promotion contract: the client echoes resumeFileName; match → promote, mismatch
+→ clear parked+promoted (by design). The profile page's Save sends NO
+resumeFileName, which hit the clear branch and silently destroyed the upload it
+followed (found via `node testSurgicalFit.mjs diagnose`: 0 promoted, 0 pending,
+the dev user's doc empty after upload+Save). Fix: a filename-less Save leaves
+parked data untouched; only an explicit mismatch clears. Frontend follow-up for
+S7: the profile page's Save should send resumeFileName so replacement promotes.
+Also learned: local backend .env points at a separate dev/test Mongo (2 users),
+not production's database — harness has `diagnose` and `latest` modes.
+Harness verified with the REAL rewrite model: re-upload → 79 blocks pending →
+`node testSurgicalFit.mjs latest` → mapping 50/50, 1 shorten round (3 blocks,
+gpt-5.6-luna), reverted none, ALL BLOCKS FIT. (Harness's synthetic text prepends
+"Delivered" to every bullet including summary lines — the awkward shortened
+summaries are the harness's input, not a model failure.)
+Next: S5 — extend /me/surgical-fit to write fitted blocks into a copy of the
+original PDF (redaction inset + addStream per S1) and return it; then link
+annotations back over replaced linked text.
 Next (server wiring, ~1 session): in /optimize, when the caller is surgical
 (resumeCompat.mode + resumeBlocks present), run mapOptimizedToBlocks +
 fitAndShorten after the gate loop with a shortenFn that calls MODEL_REWRITE

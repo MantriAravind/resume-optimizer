@@ -9,6 +9,8 @@ import { extractText, assessExtraction } from './resumeExtract.mjs'
 import { readPdfLayout } from './pdfLayout.mjs'
 import { checkPdfCompat } from './pdfCompat.mjs'
 import { extractBlocks } from './pdfBlocks.mjs'
+import { buildFitContext } from './pdfFit.mjs'
+import { mapOptimizedToBlocks, fitAndShorten } from './pdfRewrite.mjs'
 import { renderWithLayout, buildLayoutPage, layoutSheetCss } from './layoutRender.mjs'
 import mongoose from 'mongoose'
 import crypto from 'crypto'
@@ -2160,6 +2162,65 @@ Respond in this exact JSON format with no extra text:
   }
 })
 
+// ── A7-S4: SURGICAL FIT ──────────────────────────────────────────────
+//
+// The modal calls /optimize as always; when the stored resume is surgical it then
+// posts the optimizedResume here. This endpoint owns everything block-shaped: load
+// the user's stored blocks + compat + original PDF, map the optimized text onto the
+// blocks (pdfRewrite), enforce the fit rule, shorten misfits with the rewrite model
+// (≤3 rounds), revert what never fits. S5 will extend this same endpoint to write
+// the fitted blocks into a copy of the PDF and return it.
+//
+// Deliberately NOT part of /optimize: that route is unauthenticated text-in/text-out
+// (the public Resume Tool uses it) and cannot load per-user blocks; this one is
+// authed and cheap (one small model call per shorten round, none when all fits).
+
+app.post('/me/surgical-fit', requireUser, async (req, res) => {
+  const optimizedResume = String(req.body?.optimizedResume || '')
+  if (!optimizedResume.trim()) return res.status(400).json({ error: 'optimizedResume is required.' })
+  try {
+    const user = await User.findOne({ clerkUserId: req.userId })
+      .select('resumeFile resumeCompat resumeBlocks')
+      .lean()
+    if (user?.resumeCompat?.mode !== 'surgical' || !user?.resumeBlocks?.blocks || !user?.resumeFile?.data) {
+      return res.status(409).json({ error: 'This resume is not on the surgical path.', surgical: false })
+    }
+    // Mongo hands Buffers back as BSON Binary; mupdf wants bytes either way
+    const raw = user.resumeFile.data
+    const pdfBuffer = Buffer.isBuffer(raw) ? raw : raw?.buffer ? Buffer.from(raw.buffer) : Buffer.from(raw)
+
+    const ctx = buildFitContext(pdfBuffer, user.resumeCompat, user.resumeBlocks)
+    const mapped = mapOptimizedToBlocks(user.resumeBlocks, optimizedResume)
+
+    const shortenFn = async (items, round) => {
+      const prompt = `You shorten resume lines so they fit a fixed printed width. For each item, rewrite the text to AT MOST its "budget" characters (shorter is fine).
+Rules: keep every factual claim that fits, cut filler first; never add a fact, tool, metric, or claim that is not in the text; keep the original tense and voice; plain hyphens only, no em or en dashes; if "badChars" is present, those characters cannot be printed, reword to avoid them.
+Respond with ONLY a JSON object mapping each id to its shortened text, no extra keys, no prose.
+
+${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budget, ...(badChars ? { badChars } : {}) })), null, 1)}`
+      const reply = await askModel({ model: MODEL_REWRITE, maxTokens: 4000, reasoningEffort: 'low', messages: [{ role: 'user', content: prompt }] })
+      const cleaned = reply.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
+      console.log(`surgical-fit: shorten round ${round}, ${items.length} block(s)`)
+      return JSON.parse(cleaned)
+    }
+
+    const result = await fitAndShorten(ctx, user.resumeBlocks, mapped, shortenFn)
+    const changed = result.blocks.filter(b => b.changed).length
+    console.log(`surgical-fit: ${result.blocks.length} blocks · ${changed} changed · reverted ${result.reverted.length ? result.reverted.join(',') : 'none'}${result.notes?.bulletCountMismatch ? ' · BULLET COUNT MISMATCH — bullets unmapped' : ''}`)
+
+    res.json({
+      surgical: true,
+      blocks: result.blocks,
+      reverted: result.reverted,
+      // the modal shows this when mapping had to leave bullets untouched
+      mappingNotes: result.notes,
+    })
+  } catch (error) {
+    console.error('surgical-fit error:', error)
+    res.status(500).json({ error: 'Something went wrong fitting the rewrite to your layout.' })
+  }
+})
+
 // ── COVER LETTER (A6) ──────────────────────────────────────────────────────
 //
 // Lazy: the modal calls this only when the Cover letter tab is opened, so a student
@@ -2616,7 +2677,13 @@ app.post('/me/profile', requireUser, async (req, res) => {
       .select('pendingResumeFile')
       .lean()
     const parked = pending?.pendingResumeFile
-    if (fileName && parked?.data && parked.name === fileName) {
+    // A save that does not mention a file at all (profile-page Save, as opposed to
+    // the onboarding confirm) must not judge the parked upload either way: leave it
+    // parked. Found 2026-09-12: the profile page's Save sent no resumeFileName, hit
+    // the clear branch below, and silently destroyed the upload it followed.
+    if (!fileName) {
+      // no promotion, no clearing — parked data stays parked
+    } else if (parked?.data && parked.name === fileName) {
       const pl = await User.findOne({ clerkUserId: req.userId }).select('pendingResumeLayout pendingResumeCompat pendingResumeBlocks').lean()
       const setDoc = { resumeFile: parked }
       if (pl?.pendingResumeLayout) setDoc.resumeLayout = pl.pendingResumeLayout
@@ -3839,7 +3906,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-11d A7-S3: blocks extracted at upload when surgical (pdfBlocks.mjs) → resumeBlocks'
+const SERVER_BUILD = '2026-09-12b A7-S4 + fix: filename-less profile Save no longer clears the parked upload'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })
