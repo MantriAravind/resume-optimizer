@@ -1310,3 +1310,39 @@ confirm profile; /me/resume response has hasBlocks true and no blocks array.
 Next: S4 fit rule — BLOCKED on backend/fonts/ (Liberation Sans/Serif/Mono,
 Carlito, Caladea, Gelasio, DejaVu Sans, EB Garamond, TeX Gyre Adventor —
 regular AND bold of each).
+
+### A7-S3 VERIFIED LOCALLY + PUSHED (0e9ae97); fonts shipped; A7-S4 fit module — 2026-09-12
+Local test needed Clerk DEV keys: production keys are domain-locked to optyply.com,
+so localhost login was impossible (blue screen, 400s from clerk.optyply.com).
+Fixed: Clerk app "ResumeAI" Development instance keys — pk_test_ in
+frontend/.env.local, sk_test_ in backend/.env CLERK_SECRET_KEY; dev instance has
+its own users (fresh sign-up). Keys STAY in the env files for future local work.
+Local upload verified both branches: a Typst PDF → "pdf compat: html (font:
+…Tinos…)" and correctly NO blocks line; own resume → "pdf compat: surgical" +
+"pdf blocks: 79 (58 editable) · 118 KB"; profile Save promotes.
+backend/fonts/ = 18 files (9 families × regular/bold), assembled and
+glyph-verified in sandbox (backend-fonts.zip): Liberation 2.1.5, DejaVu 2.37,
+TeX Gyre Adventor OTF, Carlito, Caladea, Gelasio, EB Garamond (last two
+instanced from Google variable fonts to static 400/700 — first attempt saved the
+unchanged variable font twice: fontTools instancer returns a new font unless
+inplace=True; verify OS/2 weight 400/700 and distinct md5 after instancing).
+pdfCompat: Croscore metric clones mapped — Tinos→Times, Arimo→Arial,
+Cousine→Courier (Typst/ChromeOS exports; found via the accidental Typst upload).
+`backend/pdfFit.mjs` (A7-S4 measurement half): buildFitContext(buffer, compat,
+blocks) picks metrics per font by compat's write decision — original = the PDF's
+own Widths table, substitute = TTF/OTF from backend/fonts/ via
+encodeCharacter/advanceGlyph (both paths agree to 6 decimals on a sample);
+fitCheck(ctx, block, text) → glyph-coverage gate first (missing glyph = hard
+fail), then greedy space-wrap at availWidth (no hyphenation = conservative),
+lines ≤ maxLines and no line wider than availWidth; charBudget(ctx, block) from
+the block's own char density × 0.93 safety, floored at the block's own body
+length whenever the original text passes fitCheck (safety margin must never
+demand shortening of text that already fits — skill budgets exclude the label).
+Self-validation CLI `node pdfFit.mjs resume.pdf`: re-wraps every editable
+block's own text into its own box — own resume: 58 fit, 0 failed, substitute
+metrics; negative tests: overlong rewrite 3/2L rejected, budget-trimmed passes.
+Done when (local): `node pdfFit.mjs "C:\Users\Mantr\Downloads\RESUME_ARAVIND
+MANTRI.pdf"` prints "self-validation: 58 fit, 0 failed".
+Next: S4 rewrite loop in server.js optimize path (prompt gets charBudget; up to
+3 shorten retries via fitCheck; unfit block keeps original text + flag), then S5
+replacement writer. Push fonts/ + pdfFit.mjs + pdfCompat.mjs together.
