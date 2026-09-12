@@ -8,6 +8,7 @@ import multer from 'multer'
 import { extractText, assessExtraction } from './resumeExtract.mjs'
 import { readPdfLayout } from './pdfLayout.mjs'
 import { checkPdfCompat } from './pdfCompat.mjs'
+import { extractBlocks } from './pdfBlocks.mjs'
 import { renderWithLayout, buildLayoutPage, layoutSheetCss } from './layoutRender.mjs'
 import mongoose from 'mongoose'
 import crypto from 'crypto'
@@ -311,6 +312,12 @@ const userSchema = new mongoose.Schema({
   // the surgical path does not need the pdfjs layout read to have succeeded.
   resumeCompat:        { type: mongoose.Schema.Types.Mixed },
   pendingResumeCompat: { type: mongoose.Schema.Types.Mixed },
+  // A7-S3: the resume as blocks (pdfBlocks.mjs) — the units S4 rewrites and S5
+  // replaces. ~120 KB for two pages, so it must NEVER be returned by /me/resume
+  // (which the board calls on every load); it is read only by the optimize path.
+  // Only extracted when compat.mode is 'surgical' — the html fallback doesn't use it.
+  resumeBlocks:        { type: mongoose.Schema.Types.Mixed },
+  pendingResumeBlocks: { type: mongoose.Schema.Types.Mixed },
 
   // Read out of the resume by Haiku at upload time, not on every page load.
   // Every one of these may be empty — a resume states some and not others.
@@ -646,7 +653,9 @@ app.get('/me/resume', requireUser, async (req, res) => {
     // The file buffers are excluded: this is called on every board load and a resume
     // PDF is a few hundred KB. There is a separate endpoint for the file itself.
     const user = await User.findOne({ clerkUserId: userId })
-      .select('-resumeFile.data -pendingResumeFile.data')
+      // blocks: exclude the heavy array but keep the small header, so hasBlocks
+      // below can still see that extraction happened
+      .select('-resumeFile.data -pendingResumeFile.data -resumeBlocks.blocks -pendingResumeBlocks.blocks')
       .lean()
     res.json({
       hasResume:      Boolean(user?.resumeText),
@@ -655,6 +664,8 @@ app.get('/me/resume', requireUser, async (req, res) => {
       hasResumeFile:  Boolean(user?.resumeFile?.size),
       resumeLayout:   user?.resumeLayout || null,
       resumeCompat:   user?.resumeCompat || null,
+      // blocks themselves are ~120 KB — the board never needs them; a boolean is enough
+      hasBlocks:      Boolean(user?.resumeBlocks?.extractedAt),
       updatedAt:      user?.updatedAt      || null,
       // The board reads profile.field from here to decide which jobs to show, so
       // it must come back on the same call the resume gate already makes — a
@@ -2405,6 +2416,7 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
       // upload — the resume then renders in the default layout.
       let layout = null
       let compat = null
+      let blocks = null
       if (/\.pdf$/i.test(req.file.originalname || '') || req.file.mimetype === 'application/pdf') {
         try { layout = await readPdfLayout(req.file.buffer) } catch (e) { console.warn('pdf layout read failed:', e.message) }
         // A7-S2: surgical or fallback, decided once here. checkPdfCompat never throws
@@ -2412,10 +2424,27 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
         // itself failing to load.
         try { compat = checkPdfCompat(req.file.buffer) } catch (e) { console.warn('pdf compat check failed:', e.message) }
         if (compat) console.log(`pdf compat: ${compat.mode}${compat.reason ? ' (' + compat.reason + ': ' + compat.detail + ')' : ''} · ${compat.creator || ''}`)
+        // A7-S3: blocks only make sense when the PDF will be edited in place
+        if (compat?.mode === 'surgical') {
+          try {
+            blocks = extractBlocks(req.file.buffer)
+            console.log(`pdf blocks: ${blocks.blocks.length} (${blocks.blocks.filter(b => b.editable).length} editable) · ${Math.round(JSON.stringify(blocks).length / 1024)} KB`)
+          } catch (e) { console.warn('pdf block extraction failed:', e.message) }
+        }
+      }
+      const pendSet = {
+        ...(layout ? { pendingResumeLayout: layout } : {}),
+        ...(compat ? { pendingResumeCompat: compat } : {}),
+        ...(blocks ? { pendingResumeBlocks: blocks } : {}),
+      }
+      const pendUnset = {
+        ...(layout ? {} : { pendingResumeLayout: 1 }),
+        ...(compat ? {} : { pendingResumeCompat: 1 }),
+        ...(blocks ? {} : { pendingResumeBlocks: 1 }),
       }
       await User.updateOne({ clerkUserId: req.userId }, {
-        ...(layout || compat ? { $set: { ...(layout ? { pendingResumeLayout: layout } : {}), ...(compat ? { pendingResumeCompat: compat } : {}) } } : {}),
-        ...(!layout || !compat ? { $unset: { ...(layout ? {} : { pendingResumeLayout: 1 }), ...(compat ? {} : { pendingResumeCompat: 1 }) } } : {}),
+        ...(Object.keys(pendSet).length ? { $set: pendSet } : {}),
+        ...(Object.keys(pendUnset).length ? { $unset: pendUnset } : {}),
       })
 
       // No text at all, or barely any. Returned as 200 with a status the client can
@@ -2588,22 +2617,24 @@ app.post('/me/profile', requireUser, async (req, res) => {
       .lean()
     const parked = pending?.pendingResumeFile
     if (fileName && parked?.data && parked.name === fileName) {
-      const pl = await User.findOne({ clerkUserId: req.userId }).select('pendingResumeLayout pendingResumeCompat').lean()
+      const pl = await User.findOne({ clerkUserId: req.userId }).select('pendingResumeLayout pendingResumeCompat pendingResumeBlocks').lean()
       const setDoc = { resumeFile: parked }
       if (pl?.pendingResumeLayout) setDoc.resumeLayout = pl.pendingResumeLayout
       if (pl?.pendingResumeCompat) setDoc.resumeCompat = pl.pendingResumeCompat
+      if (pl?.pendingResumeBlocks) setDoc.resumeBlocks = pl.pendingResumeBlocks
       await User.updateOne(
         { clerkUserId: req.userId },
         { $set: setDoc, $unset: {
-          pendingResumeFile: 1, pendingResumeLayout: 1, pendingResumeCompat: 1,
+          pendingResumeFile: 1, pendingResumeLayout: 1, pendingResumeCompat: 1, pendingResumeBlocks: 1,
           ...(pl?.pendingResumeLayout ? {} : { resumeLayout: 1 }),
           ...(pl?.pendingResumeCompat ? {} : { resumeCompat: 1 }),
+          ...(pl?.pendingResumeBlocks ? {} : { resumeBlocks: 1 }),
         } },
       )
     } else {
       await User.updateOne(
         { clerkUserId: req.userId },
-        { $unset: { resumeFile: 1, pendingResumeFile: 1, resumeLayout: 1, pendingResumeLayout: 1, resumeCompat: 1, pendingResumeCompat: 1 } },
+        { $unset: { resumeFile: 1, pendingResumeFile: 1, resumeLayout: 1, pendingResumeLayout: 1, resumeCompat: 1, pendingResumeCompat: 1, resumeBlocks: 1, pendingResumeBlocks: 1 } },
       )
     }
 
@@ -3808,7 +3839,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-11c A7-S2: pdf compatibility check at upload (pdfCompat.mjs) → resumeCompat'
+const SERVER_BUILD = '2026-09-11d A7-S3: blocks extracted at upload when surgical (pdfBlocks.mjs) → resumeBlocks'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })

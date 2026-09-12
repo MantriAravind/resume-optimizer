@@ -1257,3 +1257,56 @@ Done when (local): upload own PDF → server log "pdf compat: surgical · Micros
 Word LTSC"; /me/resume returns resumeCompat.mode 'surgical' after confirm;
 `node pdfCompat.mjs <a two-column pdf>` prints reason columns.
 Next: A7-S3 blocks → JSON at upload. Fonts to add to backend/fonts/ before S4.
+
+### A7-S3 DONE (module only, NOT hooked into server yet) — 2026-09-11
+`backend/pdfBlocks.mjs` — `extractBlocks(buffer)` → `{ pages[], blocks[] }`; CLI
+`node pdfBlocks.mjs resume.pdf [--json]`. Hook into upload (`pendingResumeBlocks` →
+`resumeBlocks`, same promotion as compat) only AFTER S2 is verified and pushed.
+Per block: id, page, type (name/contact/heading/bullet/skill/split/line/paragraph),
+editable (bullet/paragraph/skill values only), text, box, lines[] (baseline y,
+x0/x1, top/bottom, hyphen, runs[] with font/size/bold/italic/colour/link,
+segments[]), font of the body run (exact size 7.56, not 7.6), bullet {glyph, x},
+maxLines (= lines.length), availWidth (block left edge → page right margin: a
+one-line bullet may grow to the margin, not just to its own width), links[],
+skill label / split left+right.
+Text comes from the WALKER (onChar), not asJSON: exact size, colour per glyph,
+and it delivers Word's wrap hyphen as "-" (asJSON drops it) → lines ending in "-"
+join with no space ("Row-Level", not "RowLevel"/"Row- Level").
+Bugs found and fixed while proving it on own resume:
+- Word emits "real", "-", "time" as separate fragments → a lone "-" is a bullet
+  only when nothing sits to its left on that baseline (first cut ate every dash)
+- Word emits spaces as their own fragments in OTHER fonts (Times, Arial) → they
+  join the open run and never start one (first cut made the name Times, dropped
+  spaces around dashes: "Jan 2024 –Present", "- Associate")
+- a link owns a run only when it covers ≥ half of it (Word's link boxes touch the
+  neighbouring run by a fraction of a point — the contact line's "| " was linked)
+Own resume: 79 blocks — name 1, contact 1, heading 6, bullet 50 (all 2L or 1L),
+skill 8, split 5, line 8; 58 editable. Overlay PNGs (blocks_p1/p2.png) show every
+box on its text, baselines on the baselines, both links on exactly their runs;
+extracted text has 0 double spaces, 0 space-before-punctuation. JSON ≈120 KB.
+Noted for S5: the bullets are JUSTIFIED (Word stretches word spaces); rewritten
+lines will be ragged-right unless S5 distributes the slack — optional, decide then.
+Done when (local): `node pdfBlocks.mjs "RESUME_ARAVIND MANTRI.pdf"` prints the
+79-line table ending "editable 58/79"; every bullet 2L or 1L, no "paragraph".
+Next: verify+push S2 → hook S3 into upload → S4 fit rule (needs backend/fonts/).
+
+### A7-S2 VERIFIED + PUSHED (5d67e87), A7-S3 hooked into server — 2026-09-11
+S2 verified: CLI two-column → html/columns on Windows; pdfBlocks CLI on local file
+→ 79 blocks, editable 58/79 (local right margin 567.09 vs 566.71 on the copy
+tested in sandbox — same resume, different export; always test the local file);
+production upload (push auto-deployed to Render) → log 03:47:00 PM
+"pdf compat: surgical · Microsoft® Word LTSC / Microsoft® Word LTSC".
+Note: dotenv 17.x prints sponsored "tips" (vestauth.com ad) at startup — real
+package, not tampered; silence with DOTENV_CONFIG_QUIET=true if wanted.
+S3 hook (build 2026-09-11d): extractBlocks at upload ONLY when compat.mode is
+'surgical'; log "pdf blocks: N (M editable) · K KB"; pendingResumeBlocks →
+resumeBlocks on profile confirm (same promotion/unset pattern as compat/layout);
+/me/resume excludes the heavy .blocks arrays from its select and returns only
+hasBlocks (computed from the kept header — first cut excluded the whole field
+then read it: always-false).
+Done when (local): restart → stamp 2026-09-11d; upload own PDF → console shows
+BOTH "pdf compat: surgical …" AND "pdf blocks: 79 (58 editable) · ~120 KB";
+confirm profile; /me/resume response has hasBlocks true and no blocks array.
+Next: S4 fit rule — BLOCKED on backend/fonts/ (Liberation Sans/Serif/Mono,
+Carlito, Caladea, Gelasio, DejaVu Sans, EB Garamond, TeX Gyre Adventor —
+regular AND bold of each).
