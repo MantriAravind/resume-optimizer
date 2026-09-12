@@ -12,6 +12,7 @@ import { extractBlocks } from './pdfBlocks.mjs'
 import { buildFitContext } from './pdfFit.mjs'
 import { mapOptimizedToBlocks, fitAndShorten } from './pdfRewrite.mjs'
 import { writeSurgical } from './pdfSurgical.mjs'
+import { qaSurgicalOutput } from './pdfQa.mjs'
 import { renderWithLayout, buildLayoutPage, layoutSheetCss } from './layoutRender.mjs'
 import mongoose from 'mongoose'
 import crypto from 'crypto'
@@ -2216,9 +2217,16 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
     if (Object.keys(texts).length) {
       try {
         const w = writeSurgical(pdfBuffer, user.resumeCompat, user.resumeBlocks, texts)
-        pdfB64 = w.pdf.toString('base64')
         skippedWrite = w.skipped
         if (w.skipped.length) console.warn('surgical write skipped (post-fit overflow): ' + w.skipped.join(','))
+        // A7-S6: QA gate — a failing output is never served; the modal falls back
+        const qa = qaSurgicalOutput(pdfBuffer, w.pdf, user.resumeBlocks, texts)
+        if (qa.pass) {
+          pdfB64 = w.pdf.toString('base64')
+          console.log('surgical QA: pass')
+        } else {
+          console.error('surgical QA FAILED — serving fallback. ' + qa.failures.slice(0, 5).join(' | '))
+        }
       } catch (e) { console.error('surgical write failed: ' + e.message) }
     }
 
@@ -3923,7 +3931,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-12c A7-S5: surgical-fit writes fitted blocks into a copy of the PDF (pdfSurgical.mjs)'
+const SERVER_BUILD = '2026-09-12d A7-S6: QA gate on surgical output (pdfQa.mjs) — fail = fallback, never served'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })

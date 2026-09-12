@@ -1436,6 +1436,28 @@ the fresh Resources dict. Verified: extraction old 0 / new 1, render clean in
 Adventor, links p1=2, 58 blocks, skipped none.
 New S6 check inherited from this: extracted text of the output must contain each
 replaced block's NEW text exactly once and its OLD text zero times.
+
+### A7-S6 DONE — QA gate (build 2026-09-12d) — 2026-09-12
+`backend/pdfQa.mjs` — qaSurgicalOutput(origBuf, outBuf, blocksDoc, texts) →
+{ pass, checks, failures[] }. Five checks: pageCount unchanged; margins (no
+output text outside the original text extent +2pt); overlap (no two lines
+sharing >30% vertical extent AND intersecting horizontally); links (every
+original URI still present); textSwap (each replaced block's new text ×1, old
+text ×0 in extracted text — counted with the new text struck from the haystack
+first, else a rewrite containing the old wording as a substring false-fails;
+that bit the demo's "Delivered "+old texts immediately).
+Verified: S5 demo output → all five pass; negative (output = untouched
+original) → 50 textSwap failures, QA FAIL.
+Endpoint: after writeSurgical, QA runs; pass → pdf served; fail → pdf omitted
+(modal falls back to HTML), failures logged "surgical QA FAILED — serving
+fallback". Skips/QA never crash the response.
+Done when (local): `node pdfQa.mjs "<Downloads>\RESUME_ARAVIND MANTRI.pdf"
+out.pdf` prints five ok lines + QA PASS.
+Next: S7 modal (frontend): call /me/surgical-fit after /optimize when
+resumeCompat.mode==='surgical'; sheet = rendered PDF image; Edit text → re-run
+fit for that block; downloads = the served pdf / Word from blocks. Frontend
+must also send resumeFileName on profile Save (the 12b wipe-fix follow-up).
+Then S8: five foreign resumes.
 Next: S5 — extend /me/surgical-fit to write fitted blocks into a copy of the
 original PDF (redaction inset + addStream per S1) and return it; then link
 annotations back over replaced linked text.
