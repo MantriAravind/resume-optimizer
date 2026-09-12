@@ -1346,3 +1346,29 @@ MANTRI.pdf"` prints "self-validation: 58 fit, 0 failed".
 Next: S4 rewrite loop in server.js optimize path (prompt gets charBudget; up to
 3 shorten retries via fitCheck; unfit block keeps original text + flag), then S5
 replacement writer. Push fonts/ + pdfFit.mjs + pdfCompat.mjs together.
+
+### A7-S4 second half: rewrite mapping + shorten loop (module) — 2026-09-12
+Design decision: the surgical path does NOT get its own rewrite prompt. The
+existing /optimize code gate already forces the output to be structurally
+parallel to the input (no lost/merged bullets, headings and date lines verbatim,
+summary length kept), so `backend/pdfRewrite.mjs` maps that whole-resume output
+back onto the stored blocks and enforces fit per block:
+- mapOptimizedToBlocks: bullets paired 1:1 in reading order ONLY when counts
+  match (mismatch → map nothing, never guess); skills paired by label;
+  unpaired blocks keep original text — the writer never touches what it isn't
+  sure about.
+- fitAndShorten(ctx, blocksDoc, mapped, shortenFn): unchanged text passes;
+  changed text fitChecked; misfits batched to shortenFn (id, text, charBudget,
+  availLines, badChars when the failure was a missing glyph) for ≤3 rounds;
+  still-unfit reverts to original + flag. Font size never changes.
+- shortenFn is injected — server wiring will pass an askModel-based one.
+Self-test CLI `node pdfRewrite.mjs resume.pdf` (synthetic optimizer output:
+every bullet reworded, 3 made overlong; mock word-boundary shortener):
+own resume → 50/50 bullets mapped, 8/8 skills, 3 shortened in round 1,
+0 reverted, ALL CHANGED BLOCKS FIT.
+Done when (local): that command prints those numbers.
+Next (server wiring, ~1 session): in /optimize, when the caller is surgical
+(resumeCompat.mode + resumeBlocks present), run mapOptimizedToBlocks +
+fitAndShorten after the gate loop with a shortenFn that calls MODEL_REWRITE
+("shorten to ≤N chars, keep facts, no new claims"), and return blocks alongside
+optimizedResume. Then S5: write the fitted blocks into the PDF copy.
