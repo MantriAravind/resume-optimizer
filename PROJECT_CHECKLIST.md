@@ -1458,6 +1458,30 @@ resumeCompat.mode==='surgical'; sheet = rendered PDF image; Edit text → re-run
 fit for that block; downloads = the served pdf / Word from blocks. Frontend
 must also send resumeFileName on profile Save (the 12b wipe-fix follow-up).
 Then S8: five foreign resumes.
+
+### A7-S7 (code) — modal on the surgical path — 2026-09-12 (build 2026-09-12e)
+Wipe-fix follow-up closed without frontend work: ProfilePage already sends
+resumeFileName (set from the upload response); the 09-12 wipe was a Save with an
+empty name before any upload in that mount, which the 12b server fix covers.
+Server: /me/surgical-fit response gains pages[] (PNG b64, 2x) rendered from the
+QA-passed PDF; render failure degrades to pdf-only, never errors.
+OptimizeModal.jsx:
+- compatMode from /me/resume (resumeCompat.mode) at load
+- after /optimize succeeds, surgical users fire surgicalFit(optimizedResume) in
+  the background; the HTML sheet shows meanwhile and STAYS the fallback on any
+  failure or QA fallback (surgState failed → nothing changes for the user)
+- surgState ready → sheet = the real PDF page images, with a note when lines
+  kept original wording ("N lines kept original wording to preserve the
+  layout"), an "Edit text" button → the existing contentEditable HTML sheet,
+  and "Apply to my layout" → surgicalFit(sheetToText(...)) refits + re-renders
+- PDF download on surgical = the served bytes decoded client-side (what the
+  student saw IS the file); DOCX unchanged (/download-docx from text)
+NEEDS CSS: .om-link-btn (inline link-style button) — add to the modal css.
+Done when (local): optimize a job on the dev account → console shows
+surgical-fit + QA pass lines → modal sheet becomes the real PDF pages → Edit
+text → change a bullet → Apply → pages update → Download PDF opens the edited
+PDF with the change in it. Then push frontend + backend together.
+Then S8: five foreign resumes (Word, Docs, Canva, LaTeX, two-column fallback).
 Next: S5 — extend /me/surgical-fit to write fitted blocks into a copy of the
 original PDF (redaction inset + addStream per S1) and return it; then link
 annotations back over replaced linked text.

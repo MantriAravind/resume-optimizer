@@ -13,6 +13,7 @@ import { buildFitContext } from './pdfFit.mjs'
 import { mapOptimizedToBlocks, fitAndShorten } from './pdfRewrite.mjs'
 import { writeSurgical } from './pdfSurgical.mjs'
 import { qaSurgicalOutput } from './pdfQa.mjs'
+import * as mupdf from 'mupdf'
 import { renderWithLayout, buildLayoutPage, layoutSheetCss } from './layoutRender.mjs'
 import mongoose from 'mongoose'
 import crypto from 'crypto'
@@ -2213,7 +2214,7 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
     // A7-S5: write the changed blocks into a copy of the original PDF
     const texts = {}
     for (const b of result.blocks) if (b.changed) texts[b.id] = b.text
-    let pdfB64 = null, skippedWrite = []
+    let pdfB64 = null, skippedWrite = [], pagePngs = []
     if (Object.keys(texts).length) {
       try {
         const w = writeSurgical(pdfBuffer, user.resumeCompat, user.resumeBlocks, texts)
@@ -2223,6 +2224,12 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
         const qa = qaSurgicalOutput(pdfBuffer, w.pdf, user.resumeBlocks, texts)
         if (qa.pass) {
           pdfB64 = w.pdf.toString('base64')
+          // page images for the modal sheet (2x for retina)
+          try {
+            const rdoc = mupdf.Document.openDocument(w.pdf, 'application/pdf')
+            for (let p = 0; p < rdoc.countPages(); p++)
+              pagePngs.push(Buffer.from(rdoc.loadPage(p).toPixmap(mupdf.Matrix.scale(2, 2), mupdf.ColorSpace.DeviceRGB, false).asPNG()).toString('base64'))
+          } catch (e) { console.warn('surgical page render failed: ' + e.message) }
           console.log('surgical QA: pass')
         } else {
           console.error('surgical QA FAILED — serving fallback. ' + qa.failures.slice(0, 5).join(' | '))
@@ -2238,6 +2245,7 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
       mappingNotes: result.notes,
       // the edited PDF itself (base64); null when nothing changed or the write failed
       pdf: pdfB64,
+      pages: pagePngs,
       pdfSkipped: skippedWrite,
     })
   } catch (error) {
@@ -3931,7 +3939,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-12d A7-S6: QA gate on surgical output (pdfQa.mjs) — fail = fallback, never served'
+const SERVER_BUILD = '2026-09-12e A7-S7: surgical-fit returns page PNGs; modal shows the real PDF, downloads its bytes'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })

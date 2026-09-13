@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useAuth } from '@clerk/clerk-react'
 import {
   X, Check, CheckCheck, ArrowRight, ArrowLeft, ArrowUp, Download, FileText,
@@ -161,6 +161,13 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   const [resumeText, setResumeText] = useState('')
   const [resumeLayout, setResumeLayout] = useState(null)   // A7: the resume's own layout, from the PDF
   const [sheetStyle, setSheetStyle]     = useState(null)   // { fontFamily, family, fontKnown, page }
+  // A7-S7: the surgical path. compatMode from /me/resume decides it; surgical holds
+  // the /me/surgical-fit result: { pdf (b64), pages (png b64[]), reverted[] }.
+  // surgEdit=true shows the text editor instead of the page images.
+  const [compatMode, setCompatMode] = useState(null)
+  const [surgical, setSurgical]     = useState(null)
+  const [surgState, setSurgState]   = useState('idle')   // idle | fitting | ready | failed
+  const [surgEdit, setSurgEdit]     = useState(true)   // edit-first: highlights and editing greet the user; the PDF is the preview/download state
   const [jobText, setJobText]       = useState('')
 
   const [matched, setMatched]   = useState([])
@@ -363,6 +370,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
         const jd = full.description || job.description || ''
         setResumeText(resume)
         setResumeLayout(me.resumeLayout || null)
+        setCompatMode(me.resumeCompat?.mode || null)
         setJobText(jd)
 
         const aRes = await fetch(`${BACKEND}/analyze`, {
@@ -424,6 +432,47 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
     setPhase('pick')
   }
 
+  // A7-S7: send the optimized text to /me/surgical-fit; the server maps it onto the
+  // stored blocks, shortens misfits, writes the PDF, QA-gates it, and returns page
+  // images. Failure or a QA fallback just leaves the HTML sheet — never an error.
+  async function surgicalFit(text, { preview = true } = {}) {
+    setSurgState('fitting')
+    try {
+      const token = await getToken()
+      const res = await fetch(`${BACKEND}/me/surgical-fit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ optimizedResume: text }),
+      })
+      const d = res.ok ? await res.json() : null
+      // Adding or deleting a whole bullet changes the layout; the exact-layout PDF
+      // replaces text inside fixed boxes and cannot reflow, so the mapper refuses to
+      // guess (bulletCountMismatch) — the failure mode we must never repeat is
+      // showing a stale preview about it SILENTLY (2026-09-12: a deleted summary
+      // bullet reappeared in the preview with no explanation).
+      if (d?.mappingNotes?.bulletCountMismatch) {
+        setSurgical(null)
+        setSurgState('failed')
+        setSurgEdit(true)
+        if (preview) window.alert('You added or removed a bullet. Your exact-layout PDF keeps every original line in its place, so it can\'t apply added or deleted bullets — only reworded ones.\n\nYour edit is kept: it will be in the Word download and the text version. To also get the exact-layout PDF, keep the same number of bullets and reword instead.')
+        return
+      }
+      if (d?.pdf && Array.isArray(d.pages) && d.pages.length) {
+        setSurgical(d)
+        setSurgState('ready')
+        // the automatic background fit never yanks the editor away; only a
+        // user-clicked Preview switches the view
+        if (preview) setSurgEdit(false)
+      } else {
+        setSurgical(null)
+        setSurgState('failed')   // html sheet remains the editor and the truth
+      }
+    } catch {
+      setSurgical(null)
+      setSurgState('failed')
+    }
+  }
+
   // ── step 2: rewrite
   async function rewrite() {
     setPromised(liveScore)
@@ -460,6 +509,9 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       setLetterHtml('')
       setLetterState('idle')
       setPhase('result')
+      // surgical users: fit the rewrite into their real PDF in the background; the
+      // HTML sheet shows meanwhile and stays as the fallback
+      if (compatMode === 'surgical') surgicalFit(d.optimizedResume || '', { preview: false })
 
       // If this job is ALREADY in the tracker — they applied straight from the board
       // first — save the rewrite against that row now, rather than losing it when the
@@ -594,6 +646,18 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
     const isLetter = tab === 'letter'
     if (isLetter && letterState !== 'ready') return
     setDlLoading(type)
+    // A7-S7: on the surgical path the PDF the student saw IS the file — download the
+    // served bytes, no re-render. Word still goes through /download-docx from text.
+    if (type === 'pdf' && !isLetter && surgState === 'ready' && surgical?.pdf && !surgEdit) {
+      try {
+        const bytes = Uint8Array.from(atob(surgical.pdf), c => c.charCodeAt(0))
+        const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
+        const a = document.createElement('a')
+        a.href = url; a.download = 'optimized-resume.pdf'; a.click()
+        URL.revokeObjectURL(url)
+      } finally { setDlLoading('') }
+      return
+    }
     try {
       const res = await fetch(`${BACKEND}/download-${type}`, {
         method: 'POST',
@@ -622,6 +686,31 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       setDlLoading('')
     }
   }
+
+  // The sheet's HTML is computed ONCE per document version. Recomputing it on every
+  // render risks React re-applying innerHTML over the user's uncommitted DOM edits —
+  // the background surgical fit finishing ~10s after result was re-rendering the
+  // modal and resurrecting deleted bullets (2026-09-12).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // The editable sheet is deliberately OUTSIDE React's render: React renders an
+  // empty contentEditable div (keyed on docVersion) and this effect writes the HTML
+  // into it exactly once per document version. When React rendered the content
+  // itself (dangerouslySetInnerHTML), any re-render could silently restore React's
+  // copy over the user's uncommitted edits — deleted bullets resurrected seconds
+  // later with no state change in any log (2026-09-12/13). An element React believes
+  // is empty is an element React can never rebuild.
+  const decoratedHtml = useMemo(() => decorateHtml(html, added, resumeText), [docVersion, html])
+  useEffect(() => {
+    if (docRef.current && html) {
+      docRef.current.innerHTML = decoratedHtml
+      // the undo effect above ran first (declaration order) and snapshotted the
+      // still-empty div; re-baseline it on the real content
+      lastSnap.current = decoratedHtml
+      undoStack.current = []
+      redoStack.current = []
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [decoratedHtml])
 
   // ── derived, for the screens
   const stepIndex = phase === 'stand' ? 1 : phase === 'pick' ? 2 : (phase === 'rewriting' || phase === 'result') ? 3 : 0
@@ -839,21 +928,46 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                 <div className="om-tabs">
                   <button className={`om-tab ${tab === 'resume' ? 'on' : ''}`} onClick={() => setTab('resume')}><FileText size={12} />Optimized resume</button>
                   <button className={`om-tab ${tab === 'letter' ? 'on' : ''}`} onClick={openLetter}><PenLine size={12} />Cover letter</button>
-                  {tab === 'resume' && <span className="om-tab-hint">{sheetStyle ? (sheetStyle.fontKnown ? `Your layout, your font (${sheetStyle.family}) · ` : `Your layout · ${sheetStyle.family} isn't available here, closest match shown · `) : ''}Click anywhere to edit · <mark className="om-mark">green</mark> = skills you tapped · <mark className="om-mark-new">amber</mark> = wording the rewrite changed</span>}
+                  {tab === 'resume' && surgState === 'fitting' && <span className="om-tab-hint">Fitting into your exact PDF layout…</span>}
+                  {tab === 'resume' && (surgState === 'ready' || surgState === 'failed') && surgEdit && <span className="om-tab-hint"><button className="om-link-btn" onClick={() => surgicalFit(sheetToText(docRef.current) || optimized)}>Preview in my layout</button> · edits included</span>}
+                  {tab === 'resume' && !(surgState === 'ready' && !surgEdit) && <span className="om-tab-hint">{sheetStyle ? (sheetStyle.fontKnown ? `Your layout, your font (${sheetStyle.family}) · ` : `Your layout · ${sheetStyle.family} isn't available here, closest match shown · `) : ''}Click anywhere to edit · <mark className="om-mark">green</mark> = skills you tapped · <mark className="om-mark-new">amber</mark> = wording the rewrite changed</span>}
                   {tab === 'letter' && letterState === 'ready' && <span className="om-tab-hint">Click a paragraph to edit · letterhead and sign-off come from your resume</span>}
                 </div>
-                {tab === 'resume' ? (
-                  html ? (
+                {tab === 'resume' ? (<>
+                  {/* A7-S7: the real edited PDF. ALWAYS mounted, CSS-hidden when not
+                      shown — the editable sheet below must never unmount, because the
+                      user's uncommitted DOM edits die with it (2026-09-12: deleted
+                      bullets "came back" when a background state change remounted the
+                      editor). */}
+                  {surgState === 'ready' && surgical && (
+                    <div className="om-surgical" style={surgEdit ? { display: 'none' } : undefined}>
+                      <div className="om-tab-hint" style={{ display: 'block', margin: '6px 0' }}>
+                        Your exact layout, edited in place.{surgical.reverted?.length ? ` ${surgical.reverted.length} line${surgical.reverted.length === 1 ? '' : 's'} kept original wording to preserve the layout.` : ''}
+                        {' '}<button className="om-link-btn" onClick={() => setSurgEdit(true)}>Edit text</button>
+                      </div>
+                      {surgical.pages.map((p, i) => (
+                        <img key={i} src={`data:image/png;base64,${p}`} alt={`Page ${i + 1}`} style={{ width: '100%', display: 'block', border: '1px solid #E5E7EB', borderRadius: 6, marginBottom: 10, background: '#fff' }} />
+                      ))}
+                    </div>
+                  )}
+                  <div style={surgState === 'ready' && surgical && !surgEdit ? { display: 'none' } : undefined}>
+                  {html ? (
                     /* The sheet IS the editor. Keyed on docVersion so ✕/↩ remount it. */
                     <div
                       key={docVersion}
-                      ref={docRef}
+                      ref={el => {
+                        docRef.current = el
+                        // tab switches unmount/remount this element; a remount comes
+                        // back EMPTY (React renders no children by design — see the
+                        // write effect) and must be refilled, else the sheet is blank
+                        // after Cover letter → Optimized resume (found 2026-09-13)
+                        if (el && !el.innerHTML && html) { el.innerHTML = decoratedHtml; lastSnap.current = decoratedHtml; undoStack.current = []; redoStack.current = [] }
+                      }}
                       className="om-sheet"
                       style={sheetStyle ? { fontFamily: sheetStyle.fontFamily, padding: `${sheetStyle.page.top}pt ${sheetStyle.page.right}pt 48pt ${sheetStyle.page.left}pt`, maxWidth: `${sheetStyle.page.width}pt` } : undefined}
                       contentEditable
                       suppressContentEditableWarning
                       spellCheck={false}
-                      dangerouslySetInnerHTML={{ __html: decorateHtml(html, added, resumeText) }}
                     />
                   ) : (
                     <div className="om-paper">
@@ -862,8 +976,9 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                         <ResumeView text={optimized} skills={added} originalText={resumeText} />
                       </pre>
                     </div>
-                  )
-                ) : (
+                  )}
+                  </div>
+                </>) : (
                   <div className={letterState === 'ready' && letterHtml ? '' : 'om-paper om-paper-letter'}>
                     {!(letterState === 'ready' && letterHtml) && <div className="om-paper-h"><span>{letterState === 'ready' ? 'Click anywhere to edit' : 'Cover letter'}</span><span>Built only from your resume's facts</span></div>}
                     {letterState === 'loading' && (
@@ -1113,6 +1228,7 @@ const CSS = `
 .om-tab.on { color: var(--blue); border-bottom-color: var(--blue); }
 .om-tab:hover { color: var(--ink); }
 .om-tab-hint { margin-left: auto; font-size: 11px; color: var(--mute); }
+.om-link-btn { background: none; border: none; padding: 0; font: inherit; font-size: 11px; color: #4F46E5; text-decoration: underline; cursor: pointer; }
 .om-tab-hint mark { font-size: 11px; }
 .om-sheet:focus { outline: 2px solid var(--blue3); outline-offset: 4px; }
 .om-sheet mark { font-family: inherit; }
