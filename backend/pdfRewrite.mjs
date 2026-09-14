@@ -80,8 +80,8 @@ export async function fitAndShorten(ctx, blocksDoc, mappedResult, shortenFn, { m
       continue
     }
     const r = fitCheck(ctx, b, mapped[b.id])
-    if (r.fits) out.push({ id: b.id, text: mapped[b.id], changed: true, fits: true, reverted: false, tries: 0 })
-    else pending.push({ block: b, text: mapped[b.id], tries: 0, last: r })
+    if (r.fits) out.push({ id: b.id, text: mapped[b.id], sent: mapped[b.id], changed: true, fits: true, reverted: false, tries: 0 })
+    else pending.push({ block: b, text: mapped[b.id], sent: mapped[b.id], tries: 0, last: r })
   }
 
   for (let round = 1; round <= maxTries && pending.length; round++) {
@@ -103,7 +103,7 @@ export async function fitAndShorten(ctx, blocksDoc, mappedResult, shortenFn, { m
       p.tries = round
       const r = fitCheck(ctx, p.block, p.text)
       p.last = r
-      if (r.fits) out.push({ id: p.block.id, text: p.text, changed: true, fits: true, reverted: false, tries: round })
+      if (r.fits) out.push({ id: p.block.id, text: p.text, sent: p.sent, changed: true, fits: true, reverted: false, tries: round })
       else next.push(p)
     }
     pending = next
@@ -112,7 +112,7 @@ export async function fitAndShorten(ctx, blocksDoc, mappedResult, shortenFn, { m
   // never-fit blocks keep their original text — an unimproved bullet beats an
   // overflowing or glyph-dropping one
   for (const p of pending) {
-    out.push({ id: p.block.id, text: p.block.text, changed: false, fits: true, reverted: true, tries: p.tries, reason: p.last.reason || `${p.last.linesNeeded}/${p.last.maxLines} lines` })
+    out.push({ id: p.block.id, text: p.block.text, sent: p.sent, changed: false, fits: true, reverted: true, tries: p.tries, reason: p.last.reason || `${p.last.linesNeeded}/${p.last.maxLines} lines` })
   }
   out.sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)))
   return { blocks: out, reverted: out.filter(x => x.reverted).map(x => x.id), notes: mappedResult.notes }

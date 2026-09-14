@@ -459,6 +459,18 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       }
       if (d?.pdf && Array.isArray(d.pages) && d.pages.length) {
         setSurgical(d)
+        // sync the editor to the FITTED texts: the shortener may have compressed a
+        // block to fit, and the sheet must never silently differ from the PDF
+        // ("5+ years" dropped in preview but still on screen — Typst run,
+        // 2026-09-12). Rebuild the sheet HTML from the text the PDF actually got.
+        if (Array.isArray(d.blocks)) {
+          const finals = Object.fromEntries(d.blocks.filter(b => b.changed || b.reverted).map(b => [b.id, b.text]))
+          if (Object.keys(finals).length && docRef.current) {
+            let t = sheetToText(docRef.current) || text
+            for (const b of d.blocks) if (finals[b.id] !== undefined && b.sent !== undefined && b.sent !== b.text) t = t.replace(b.sent, b.text)
+            if (t !== (sheetToText(docRef.current) || text)) { setOptimized(t); rerender(t) }
+          }
+        }
         setSurgState('ready')
         // the automatic background fit never yanks the editor away; only a
         // user-clicked Preview switches the view

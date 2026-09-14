@@ -1482,6 +1482,31 @@ surgical-fit + QA pass lines → modal sheet becomes the real PDF pages → Edit
 text → change a bullet → Apply → pages update → Download PDF opens the edited
 PDF with the change in it. Then push frontend + backend together.
 Then S8: five foreign resumes (Word, Docs, Canva, LaTeX, two-column fallback).
+
+### A7-S7 VERIFIED + PUSHED (4e1f122); prod live; fixes 2026-09-13 (build 2026-09-13a)
+S7 end-to-end verified locally AND in production (Typst resume: surgical 49
+blocks via the Croscore fix, paragraph summary rewritten in place, QA pass).
+Editor resurrect bug root cause: an editable document must not be React-rendered
+— React restores its own copy on re-render. Sheet is now an EMPTY React element
+filled imperatively once per docVersion (+ refill on tab remount, undo
+re-baselined). Bullet add/delete cannot enter the exact-layout PDF (no reflow):
+alert says so, edit kept for Word/text; Preview link survives a failed fit.
+Clerk prod env had pk_test publishable / sk_live secret mismatched — pk_live
+restored on Render 2026-09-13, login verified.
+Filter: export-authorization/license/deemed-export patterns added to
+DISQUALIFIER_PATTERNS (Altera live-board leak; every Altera ad carries the
+sentence) AND mirrored into leakPurge.mjs (own list, does not import the brain).
+One-brain confirmed: all five fetchers import FetchJobs.mjs. Purge dry: 0 in
+stored text (truncated at 500 chars) — stale sweep removes no-longer-qualifying
+jobs next cycle; VERIFY next morning: board search "altera" → 0.
+Shortener (13a): numbers/dates/quantities untouchable, cut order filler →
+adjectives → repeats ("5+ years" was dropped on the Typst run); fit result
+carries sent (pre-shorten text) per block and the modal rebuilds the editor
+from the FITTED texts after preview — screen never silently differs from PDF.
+Done when (local): optimize → make one bullet deliberately long → Preview →
+editor text updates to the shortened wording AND any number in it survives.
+Next: S8 five foreign resumes (CLI → local upload → optimize each); backlog:
+gate escalation cost, PNG-preview highlights, protected-line edit note.
 Next: S5 — extend /me/surgical-fit to write fitted blocks into a copy of the
 original PDF (redaction inset + addStream per S1) and return it; then link
 annotations back over replaced linked text.

@@ -2197,7 +2197,12 @@ app.post('/me/surgical-fit', requireUser, async (req, res) => {
 
     const shortenFn = async (items, round) => {
       const prompt = `You shorten resume lines so they fit a fixed printed width. For each item, rewrite the text to AT MOST its "budget" characters (shorter is fine).
-Rules: keep every factual claim that fits, cut filler first; never add a fact, tool, metric, or claim that is not in the text; keep the original tense and voice; plain hyphens only, no em or en dashes; if "badChars" is present, those characters cannot be printed, reword to avoid them.
+Rules, in priority order:
+1. NEVER drop or change a number, date, duration, percentage, or quantity ("5+ years", "99.2%", "14 pipelines", "Jan 2024") — these survive every cut.
+2. Never add a fact, tool, metric, or claim that is not in the text.
+3. Cut in this order: filler words, adjectives, repeated ideas — facts last.
+4. Keep the original tense and voice; plain hyphens only, no em or en dashes.
+5. If "badChars" is present, those characters cannot be printed — reword to avoid them.
 Respond with ONLY a JSON object mapping each id to its shortened text, no extra keys, no prose.
 
 ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budget, ...(badChars ? { badChars } : {}) })), null, 1)}`
@@ -3939,7 +3944,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-12e A7-S7: surgical-fit returns page PNGs; modal shows the real PDF, downloads its bytes'
+const SERVER_BUILD = '2026-09-13a shortener: numbers/dates/quantities untouchable; fitted texts echoed for editor sync'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })
