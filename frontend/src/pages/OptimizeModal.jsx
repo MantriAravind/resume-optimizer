@@ -167,7 +167,8 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   const [compatMode, setCompatMode] = useState(null)
   const [surgical, setSurgical]     = useState(null)
   const [surgState, setSurgState]   = useState('idle')   // idle | fitting | ready | failed
-  const [surgEdit, setSurgEdit]     = useState(false)  // FINAL (2026-09-13, tried both): preview-first — the highlighted exact-layout render greets the user; Edit switches to the editable sheet
+  const [surgEdit, setSurgEdit]     = useState(false)
+  const [surgicalPreviewUrl, setSurgicalPreviewUrl] = useState('')  // FINAL (2026-09-13, tried both): preview-first — the highlighted exact-layout render greets the user; Edit switches to the editable sheet
   const [jobText, setJobText]       = useState('')
 
   const [matched, setMatched]   = useState([])
@@ -457,7 +458,14 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
         if (preview) window.alert('You added or removed a bullet. Your exact-layout PDF keeps every original line in its place, so it can\'t apply added or deleted bullets — only reworded ones.\n\nYour edit is kept: it will be in the Word download and the text version. To also get the exact-layout PDF, keep the same number of bullets and reword instead.')
         return
       }
-      if (d?.pdf && Array.isArray(d.pages) && d.pages.length) {
+      if (d?.pdf && (d.previewPdf || (Array.isArray(d.pages) && d.pages.length))) {
+        if (d.previewPdf) {
+          try {
+            const bytes = Uint8Array.from(atob(d.previewPdf), c => c.charCodeAt(0))
+            const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
+            setSurgicalPreviewUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+          } catch { setSurgicalPreviewUrl('') }
+        }
         setSurgical(d)
         // sync the editor to the FITTED texts: the shortener may have compressed a
         // block to fit, and the sheet must never silently differ from the PDF
@@ -957,8 +965,15 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                         Your exact layout, edited in place · <span style={{ background: 'rgba(140,230,140,0.5)', padding: '0 4px', borderRadius: 3 }}>green</span> = skills you tapped · <span style={{ background: 'rgba(255,217,102,0.55)', padding: '0 4px', borderRadius: 3 }}>amber</span> = wording changed · highlights are on-screen only, never in your download.{surgical.reverted?.length ? ` ${surgical.reverted.length} line${surgical.reverted.length === 1 ? '' : 's'} kept original wording to preserve the layout.` : ''}
                         {' '}<button className="om-link-btn" onClick={() => setSurgEdit(true)}>Edit</button>
                       </div>
-                      {surgical.pages.map((p, i) => (
-                        <img key={i} src={`data:image/png;base64,${p}`} alt={`Page ${i + 1}`} style={{ width: '100%', display: 'block', border: '1px solid #E5E7EB', borderRadius: 6, marginBottom: 10, background: '#fff' }} />
+                      {surgical.previewPdf ? (
+                        /* vector preview: the highlighted display-only PDF in the
+                           browser's renderer — text stays crisp at any pane width,
+                           which no raster survives (user report 2026-09-14) */
+                        <iframe title="Preview" src={surgicalPreviewUrl + '#toolbar=0&navpanes=0&view=FitH'}
+                          style={{ width: '100%', height: '72vh', border: '1px solid #E5E7EB', borderRadius: 6, background: '#fff' }} />
+                      ) : surgical.pages.map((p, i) => (
+                        <img key={i} src={`data:image/png;base64,${p}`} alt={`Page ${i + 1}`}
+                          style={{ width: '100%', display: 'block', border: '1px solid #E5E7EB', borderRadius: 6, marginBottom: 10, background: '#fff' }} />
                       ))}
                     </div>
                   )}
@@ -1251,7 +1266,7 @@ const CSS = `
 .om-paper { background: #fff; border: 1px solid var(--line2); border-radius: 10px; max-width: 820px; margin: 0 auto; overflow: hidden; }
 .om-paper-h { display: flex; justify-content: space-between; padding: 8px 14px; font-size: 10.5px; color: var(--mute); border-bottom: 1px solid var(--line); background: #FBFAF8; }
 .om-resume { font-family: ${DOC_FONT_CSS}; font-size: 12.5px; line-height: 1.6; color: #1F2937; padding: 22px 26px; margin: 0; white-space: pre-wrap; word-wrap: break-word; outline: none; min-height: 300px; }
-.om-mark { background: #D1FAE5; color: #047857; font-weight: 700; padding: 0 3px; border-radius: 3px; }
+.om-mark { background: #D1FAE5; padding: 0 3px; border-radius: 3px; } /* weight/colour inherit: the PDF writes skills in the line's own regular font, and the editor must not pretend otherwise (2026-09-14) */
 .om-mark-new { background: #FEF3C7; color: #92400E; padding: 0 2px; border-radius: 3px; }
 .om-letter { min-height: 200px; }
 .om-s3-rail { border-left: 1px solid var(--line); background: #fff; padding: 22px 20px; overflow: auto; }

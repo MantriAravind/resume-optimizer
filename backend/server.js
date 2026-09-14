@@ -9,7 +9,7 @@ import { extractText, assessExtraction } from './resumeExtract.mjs'
 import { readPdfLayout } from './pdfLayout.mjs'
 import { checkPdfCompat } from './pdfCompat.mjs'
 import { extractBlocks } from './pdfBlocks.mjs'
-import { buildFitContext } from './pdfFit.mjs'
+import { buildFitContext, wrapText, measure } from './pdfFit.mjs'
 import { mapOptimizedToBlocks, fitAndShorten } from './pdfRewrite.mjs'
 import { writeSurgical } from './pdfSurgical.mjs'
 import { qaSurgicalOutput } from './pdfQa.mjs'
@@ -2184,7 +2184,6 @@ app.post('/me/surgical-fit', requireUser, async (req, res) => {
   // A7 final design 2026-09-13: names of tapped skills, for green vs amber preview
   // highlights — display only, never affects the fit or the PDF
   const addedSkills = Array.isArray(req.body?.addedSkills) ? req.body.addedSkills.filter(x => typeof x === 'string' && x.trim()).slice(0, 40) : []
-  console.log('surgical-fit: addedSkills =', JSON.stringify(req.body?.addedSkills)?.slice(0, 200))
   if (!optimizedResume.trim()) return res.status(400).json({ error: 'optimizedResume is required.' })
   try {
     const user = await User.findOne({ clerkUserId: req.userId })
@@ -2224,7 +2223,7 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
     // A7-S5: write the changed blocks into a copy of the original PDF
     const texts = {}
     for (const b of result.blocks) if (b.changed) texts[b.id] = b.text
-    let pdfB64 = null, skippedWrite = [], pagePngs = []
+    let pdfB64 = null, skippedWrite = [], pagePngs = [], previewPdfB64 = null
     if (Object.keys(texts).length) {
       try {
         const w = writeSurgical(pdfBuffer, user.resumeCompat, user.resumeBlocks, texts)
@@ -2239,13 +2238,73 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
             // preview pages carry green/amber highlights (final design 2026-09-13):
             // green = changed block containing a tapped skill, amber = other changed
             // blocks. Drawn on a render-only copy — the served pdf stays clean.
-            const skillRes = addedSkills.map(sk => new RegExp('(^|[^A-Za-z0-9])' + sk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^A-Za-z0-9])', 'i'))
-            const colourById = {}
-            for (const b of result.blocks) {
-              if (!b.changed) continue
-              colourById[b.id] = skillRes.some(re => re.test(b.text)) ? 'green' : 'amber'
+            // amber = whole reworded block; green = the tapped skill WORDS only,
+            // located by re-wrapping the final text with the block's own metrics
+            // (matches the editor's word-level marks — user call, 2026-09-14)
+            const skillRes = addedSkills.map(sk => new RegExp('(^|[^A-Za-z0-9])(' + sk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')(?=$|[^A-Za-z0-9])', 'ig'))
+            const colourById = {}   // kept for API shape; word rects carry all colour now
+            const wordRects = []
+            // word-level diff: which words of the NEW text are not in the OLD (LCS) —
+            // those get amber, at word precision (user call 2026-09-14: highlight
+            // what changed, not the sentence)
+            // presence diff, not order diff: a word that merely MOVED (skill lists
+            // get reordered constantly) is not a change — the editor ignores moves
+            // and the preview must match it (user comparison, 2026-09-14)
+            const changedWordIdx = (oldText, newText) => {
+              const norm = w => w.toLowerCase().replace(/[^a-z0-9+#./-]/g, '')
+              const bag = {}
+              for (const w of String(oldText || '').split(/\s+/)) { const k = norm(w); if (k) bag[k] = (bag[k] || 0) + 1 }
+              const out = []
+              String(newText || '').split(/\s+/).filter(Boolean).forEach((w, i) => {
+                const k = norm(w)
+                if (k && bag[k] > 0) bag[k]--
+                else if (k) out.push(i)
+              })
+              return out
             }
-            pagePngs = renderHighlightedPages(w.pdf, user.resumeBlocks, colourById)
+            const blockById = Object.fromEntries(user.resumeBlocks.blocks.map(b => [b.id, b]))
+            for (const rb of result.blocks) {
+              if (!rb.changed) continue
+              const b = blockById[rb.id]
+              if (!b) continue
+              const metrics = ctx.byBase[b.font?.name]?.metrics
+              if (!metrics) continue
+              const size = b.font.size
+              const text = (b.type === 'skill' ? b.label + ' ' : '') + rb.text
+              const oldFull = (b.type === 'skill' ? b.label + ' ' : '') + b.text
+              const lines = wrapText(metrics, text, size, b.availWidth)
+              // char ranges of changed words (amber), then green skill occurrences
+              // painted over them where they overlap (skills win)
+              const words = text.split(/\s+/).filter(Boolean)
+              const starts = []
+              { let pos = 0; for (const wd of words) { const at = text.indexOf(wd, pos); starts.push(at); pos = at + wd.length } }
+              const amberIdx = new Set(changedWordIdx(oldFull, text))
+              const greenRanges = []
+              for (const re of skillRes) { re.lastIndex = 0; let mth; while ((mth = re.exec(text)) !== null) greenRanges.push([mth.index + mth[1].length, mth.index + mth[1].length + mth[2].length]) }
+              const inGreen = (s0, s1) => greenRanges.some(([g0, g1]) => s0 < g1 && g0 < s1)
+              // map char range → rect(s) across wrapped lines
+              let lineStart = 0
+              lines.forEach((line, i) => {
+                const ln = b.lines[i]
+                const lineEnd = lineStart + line.text.length
+                if (ln) {
+                  const lineX0 = i === 0 && b.type === 'skill' ? b.lines[0].x0 : ln.x0
+                  const paint = (s0, s1, colour) => {
+                    const a0 = Math.max(s0, lineStart), a1 = Math.min(s1, lineEnd)
+                    if (a0 >= a1) return
+                    const x0 = lineX0 + measure(metrics, line.text.slice(0, a0 - lineStart), size)
+                    const x1 = x0 + measure(metrics, text.slice(a0, a1), size)
+                    wordRects.push({ page: b.page, x0, x1, top: ln.top, bottom: ln.bottom, colour })
+                  }
+                  words.forEach((wd, k) => { if (amberIdx.has(k) && !inGreen(starts[k], starts[k] + wd.length)) paint(starts[k], starts[k] + wd.length, 'amber') })
+                  for (const [g0, g1] of greenRanges) paint(g0, g1, 'green')
+                }
+                lineStart = lineEnd + 1   // the space consumed at the wrap
+              })
+            }
+            const hl = renderHighlightedPages(w.pdf, user.resumeBlocks, colourById, 2, wordRects)
+            pagePngs = hl.pages
+            previewPdfB64 = hl.previewPdf
           } catch (e) {
             console.warn('highlighted render failed, falling back to plain: ' + e.message)
             try {
@@ -2270,6 +2329,8 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
       // the edited PDF itself (base64); null when nothing changed or the write failed
       pdf: pdfB64,
       pages: pagePngs,
+      // vector preview with display-only highlights — crisp at any pane width
+      previewPdf: previewPdfB64,
       pdfSkipped: skippedWrite,
     })
   } catch (error) {
@@ -3963,7 +4024,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-13b preview-first: highlighted preview pages (green tapped skills / amber rewording), display-only'
+const SERVER_BUILD = '2026-09-14b preview: word-level amber diff + green skills; vector (PDF) preview pane'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })

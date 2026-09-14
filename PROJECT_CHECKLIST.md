@@ -1525,6 +1525,34 @@ fitted wording, downloaded PDF word-identical.
 Done when (local): optimize → FIRST view is highlighted pages (green on the
 skill-tapped bullet, amber on reworded ones) → Edit → editor highlights as
 before → Preview → back; Download PDF shows NO highlight colour anywhere.
+
+### Preview polish (build 2026-09-14a) — word-level green + sharp images
+User review 2026-09-14: (1) whole-bullet highlights read wrong — the editor
+marks single words; (2) preview soft vs the crisp editor (image stretched by
+the browser on scaled displays). Fixes:
+- green now marks the tapped skill WORDS only: server re-wraps each changed
+  block's final text with its own metrics, measures the prefix to locate each
+  occurrence, emits wordRects; pdfHighlight draws them alongside block-level
+  amber (amber stays whole-block: "wording changed" is a sentence property).
+  Verified in sandbox: green box on exactly one "Databricks", nothing else.
+- preview <img> sized onLoad to naturalWidth / devicePixelRatio (1 image px =
+  1 device px, capped at container) — no browser stretching at any Windows
+  scale; renders stay 3x.
+Done when (local): green sits on the skill words only; amber whole reworded
+bullets; preview text noticeably sharper at the user's display scale;
+downloaded PDF still colourless.
+
+### Preview final polish (build 2026-09-14b) — word-diff amber + vector pane
+User held firm: amber must mark the changed WORDS, not the sentence; and the
+raster preview could never be crisp in a ~640px pane. Both fixed:
+- amber = LCS word-diff of old vs new block text — only differing words get
+  rects (green skill words win overlaps); sandbox render: "Build"/"maintain"
+  amber, "and" unmarked, "Databricks" green.
+- preview pane now shows the highlighted DISPLAY-ONLY PDF itself in an iframe
+  (#toolbar=0) — vector text, crisp at any width; PNG pages (2x) kept only as
+  fallback when previewPdf is absent. Download unchanged: clean PDF.
+Done when (local): preview text as crisp as the editor; amber only on changed
+words; green on skill words; downloaded PDF colourless.
 Next: S5 — extend /me/surgical-fit to write fitted blocks into a copy of the
 original PDF (redaction inset + addStream per S1) and return it; then link
 annotations back over replaced linked text.
