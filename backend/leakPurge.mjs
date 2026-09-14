@@ -26,6 +26,13 @@ const PHRASES = [
   /\bno\s+other\s+visas?\b/i,
   /\bother\s+visas?\s+(will\s+)?not\s+(be\s+)?(considered|accepted|eligible)\b/i,
   /\bvisas?\s+will\s+not\s+be\s+(considered|accepted)\b/i,
+  // Export-authorization gate (Altera, live-board find 2026-09-13). Same class as
+  // ITAR: an F1 student cannot hold US export authorizations. Mirrors the three
+  // patterns added to FetchJobs the same day — this script does NOT import the
+  // brain, so pattern fixes must land in both.
+  /\bexport\s+authorizations?\b/i,
+  /\bexport\s+licen[cs]es?\b/i,
+  /\bdeemed\s+exports?\b/i,
 ]
 
 await mongoose.connect(uri)

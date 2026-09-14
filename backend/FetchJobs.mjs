@@ -466,6 +466,14 @@ const DISQUALIFIER_PATTERNS = [
   /\bexport[\s-]?control(led)?\s+(information|data|technology|technical data|materials?|items?|regulations?|requirements?|laws?|restrictions?|facilit)/,
   /\baccess\s+to\s+export[\s-]?controlled\b/,
   /\bsubject\s+to\s+(itar|ear|export[\s-]?control)/,
+  // "Applicants must be eligible for any required U.S. export authorizations" —
+  // Altera, found on the live board 2026-09-13. The family above lists the nouns
+  // export-CONTROL attaches to, but this sentence uses export AUTHORIZATION, and
+  // "export license" / "deemed export" are the same gate in other mouths. An F1
+  // student cannot hold these; same class as ITAR.
+  /\bexport\s+authorizations?\b/,
+  /\bexport\s+licen[cs]es?\b/,
+  /\bdeemed\s+exports?\b/,
 ]
 
 function isDisqualified(plainText = '', title = '') {
