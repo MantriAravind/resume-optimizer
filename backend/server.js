@@ -13,6 +13,7 @@ import { buildFitContext } from './pdfFit.mjs'
 import { mapOptimizedToBlocks, fitAndShorten } from './pdfRewrite.mjs'
 import { writeSurgical } from './pdfSurgical.mjs'
 import { qaSurgicalOutput } from './pdfQa.mjs'
+import { renderHighlightedPages } from './pdfHighlight.mjs'
 import * as mupdf from 'mupdf'
 import { renderWithLayout, buildLayoutPage, layoutSheetCss } from './layoutRender.mjs'
 import mongoose from 'mongoose'
@@ -2180,6 +2181,10 @@ Respond in this exact JSON format with no extra text:
 
 app.post('/me/surgical-fit', requireUser, async (req, res) => {
   const optimizedResume = String(req.body?.optimizedResume || '')
+  // A7 final design 2026-09-13: names of tapped skills, for green vs amber preview
+  // highlights — display only, never affects the fit or the PDF
+  const addedSkills = Array.isArray(req.body?.addedSkills) ? req.body.addedSkills.filter(x => typeof x === 'string' && x.trim()).slice(0, 40) : []
+  console.log('surgical-fit: addedSkills =', JSON.stringify(req.body?.addedSkills)?.slice(0, 200))
   if (!optimizedResume.trim()) return res.status(400).json({ error: 'optimizedResume is required.' })
   try {
     const user = await User.findOne({ clerkUserId: req.userId })
@@ -2231,10 +2236,24 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
           pdfB64 = w.pdf.toString('base64')
           // page images for the modal sheet (2x for retina)
           try {
-            const rdoc = mupdf.Document.openDocument(w.pdf, 'application/pdf')
-            for (let p = 0; p < rdoc.countPages(); p++)
-              pagePngs.push(Buffer.from(rdoc.loadPage(p).toPixmap(mupdf.Matrix.scale(2, 2), mupdf.ColorSpace.DeviceRGB, false).asPNG()).toString('base64'))
-          } catch (e) { console.warn('surgical page render failed: ' + e.message) }
+            // preview pages carry green/amber highlights (final design 2026-09-13):
+            // green = changed block containing a tapped skill, amber = other changed
+            // blocks. Drawn on a render-only copy — the served pdf stays clean.
+            const skillRes = addedSkills.map(sk => new RegExp('(^|[^A-Za-z0-9])' + sk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^A-Za-z0-9])', 'i'))
+            const colourById = {}
+            for (const b of result.blocks) {
+              if (!b.changed) continue
+              colourById[b.id] = skillRes.some(re => re.test(b.text)) ? 'green' : 'amber'
+            }
+            pagePngs = renderHighlightedPages(w.pdf, user.resumeBlocks, colourById)
+          } catch (e) {
+            console.warn('highlighted render failed, falling back to plain: ' + e.message)
+            try {
+              const rdoc = mupdf.Document.openDocument(w.pdf, 'application/pdf')
+              for (let p = 0; p < rdoc.countPages(); p++)
+                pagePngs.push(Buffer.from(rdoc.loadPage(p).toPixmap(mupdf.Matrix.scale(2, 2), mupdf.ColorSpace.DeviceRGB, false).asPNG()).toString('base64'))
+            } catch (e2) { console.warn('surgical page render failed: ' + e2.message) }
+          }
           console.log('surgical QA: pass')
         } else {
           console.error('surgical QA FAILED — serving fallback. ' + qa.failures.slice(0, 5).join(' | '))
@@ -3944,7 +3963,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-13a shortener: numbers/dates/quantities untouchable; fitted texts echoed for editor sync'
+const SERVER_BUILD = '2026-09-13b preview-first: highlighted preview pages (green tapped skills / amber rewording), display-only'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
 })

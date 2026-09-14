@@ -1507,6 +1507,24 @@ Done when (local): optimize → make one bullet deliberately long → Preview �
 editor text updates to the shortened wording AND any number in it survives.
 Next: S8 five foreign resumes (CLI → local upload → optimize each); backlog:
 gate escalation cost, PNG-preview highlights, protected-line edit note.
+
+### FINAL modal design + highlighted preview — 2026-09-13 (build 2026-09-13b)
+DECIDED FINAL after trying both orders (do not reopen): preview-first. After
+optimization the default view is the exact-layout render WITH highlights —
+green = changed block containing a tapped skill, amber = other rewording —
+drawn on a render-only copy via ExtGState alpha 0.32 (pdfHighlight.mjs); the
+downloadable PDF never carries them. "Edit" switches to the editable sheet;
+Preview refits. Highlight rects span the block's full availWidth (tracing
+original line extents left unhighlighted tails on rewrapped text). Modal sends
+addedSkills[] for the green/amber split; header carries the colour legend and
+"highlights are on-screen only, never in your download". Highlight render
+failure degrades to plain pages, never errors.
+Shortener+sync fixes verified locally 2026-09-13 and pushed: long bullet with
+"12 systems" → shortened in preview with the number intact, editor synced to
+fitted wording, downloaded PDF word-identical.
+Done when (local): optimize → FIRST view is highlighted pages (green on the
+skill-tapped bullet, amber on reworded ones) → Edit → editor highlights as
+before → Preview → back; Download PDF shows NO highlight colour anywhere.
 Next: S5 — extend /me/surgical-fit to write fitted blocks into a copy of the
 original PDF (redaction inset + addStream per S1) and return it; then link
 annotations back over replaced linked text.

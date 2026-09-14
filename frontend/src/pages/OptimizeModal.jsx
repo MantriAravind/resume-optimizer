@@ -167,7 +167,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   const [compatMode, setCompatMode] = useState(null)
   const [surgical, setSurgical]     = useState(null)
   const [surgState, setSurgState]   = useState('idle')   // idle | fitting | ready | failed
-  const [surgEdit, setSurgEdit]     = useState(true)   // edit-first: highlights and editing greet the user; the PDF is the preview/download state
+  const [surgEdit, setSurgEdit]     = useState(false)  // FINAL (2026-09-13, tried both): preview-first — the highlighted exact-layout render greets the user; Edit switches to the editable sheet
   const [jobText, setJobText]       = useState('')
 
   const [matched, setMatched]   = useState([])
@@ -442,7 +442,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       const res = await fetch(`${BACKEND}/me/surgical-fit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ optimizedResume: text }),
+        body: JSON.stringify({ optimizedResume: text, addedSkills: (added || []).map(x => (x && (x.name || x.skill || x.keyword || x.kw)) || (typeof x === 'string' ? x : '')).filter(Boolean) }),
       })
       const d = res.ok ? await res.json() : null
       // Adding or deleting a whole bullet changes the layout; the exact-layout PDF
@@ -523,7 +523,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       setPhase('result')
       // surgical users: fit the rewrite into their real PDF in the background; the
       // HTML sheet shows meanwhile and stays as the fallback
-      if (compatMode === 'surgical') surgicalFit(d.optimizedResume || '', { preview: false })
+      if (compatMode === 'surgical') surgicalFit(d.optimizedResume || '', { preview: true })
 
       // If this job is ALREADY in the tracker — they applied straight from the board
       // first — save the rewrite against that row now, rather than losing it when the
@@ -954,8 +954,8 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                   {surgState === 'ready' && surgical && (
                     <div className="om-surgical" style={surgEdit ? { display: 'none' } : undefined}>
                       <div className="om-tab-hint" style={{ display: 'block', margin: '6px 0' }}>
-                        Your exact layout, edited in place.{surgical.reverted?.length ? ` ${surgical.reverted.length} line${surgical.reverted.length === 1 ? '' : 's'} kept original wording to preserve the layout.` : ''}
-                        {' '}<button className="om-link-btn" onClick={() => setSurgEdit(true)}>Edit text</button>
+                        Your exact layout, edited in place · <span style={{ background: 'rgba(140,230,140,0.5)', padding: '0 4px', borderRadius: 3 }}>green</span> = skills you tapped · <span style={{ background: 'rgba(255,217,102,0.55)', padding: '0 4px', borderRadius: 3 }}>amber</span> = wording changed · highlights are on-screen only, never in your download.{surgical.reverted?.length ? ` ${surgical.reverted.length} line${surgical.reverted.length === 1 ? '' : 's'} kept original wording to preserve the layout.` : ''}
+                        {' '}<button className="om-link-btn" onClick={() => setSurgEdit(true)}>Edit</button>
                       </div>
                       {surgical.pages.map((p, i) => (
                         <img key={i} src={`data:image/png;base64,${p}`} alt={`Page ${i + 1}`} style={{ width: '100%', display: 'block', border: '1px solid #E5E7EB', borderRadius: 6, marginBottom: 10, background: '#fff' }} />
