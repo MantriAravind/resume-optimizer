@@ -8,10 +8,12 @@
 //   colourById: { blockId: 'green' | 'amber' }
 import * as m from 'mupdf'
 
-// hues and strengths mirror the editor's marks (rgba(140,230,140,.5) /
-// rgba(255,217,102,.55)) — the preview read paler at the first 0.32 alpha
-const RGB = { green: '0.55 0.9 0.55', amber: '1 0.851 0.4' }
-const ALPHA = { green: 0.5, amber: 0.55 }
+// Solid light mint / warm yellow, painted BEHIND the text (see the Contents order
+// below): full opacity is safe there and the words stay crisp, which is what the
+// user's reference highlighting looks like. Translucent overlays were the reason
+// every earlier attempt traded colour strength against legibility (2026-09-14).
+const RGB = { green: '0.60 0.96 0.80', amber: '1 0.93 0.55' }
+const ALPHA = { green: 1, amber: 1 }
 
 // wordRects: [{ page, x0, x1, top, bottom, colour }] — precise word-level marks
 // (green skill words); colourById still paints whole blocks (amber rewording).
@@ -54,8 +56,8 @@ export function renderHighlightedPages(pdfBuffer, blocksDoc, colourById, scale =
     const pobj = page.getObject()
     const contents = pobj.get('Contents')
     const arr = doc.newArray()
+    arr.push(st)   // FIRST in the array = drawn first = behind the page's text
     if (contents.isArray()) { for (let i = 0; i < contents.length; i++) arr.push(contents.get(i)) } else arr.push(contents)
-    arr.push(st)
     pobj.put('Contents', arr)
   }
   const out = doc.saveToBuffer('').asUint8Array()

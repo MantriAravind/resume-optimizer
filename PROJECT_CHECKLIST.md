@@ -1553,6 +1553,17 @@ raster preview could never be crisp in a ~640px pane. Both fixed:
   fallback when previewPdf is absent. Download unchanged: clean PDF.
 Done when (local): preview text as crisp as the editor; amber only on changed
 words; green on skill words; downloaded PDF colourless.
+
+### Highlight look CLOSED 2026-09-14 — solid fills behind the text
+Long detour (8+ variations) resolved by one insight: highlights were being
+painted OVER the text, so every colour strength traded against legibility.
+Painting the highlight stream FIRST in the page's Contents array puts it behind
+the glyphs — full-opacity fills are then safe. Final: solid mint
+(0.60 0.96 0.80) for tapped skills, solid warm yellow (1 0.93 0.55) for changed
+wording, NO bold anywhere, editor css matched (#99F5CC / #FFEE8C, weight and
+colour inherit). Reference: user-supplied sample of a solid-mint highlighted
+resume. Download stays clean — highlights only exist in the display-only copy.
+Do not reopen the highlight styling.
 Next: S5 — extend /me/surgical-fit to write fitted blocks into a copy of the
 original PDF (redaction inset + addStream per S1) and return it; then link
 annotations back over replaced linked text.

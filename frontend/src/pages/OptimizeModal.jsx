@@ -436,14 +436,14 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   // A7-S7: send the optimized text to /me/surgical-fit; the server maps it onto the
   // stored blocks, shortens misfits, writes the PDF, QA-gates it, and returns page
   // images. Failure or a QA fallback just leaves the HTML sheet — never an error.
-  async function surgicalFit(text, { preview = true } = {}) {
+  async function surgicalFit(text, { preview = true, skills = null } = {}) {
     setSurgState('fitting')
     try {
       const token = await getToken()
       const res = await fetch(`${BACKEND}/me/surgical-fit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ optimizedResume: text, addedSkills: (added || []).map(x => (x && (x.name || x.skill || x.keyword || x.kw)) || (typeof x === 'string' ? x : '')).filter(Boolean) }),
+        body: JSON.stringify({ optimizedResume: text, addedSkills: (skills ?? added ?? []).map(x => (x && (x.name || x.skill || x.keyword || x.kw)) || (typeof x === 'string' ? x : '')).filter(Boolean) }),
       })
       const d = res.ok ? await res.json() : null
       // Adding or deleting a whole bullet changes the layout; the exact-layout PDF
@@ -458,6 +458,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
         if (preview) window.alert('You added or removed a bullet. Your exact-layout PDF keeps every original line in its place, so it can\'t apply added or deleted bullets — only reworded ones.\n\nYour edit is kept: it will be in the Word download and the text version. To also get the exact-layout PDF, keep the same number of bullets and reword instead.')
         return
       }
+      console.log('[FIT]', new Date().toISOString().slice(17, 23), 'previewPdf:', Boolean(d?.previewPdf), 'pages:', d?.pages?.length ?? 0)
       if (d?.pdf && (d.previewPdf || (Array.isArray(d.pages) && d.pages.length))) {
         if (d.previewPdf) {
           try {
@@ -531,7 +532,10 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       setPhase('result')
       // surgical users: fit the rewrite into their real PDF in the background; the
       // HTML sheet shows meanwhile and stays as the fallback
-      if (compatMode === 'surgical') surgicalFit(d.optimizedResume || '', { preview: true })
+      // the skills state set a few lines up is NOT visible yet inside this function
+      // (React state lands after it returns) — the first preview showed amber-only
+      // until Edit→Preview refetched (2026-09-15). Pass the fresh list directly.
+      if (compatMode === 'surgical') surgicalFit(d.optimizedResume || '', { preview: true, skills: d.addedKeywords || [] })
 
       // If this job is ALREADY in the tracker — they applied straight from the board
       // first — save the rewrite against that row now, rather than losing it when the
@@ -1266,8 +1270,8 @@ const CSS = `
 .om-paper { background: #fff; border: 1px solid var(--line2); border-radius: 10px; max-width: 820px; margin: 0 auto; overflow: hidden; }
 .om-paper-h { display: flex; justify-content: space-between; padding: 8px 14px; font-size: 10.5px; color: var(--mute); border-bottom: 1px solid var(--line); background: #FBFAF8; }
 .om-resume { font-family: ${DOC_FONT_CSS}; font-size: 12.5px; line-height: 1.6; color: #1F2937; padding: 22px 26px; margin: 0; white-space: pre-wrap; word-wrap: break-word; outline: none; min-height: 300px; }
-.om-mark { background: #D1FAE5; padding: 0 3px; border-radius: 3px; } /* weight/colour inherit: the PDF writes skills in the line's own regular font, and the editor must not pretend otherwise (2026-09-14) */
-.om-mark-new { background: #FEF3C7; color: #92400E; padding: 0 2px; border-radius: 3px; }
+.om-mark { background: #99F5CC; padding: 0 3px; border-radius: 3px; } /* solid mint, matching the preview's behind-text fill; no bold anywhere (2026-09-14) */
+.om-mark-new { background: #FFEE8C; padding: 0 2px; border-radius: 3px; } /* solid warm yellow, matches the preview amber; text colour inherits */
 .om-letter { min-height: 200px; }
 .om-s3-rail { border-left: 1px solid var(--line); background: #fff; padding: 22px 20px; overflow: auto; }
 .om-score-top { display: flex; align-items: center; gap: 14px; }
