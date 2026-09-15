@@ -60,12 +60,18 @@ export function renderHighlightedPages(pdfBuffer, blocksDoc, colourById, scale =
     if (contents.isArray()) { for (let i = 0; i < contents.length; i++) arr.push(contents.get(i)) } else arr.push(contents)
     pobj.put('Contents', arr)
   }
-  const out = doc.saveToBuffer('').asUint8Array()
+  // COPY the saved bytes out of mupdf's WASM heap IMMEDIATELY (Buffer.from copies).
+  // saveToBuffer().asUint8Array() is a VIEW into wasm memory; the pixmap renders
+  // below can grow that heap, which detaches the view and silently zeroes it —
+  // the intermittent "previewPdf empty → blurry raster preview" bug (2026-09-15).
+  const out = Buffer.from(doc.saveToBuffer('').asUint8Array())
+  const previewPdf = out.toString('base64')
+  if (!previewPdf.length) console.warn('pdfHighlight: saved PDF buffer came back EMPTY — preview will fall back to raster')
   const d2 = m.Document.openDocument(out, 'application/pdf')
   const pages = []
   for (let p = 0; p < d2.countPages(); p++)
     pages.push(Buffer.from(d2.loadPage(p).toPixmap(m.Matrix.scale(scale, scale), m.ColorSpace.DeviceRGB, false).asPNG()).toString('base64'))
   // the highlighted PDF itself: shown in the preview pane as a vector (crisp at any
   // width — rasters go soft in a ~640px pane); display-only, never the download
-  return { pages, previewPdf: Buffer.from(out).toString('base64') }
+  return { pages, previewPdf }
 }

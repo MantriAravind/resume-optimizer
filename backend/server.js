@@ -2270,9 +2270,20 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
               const metrics = ctx.byBase[b.font?.name]?.metrics
               if (!metrics) continue
               const size = b.font.size
-              const text = (b.type === 'skill' ? b.label + ' ' : '') + rb.text
-              const oldFull = (b.type === 'skill' ? b.label + ' ' : '') + b.text
-              const lines = wrapText(metrics, text, size, b.availWidth)
+              // Skill lines: the bold label's widths are NOT ours to measure with the
+              // body font — doing so shifted every green box left by the measurement
+              // error (2026-09-15, second resume's skills section). Work only in the
+              // VALUE text, from the value's real x, exactly as the writer lays it out.
+              const isSkillB = b.type === 'skill'
+              // Guard: a block with no measured lines (or a skill line with no runs)
+              // cannot be highlighted — skip IT, never crash the whole render. A throw
+              // here was silently caught below and downgraded the entire preview to
+              // raster PNGs (the intermittent "blurry, no zoom" first preview).
+              if (!Array.isArray(b.lines) || !b.lines.length || !b.lines[0]) continue
+              const valueX = isSkillB ? (b.lines[0].runs?.[1]?.x0 ?? b.lines[0].runs?.[0]?.x1 ?? b.lines[0].x0) : b.lines[0].x0
+              const text = rb.text
+              const oldFull = b.text
+              const lines = wrapText(metrics, text, size, b.availWidth - (isSkillB ? (valueX - b.lines[0].x0) : 0))
               // char ranges of changed words (amber), then green skill occurrences
               // painted over them where they overlap (skills win)
               const words = text.split(/\s+/).filter(Boolean)
@@ -2288,7 +2299,7 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
                 const ln = b.lines[i]
                 const lineEnd = lineStart + line.text.length
                 if (ln) {
-                  const lineX0 = i === 0 && b.type === 'skill' ? b.lines[0].x0 : ln.x0
+                  const lineX0 = i === 0 && isSkillB ? valueX : ln.x0
                   const paint = (s0, s1, colour) => {
                     const a0 = Math.max(s0, lineStart), a1 = Math.min(s1, lineEnd)
                     if (a0 >= a1) return
@@ -2305,8 +2316,9 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
             const hl = renderHighlightedPages(w.pdf, user.resumeBlocks, colourById, 2, wordRects)
             pagePngs = hl.pages
             previewPdfB64 = hl.previewPdf
+            console.log('surgical highlight: previewPdf ' + (hl.previewPdf ? hl.previewPdf.length + ' chars' : 'MISSING from renderHighlightedPages result') + ' · pages ' + (hl.pages?.length ?? 0))
           } catch (e) {
-            console.warn('highlighted render failed, falling back to plain: ' + e.message)
+            console.warn('highlighted render failed, falling back to plain (preview will be raster, not crisp PDF):\n' + (e.stack || e.message))
             try {
               const rdoc = mupdf.Document.openDocument(w.pdf, 'application/pdf')
               for (let p = 0; p < rdoc.countPages(); p++)
@@ -2320,6 +2332,7 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
       } catch (e) { console.error('surgical write failed: ' + e.message) }
     }
 
+    console.log('surgical response: pdf=' + Boolean(pdfB64) + ' previewPdf=' + Boolean(previewPdfB64) + ' pages=' + pagePngs.length)
     res.json({
       surgical: true,
       blocks: result.blocks,
