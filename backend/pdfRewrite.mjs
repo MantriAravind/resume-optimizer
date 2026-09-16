@@ -23,8 +23,34 @@
 const BULLET_LINE = /^\s*[•\-–—·▪●o\u2022\u25AA\u25CF\u2023\u2043]\s+/
 const norm = s => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 
+// Continuation-line join (2026-09-16). The optimizer sometimes returns bullets
+// hard-wrapped across two lines, mirroring the original PDF's visual breaks.
+// The 1:1 pairing below then takes only the marker-carrying first lines as
+// "the bullets" (counts still match — one marker per bullet), every changed
+// block maps to a first-line fragment, fitCheck passes (fragments are short),
+// the writer redacts both original lines and writes the fragment, and QA
+// validates output against the fragments — a silently truncated resume that
+// passed every check. Defense: a line is glued onto the preceding bullet when
+// it is not itself a bullet, a "Label: value" line, or an ALL-CAPS heading,
+// AND it reads as a continuation (starts lowercase, or the bullet above ends
+// mid-sentence). Title/company lines start uppercase after a bullet that ends
+// with a period, so they never glue.
+function joinWrappedBullets(lines) {
+  const out = []
+  for (const l of lines) {
+    const prev = out[out.length - 1]
+    const isCont = prev !== undefined && BULLET_LINE.test(prev.raw) && !BULLET_LINE.test(l)
+      && !/^([A-Za-z][A-Za-z &/]+):\s+.+$/.test(l) && !/^[A-Z][A-Z\s&/]{2,}$/.test(l.trim())
+      && !/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{4}\b/.test(l)
+      && (/^[a-z]/.test(l.trim()) || !/[.:;]\s*$/.test(prev.raw))
+    if (isCont) prev.raw += ' ' + l.trim()
+    else out.push({ raw: l })
+  }
+  return out.map(o => o.raw)
+}
+
 export function mapOptimizedToBlocks(blocksDoc, optimizedText) {
-  const lines = String(optimizedText || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+  const lines = joinWrappedBullets(String(optimizedText || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean))
   const bulletTexts = []
   const skillTexts = {}       // normalized label → value text
   const otherTexts = []

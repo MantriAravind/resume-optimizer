@@ -9,7 +9,7 @@ import { extractText, assessExtraction } from './resumeExtract.mjs'
 import { readPdfLayout } from './pdfLayout.mjs'
 import { checkPdfCompat } from './pdfCompat.mjs'
 import { extractBlocks } from './pdfBlocks.mjs'
-import { buildFitContext, wrapText, measure } from './pdfFit.mjs'
+import { buildFitContext, wrapText, measure, fitCheck } from './pdfFit.mjs'
 import { mapOptimizedToBlocks, fitAndShorten } from './pdfRewrite.mjs'
 import { writeSurgical } from './pdfSurgical.mjs'
 import { qaSurgicalOutput } from './pdfQa.mjs'
@@ -1510,9 +1510,21 @@ function bulletCount(text) {
       /\s/.test(l)
     ).length
 }
+function markerBulletCount(text) {
+  return String(text || '').split('\n').filter(l => /^[ \t]*[-•*▪]\s+\S/.test(l)).length
+}
 function bulletsLost(optimized, original) {
-  const before = bulletCount(original)
-  const after = bulletCount(optimized)
+  // Compare like with like (2026-09-15). bulletCount() counts lines ≥40 chars,
+  // but a PDF-extracted original wraps each bullet across ~2 physical lines, so
+  // 24 real bullets read as ~50 while the model's one-bullet-per-line output
+  // read as ~36 — the permanent bulletsLost=50->36 false positive that burned
+  // 3 retries + a Terra escalation on every optimize. When BOTH documents use
+  // bullet markers, count marker lines on both sides; the long-line count stays
+  // only as the fallback for marker-less resumes.
+  const mBefore = markerBulletCount(original), mAfter = markerBulletCount(optimized)
+  const useMarkers = mBefore >= 4 && mAfter >= 4
+  const before = useMarkers ? mBefore : bulletCount(original)
+  const after = useMarkers ? mAfter : bulletCount(optimized)
   if (before < 8) return null            // short resumes: condensing is not the concern
   if (after >= before * 0.75) return null
   return { before, after }
@@ -1764,6 +1776,58 @@ function appendToSkills(out, skills, skillsHeader) {
   return lines.join('\n')
 }
 
+/**
+ * Skills-line integrity (2026-09-15). Caught live: a rewrite turned a comma
+ * category line into "Fabric/Delta/…/BigQuery" and silently dropped Hive —
+ * dropped originals and separator drift both passed every existing gate check
+ * because none of them looks inside skills category lines.
+ */
+function skillsSectionLines(text, skillsHeader) {
+  const lines = String(text || '').split('\n')
+  const headerRe = new RegExp('^\\s*' + skillsHeader.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:?\\s*$', 'i')
+  const start = lines.findIndex(l => headerRe.test(l))
+  if (start === -1) return []
+  let end = lines.length
+  for (let i = start + 1; i < lines.length; i++) {
+    if (RESUME_SECTIONS.test(lines[i].trim().replace(/[:：]\s*$/, ''))) { end = i; break }
+  }
+  const found = []
+  for (let i = start + 1; i < end; i++) {
+    const m = lines[i].trim().match(/^([A-Za-z][A-Za-z /&+-]{1,48}):\s+(\S.*)$/)
+    if (m) found.push({ label: m[1].trim(), items: m[2] })
+  }
+  return found
+}
+function droppedSkillItems(out, original, skillsHeader) {
+  const outFlat = flattenForMatch(out)
+  const missing = []
+  for (const line of skillsSectionLines(original, skillsHeader)) {
+    for (const raw of line.items.split(',')) {
+      const item = raw.trim().replace(/^[()\s]+|[()\s.]+$/g, '')
+      if (item.length < 2 || item.length > 60) continue
+      if (!resumeHas(outFlat, item)) missing.push(item)
+    }
+  }
+  return [...new Set(missing)]
+}
+function normalizeSkillSeparators(out, original, skillsHeader) {
+  // A rewritten category line chaining items with "/" where the original's
+  // same-label line used commas gets commas restored. Fires only with ≥3
+  // slashes on the draft line and none on the original line, so real slash
+  // terms (CI/CD, TCP/IP) and originally slash-formatted lines are untouched.
+  const origLines = skillsSectionLines(original, skillsHeader)
+  const lines = String(out || '').split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].trim().match(/^([A-Za-z][A-Za-z /&+-]{1,48}):\s+(\S.*)$/)
+    if (!m) continue
+    const orig = origLines.find(o => o.label.toLowerCase() === m[1].trim().toLowerCase())
+    if (!orig || orig.items.includes('/')) continue
+    if ((m[2].match(/\//g) || []).length < 3) continue
+    lines[i] = lines[i].replace(m[2], m[2].replace(/\s*\/\s*/g, ', '))
+  }
+  return lines.join('\n')
+}
+
 app.post('/optimize', async (req, res) => {
   const { resumeText, jobText, confirmedSkills = [], jobTitle = '', yearsMin = null, resumeLayout = null } = req.body
   if (!resumeText || !jobText) {
@@ -1961,6 +2025,7 @@ Respond in this exact JSON format with no extra text:
     const messages = [{ role: 'user', content: basePrompt }]
     const LAST_ATTEMPT = 3
     let parsed, out, gateNote = ''
+    let prevSig = null
     for (let attempt = 0; attempt <= LAST_ATTEMPT; attempt++) {
       const modelForAttempt = attempt === LAST_ATTEMPT ? MODEL_FALLBACK : MODEL_REWRITE
       if (attempt === LAST_ATTEMPT) console.warn('optimize gate: escalating to ' + MODEL_FALLBACK)
@@ -1980,6 +2045,7 @@ Respond in this exact JSON format with no extra text:
       parsed = JSON.parse(cleaned)
       out = parsed.optimizedResume || ''
       out = normalizeCertDashes(out)
+      out = normalizeSkillSeparators(out, resumeText, skillsHeader)
 
       const invented = inventedBullets(out, resumeText, confirmed)
       const dashes = findBannedDashes(out)
@@ -1998,9 +2064,22 @@ Respond in this exact JSON format with no extra text:
       const outFlat = flattenForMatch(out)
       const dropped7 = confirmed.filter(k => !resumeHas(outFlat, k))
       const movedDates = movedDateLines(out, resumeText)
+      const skillsGone = droppedSkillItems(out, resumeText, skillsHeader)
       if (!invented.length && !dashes.length && !pastT.length && !stray.length && !newSecs.length && !lost
-          && !sumCut && !envGone.length && !certs.length && !merged.length && !dropped7.length && !movedDates.length) break
-      if (attempt === LAST_ATTEMPT) {
+          && !sumCut && !envGone.length && !certs.length && !merged.length && !dropped7.length && !movedDates.length && !skillsGone.length) break
+      // Deterministic-failure short-circuit (2026-09-15): a retry that comes back
+      // with the EXACT same failure numbers as the previous attempt is measuring a
+      // checker artifact, not a model mistake — tonight's logs showed identical
+      // signatures across all 3 retries AND the Terra escalation, ~4 wasted model
+      // calls per optimize. Same signature twice → run the last-resort repairs and
+      // stop; genuinely changing failures still retry and escalate as before.
+      const sig = [invented.length, dashes.length, pastT.length, stray.length, newSecs.length,
+        lost ? lost.before + '>' + lost.after : '', sumCut ? sumCut.before + '>' + sumCut.after : '',
+        envGone.length, certs.length, merged.length, dropped7.length, movedDates.length, skillsGone.join(',')].join('|')
+      const finalAttempt = attempt === LAST_ATTEMPT || sig === prevSig
+      if (finalAttempt && attempt !== LAST_ATTEMPT) console.warn('optimize gate: identical failure signature on retry — deterministic, stopping (no escalation)')
+      prevSig = sig
+      if (finalAttempt) {
         if (invented.length) gateNote = ' (Please review the experience section: one or more bullets may describe work not in your original resume.)'
         // Last resort: strip it. A fabricated paragraph reaching a student's resume is
         // worse than a slightly shorter document, and this is the point where retries
@@ -2047,10 +2126,15 @@ Respond in this exact JSON format with no extra text:
           out = appendToSkills(out, dropped7, skillsHeader)
           console.warn('optimize gate: code-appended to skills: ' + dropped7.join(', '))
         }
-        console.warn('optimize gate unresolved after retries: invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length + ' stray=' + stray.length + ' newSections=' + newSecs.length + ' bulletsLost=' + (lost ? lost.before + '->' + lost.after : 'no') + ' summaryCut=' + (sumCut ? sumCut.before + '->' + sumCut.after : 'no') + ' envDropped=' + envGone.length + ' certs=' + certs.length + ' merged=' + merged.length + ' confirmedDropped=' + dropped7.length)
+        // Same promise, other direction: original skills may not silently vanish.
+        if (skillsGone.length) {
+          out = appendToSkills(out, skillsGone, skillsHeader)
+          console.warn('optimize gate: restored dropped original skill(s): ' + skillsGone.join(', '))
+        }
+        console.warn('optimize gate unresolved after retries: invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length + ' stray=' + stray.length + ' newSections=' + newSecs.length + ' bulletsLost=' + (lost ? lost.before + '->' + lost.after : 'no') + ' summaryCut=' + (sumCut ? sumCut.before + '->' + sumCut.after : 'no') + ' envDropped=' + envGone.length + ' certs=' + certs.length + ' merged=' + merged.length + ' confirmedDropped=' + dropped7.length + ' skillsDropped=' + skillsGone.length)
         break
       }
-      console.warn('optimize gate retry ' + (attempt + 1) + ': invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length + ' stray=' + stray.length + ' newSections=' + newSecs.length + ' bulletsLost=' + (lost ? lost.before + '->' + lost.after : 'no') + ' summaryCut=' + (sumCut ? sumCut.before + '->' + sumCut.after : 'no') + ' envDropped=' + envGone.length + ' certs=' + certs.length + ' merged=' + merged.length + ' confirmedDropped=' + dropped7.length)
+      console.warn('optimize gate retry ' + (attempt + 1) + ': invented=' + invented.length + ' dashes=' + dashes.length + ' pastTense=' + pastT.length + ' stray=' + stray.length + ' newSections=' + newSecs.length + ' bulletsLost=' + (lost ? lost.before + '->' + lost.after : 'no') + ' summaryCut=' + (sumCut ? sumCut.before + '->' + sumCut.after : 'no') + ' envDropped=' + envGone.length + ' certs=' + certs.length + ' merged=' + merged.length + ' confirmedDropped=' + dropped7.length + ' skillsDropped=' + skillsGone.length)
       let corrections = 'Your draft breaks the rules below. Fix ONLY these problems and return the same JSON format.\n'
       // Every rule you have already satisfied must STAY satisfied. Without this line
       // the model treats each correction as the only constraint and trades one for
@@ -2092,6 +2176,9 @@ Respond in this exact JSON format with no extra text:
       }
       if (dropped7.length) {
         corrections += '\nDROPPED CONFIRMED SKILLS. The candidate confirmed these and your draft does not contain them anywhere:\n' + dropped7.map(k => '  - "' + k + '"').join('\n') + '\nEach one must appear: reframe an existing bullet if the candidate\'s own work supports it, otherwise add it to the fitting category line in the skills section. Report each in "placements".\n'
+      }
+      if (skillsGone.length) {
+        corrections += '\nDROPPED ORIGINAL SKILLS. The original resume lists these in its skills section and your draft no longer contains them:\n' + skillsGone.map(k => '  - "' + k + '"').join('\n') + '\nRestore each one to the same category line it came from, keeping that line\'s comma-separated format. Never delete an original skill to make room for new ones.\n'
       }
       if (pastT.length) {
         corrections += '\nTENSE. Your CURRENT role (its dates end in "Present") must be present tense throughout. These bullets open in PAST tense:\n' + pastT.map(l => '  - "' + l + '"').join('\n') + '\nRewrite each opening verb to present tense (Managed to Manage, Led to Lead, Built to Build, Optimized to Optimize). If a flagged word is actually an adjective or already present tense, leave it unchanged.\n'
@@ -2199,17 +2286,19 @@ app.post('/me/surgical-fit', requireUser, async (req, res) => {
     const ctx = buildFitContext(pdfBuffer, user.resumeCompat, user.resumeBlocks)
     const mapped = mapOptimizedToBlocks(user.resumeBlocks, optimizedResume)
 
+    const blockById = Object.fromEntries(user.resumeBlocks.blocks.map(b => [b.id, b]))
     const shortenFn = async (items, round) => {
       const prompt = `You shorten resume lines so they fit a fixed printed width. For each item, rewrite the text to AT MOST its "budget" characters (shorter is fine).
 Rules, in priority order:
 1. NEVER drop or change a number, date, duration, percentage, or quantity ("5+ years", "99.2%", "14 pipelines", "Jan 2024") — these survive every cut.
-2. Never add a fact, tool, metric, or claim that is not in the text.
-3. Cut in this order: filler words, adjectives, repeated ideas — facts last.
-4. Keep the original tense and voice; plain hyphens only, no em or en dashes.
-5. If "badChars" is present, those characters cannot be printed — reword to avoid them.
+2. If "protect" is present, the line is a comma-separated skills list: every protected item must appear VERBATIM in your output. Meet the budget by removing non-protected items only — never a protected one, never by respelling one.
+3. Never add a fact, tool, metric, or claim that is not in the text.
+4. Cut in this order: filler words, adjectives, repeated ideas — facts last.
+5. Keep the original tense and voice; plain hyphens only, no em or en dashes.
+6. If "badChars" is present, those characters cannot be printed — reword to avoid them.
 Respond with ONLY a JSON object mapping each id to its shortened text, no extra keys, no prose.
 
-${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budget, ...(badChars ? { badChars } : {}) })), null, 1)}`
+${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budget, ...(badChars ? { badChars } : {}), ...(blockById[id]?.type === 'skill' ? { protect: blockById[id].text.split(',').map(s => s.trim()).filter(Boolean) } : {}) })), null, 1)}`
       const reply = await askModel({ model: MODEL_REWRITE, maxTokens: 4000, reasoningEffort: 'low', messages: [{ role: 'user', content: prompt }] })
       const cleaned = reply.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()
       console.log(`surgical-fit: shorten round ${round}, ${items.length} block(s)`)
@@ -2217,6 +2306,30 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
     }
 
     const result = await fitAndShorten(ctx, user.resumeBlocks, mapped, shortenFn)
+    // Post-fit skills guard (2026-09-16): the shortener must never cost an original
+    // skill — caught live dropping "Apache Spark" and "Kubernetes" from skills lines
+    // to make room for added keywords (and Hive before that). Any fitted skill line
+    // missing an original item is rebuilt: all original items first, then the
+    // optimizer's additions one at a time while the line still fits its box.
+    for (const rb of result.blocks) {
+      if (!rb.changed) continue
+      const b = blockById[rb.id]
+      if (!b || b.type !== 'skill') continue
+      const origItems = b.text.split(',').map(s => s.trim()).filter(Boolean)
+      const lost = origItems.filter(it => !rb.text.toLowerCase().includes(it.toLowerCase()))
+      if (!lost.length) continue
+      const mappedItems = String(mapped.mapped[rb.id] || rb.text).split(',').map(s => s.trim()).filter(Boolean)
+      const added = mappedItems.filter(it => !origItems.some(o => o.toLowerCase() === it.toLowerCase()))
+      let rebuilt = origItems.join(', ')
+      if (!fitCheck(ctx, b, rebuilt).fits) {
+        rb.text = b.text; rb.changed = false; rb.reverted = true
+        console.warn('surgical-fit: skill line ' + rb.id + ' reverted — original items alone exceed the box')
+        continue
+      }
+      for (const a of added) if (fitCheck(ctx, b, rebuilt + ', ' + a).fits) rebuilt += ', ' + a
+      rb.text = rebuilt
+      console.warn('surgical-fit: skill line ' + rb.id + ' rebuilt — restored ' + lost.join(', '))
+    }
     const changed = result.blocks.filter(b => b.changed).length
     console.log(`surgical-fit: ${result.blocks.length} blocks · ${changed} changed · reverted ${result.reverted.length ? result.reverted.join(',') : 'none'}${result.notes?.bulletCountMismatch ? ' · BULLET COUNT MISMATCH — bullets unmapped' : ''}`)
 
