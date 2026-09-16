@@ -188,6 +188,9 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   const [scoreAfter, setScoreAfter] = useState(0)
   const [feedback, setFeedback]     = useState('')
   const [placements, setPlacements] = useState([])   // one card per tapped skill, server-verified
+  // Placement honesty: after the fit, the server reports where each added skill
+  // REALLY landed ({skill: 'skills'|'bullet'|'none'}); cards and score obey this.
+  const [finalPl, setFinalPl] = useState(null)
   const [html, setHtml]             = useState('')   // the sheet, rendered by the same code as the PDF
   const [changes, setChanges]       = useState([])   // "What changed" list from the rewrite
   const [promised, setPromised]     = useState(null) // the score step 2 showed when rewrite was clicked
@@ -468,6 +471,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
           } catch { setSurgicalPreviewUrl('') }
         }
         setSurgical(d)
+        if (Array.isArray(d.finalPlacements)) setFinalPl(Object.fromEntries(d.finalPlacements.map(f => [f.skill, f.where])))
         // sync the editor to the FITTED texts: the shortener may have compressed a
         // block to fit, and the sheet must never silently differ from the PDF
         // ("5+ years" dropped in preview but still on screen — Typst run,
@@ -520,6 +524,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       setScoreAfter(d.rubricAfter?.total ?? d.scoreAfter ?? liveScore)
       setFeedback(d.feedback || '')
       setPlacements(Array.isArray(d.placements) ? d.placements : [])
+      setFinalPl(null)
       setHtml(d.optimizedHtml || '')
       setSheetStyle(d.sheet || null)
       setChanges(Array.isArray(d.changes) ? d.changes : [])
@@ -751,9 +756,17 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
     return { t: 'Full match.', s: 'Same role, years covered, every skill the posting names is on your resume. The rewrite speaks this job\'s language without adding anything.' }
   })()
   const promiseKept = promised === null || scoreAfter === promised
+  // Placement honesty: skills the fit couldn't place anywhere don't count. Adjust
+  // only the keywords row (60 pts, same law as the rubric), by code, checkable.
+  const fpDropped = finalPl ? Object.keys(finalPl).filter(s => finalPl[s] === 'none') : []
+  const dispScore = (!fpDropped.length || !total) ? scoreAfter : (() => {
+    const haveOld = matched.length + confirmedList.length
+    const haveNew = haveOld - fpDropped.filter(s => confirmedList.includes(s)).length
+    return Math.max(0, scoreAfter - Math.round(60 * haveOld / total) + Math.round(60 * haveNew / total))
+  })()
 
   return (
-    <div className="om-overlay" onClick={onClose}>
+    <div className="om-overlay">{/* backdrop click intentionally does NOT close: a stray click outside the wizard was destroying whole optimizations in prod (2026-09-16). Close via ✕ only. */}
       <style>{CSS}</style>
       <div
         ref={modalRef}
@@ -1028,10 +1041,10 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
               </div>
               <div className="om-s3-rail">
                 <div className="om-score-top">
-                  <div className="om-ring2" style={{ background: `conic-gradient(${ringColor(scoreAfter)} 0 ${scoreAfter}%, #E5E7EB ${scoreAfter}% 100%)` }}><b>{scoreAfter}</b></div>
+                  <div className="om-ring2" style={{ background: `conic-gradient(${ringColor(dispScore)} 0 ${dispScore}%, #E5E7EB ${dispScore}% 100%)` }}><b>{dispScore}</b></div>
                   <div>
-                    <div className="om-t1">Delivered: {scoreAfter}</div>
-                    <div className={`om-t2 ${promiseKept ? '' : 'warn'}`}>{promiseKept ? `exactly what step 2 promised · ↑ ${scoreAfter - scoreBefore} from ${scoreBefore}` : `promised ${promised}, delivered ${scoreAfter}`}</div>
+                    <div className="om-t1">Delivered: {dispScore}</div>
+                    <div className={`om-t2 ${promiseKept && !fpDropped.length ? '' : 'warn'}`}>{fpDropped.length ? `${fpDropped.length} keyword${fpDropped.length === 1 ? '' : 's'} didn't fit your exact layout — score counts only what landed` : promiseKept ? `exactly what step 2 promised · ↑ ${scoreAfter - scoreBefore} from ${scoreBefore}` : `promised ${promised}, delivered ${scoreAfter}`}</div>
                   </div>
                 </div>
                 <div className="om-dl-row">
@@ -1052,21 +1065,26 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                         <div className="om-rail-s">Each card says exactly <b>where</b> a skill went. Wrong place? <b>✕</b> pulls it back to your Skills section.</div>
                         {placements.map(p => {
                           const isRemoved = removed[p.skill] !== undefined
+                          const fw = finalPl ? finalPl[p.skill] : undefined
                           const skillsOnly = !p.removable || isRemoved
                           return (
-                            <div key={p.skill} className={`om-wov ${skillsOnly ? 'skillonly' : ''}`}>
+                            <div key={p.skill} className={`om-wov ${skillsOnly || fw === 'none' ? 'skillonly' : ''}`}>
                               <div className="om-wov-r1">
                                 <span className="om-chip have">{p.skill}</span>
-                                {p.removable && (isRemoved
+                                {p.removable && fw !== 'none' && (isRemoved
                                   ? <button className="om-wov-x undo" title="Put it back" onClick={() => undoPlacement(p)}><Undo2 size={11} />Undo</button>
                                   : <button className="om-wov-x" title="I didn't use this there — remove" onClick={() => removePlacement(p)}><X size={11} /></button>)}
                               </div>
                               <div className="om-wov-w">
-                                {skillsOnly
-                                  ? (isRemoved ? <>→ Skills section only — removed from {p.employer || 'that bullet'}{p.section === 'project' ? ' (project)' : ''}</> : <>→ Skills section only · be ready to say where you used it</>)
-                                  : <>→ Skills section <b>+ your {p.employer || 'experience'} {p.section === 'project' ? 'project' : 'bullet'}</b></>}
+                                {fw === 'none'
+                                  ? <>→ didn't fit your exact layout — not in this version</>
+                                  : fw === 'bullet' && !isRemoved
+                                    ? <>→ your {p.employer || 'experience'} {p.section === 'project' ? 'project' : 'bullet'} · ATS reads it there</>
+                                    : (skillsOnly
+                                      ? (isRemoved ? <>→ Skills section only — removed from {p.employer || 'that bullet'}{p.section === 'project' ? ' (project)' : ''}</> : <>→ Skills section only · be ready to say where you used it</>)
+                                      : <>→ Skills section <b>+ your {p.employer || 'experience'} {p.section === 'project' ? 'project' : 'bullet'}</b></>)}
                               </div>
-                              {!skillsOnly && p.fragment && <div className="om-wov-f">"{p.fragment}"</div>}
+                              {!skillsOnly && fw !== 'none' && p.fragment && <div className="om-wov-f">"{p.fragment}"</div>}
                             </div>
                           )
                         })}

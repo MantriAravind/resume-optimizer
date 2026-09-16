@@ -2330,6 +2330,33 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
       rb.text = rebuilt
       console.warn('surgical-fit: skill line ' + rb.id + ' rebuilt — restored ' + lost.join(', '))
     }
+    // Placement honesty (2026-09-16): the cards and score are computed at gate time,
+    // BEFORE the fit — but the fit can drop additions that don't fit their box
+    // (caught live: cards claimed Microsoft Fabric / Delta Lake / Synapse Data
+    // Analytics "in skills section" while the final PDF carried none of them).
+    // Recompute every added skill's REAL landing from the final assembled document
+    // so the frontend can tell the truth: skills line, bullet, or nowhere.
+    const addedSkills = Array.isArray(req.body.addedSkills)
+      ? req.body.addedSkills.filter(s => typeof s === 'string' && s.trim()) : []
+    let finalPlacements = []
+    if (addedSkills.length) {
+      const finalTextOf = rb => {
+        const b = blockById[rb.id]
+        if (rb.changed && typeof rb.text === 'string') return rb.text
+        if (!b) return ''
+        return typeof b.text === 'string' ? b.text : (b.left || b.right ? `${b.left || ''} ${b.right || ''}` : '')
+      }
+      const ofTypes = types => flattenForMatch(result.blocks
+        .filter(rb => types.includes(blockById[rb.id]?.type)).map(finalTextOf).join('\n'))
+      const skillFlat = ofTypes(['skill'])
+      const bodyFlat = ofTypes(['bullet', 'paragraph'])
+      finalPlacements = addedSkills.map(skill => ({
+        skill,
+        where: resumeHas(skillFlat, skill) ? 'skills' : resumeHas(bodyFlat, skill) ? 'bullet' : 'none',
+      }))
+      const gone = finalPlacements.filter(p => p.where === 'none').map(p => p.skill)
+      if (gone.length) console.warn('surgical-fit: added skill(s) not in final document: ' + gone.join(', '))
+    }
     const changed = result.blocks.filter(b => b.changed).length
     console.log(`surgical-fit: ${result.blocks.length} blocks · ${changed} changed · reverted ${result.reverted.length ? result.reverted.join(',') : 'none'}${result.notes?.bulletCountMismatch ? ' · BULLET COUNT MISMATCH — bullets unmapped' : ''}`)
 
@@ -2448,6 +2475,7 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
     console.log('surgical response: pdf=' + Boolean(pdfB64) + ' previewPdf=' + Boolean(previewPdfB64) + ' pages=' + pagePngs.length)
     res.json({
       surgical: true,
+      finalPlacements,
       blocks: result.blocks,
       reverted: result.reverted,
       // the modal shows this when mapping had to leave bullets untouched
