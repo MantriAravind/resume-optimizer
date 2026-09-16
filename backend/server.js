@@ -2349,7 +2349,12 @@ ${JSON.stringify(items.map(({ id, text, budget, badChars }) => ({ id, text, budg
       const ofTypes = types => flattenForMatch(result.blocks
         .filter(rb => types.includes(blockById[rb.id]?.type)).map(finalTextOf).join('\n'))
       const skillFlat = ofTypes(['skill'])
-      const bodyFlat = ofTypes(['bullet', 'paragraph'])
+      // Everything that isn't a skills line counts as body: summary paragraphs,
+      // bullets, split lines. Scanning only bullet+paragraph missed SUMMARY
+      // landings — "data modeling" sat in the summary and was reported "didn't
+      // fit" (caught in prod, 2026-09-16). Pessimistic-only error, but an error.
+      const bodyFlat = flattenForMatch(result.blocks
+        .filter(rb => blockById[rb.id] && blockById[rb.id].type !== 'skill').map(finalTextOf).join('\n'))
       finalPlacements = addedSkills.map(skill => ({
         skill,
         where: resumeHas(skillFlat, skill) ? 'skills' : resumeHas(bodyFlat, skill) ? 'bullet' : 'none',

@@ -228,7 +228,7 @@ export function renderWithLayout(optimizedText, layout) {
       else if (DATE_RE.test(line)) { const m = line.match(/^(.*?)(\s{2,}|\s\|\s)(.*(?:19|20)\d{2}.*)$/); if (m) { left = m[1].trim(); r = m[3].trim() } }
       // each split line keeps ITS OWN segment styles (company bold, title italic…)
       const ls = pick({ ...orig.segments[0], align: 'left' }), rs = pick({ ...orig.segments[orig.segments.length - 1], align: 'right' })
-      out += `<div data-l="line" style="line-height:${lh};display:flex;justify-content:space-between;gap:12pt;${gapTop('company')};padding-left:${ls.indent}pt"><span style="${css({ ...ls, align: 'left' })};color:#111">${esc(left)}</span>${r ? `<span style="${css({ ...rs, align: 'right' })};color:#222;white-space:nowrap">${esc(r)}</span>` : ''}</div>`
+      out += `<div data-l="line" style="line-height:${lh};display:flex;justify-content:space-between;gap:12pt;${gapTop('company')};padding-left:${ls.indent}pt"><span style="${css({ ...ls, align: 'left' })};color:#111">${esc(left)}</span>${r ? ` <span style="${css({ ...rs, align: 'right' })};color:#222;white-space:nowrap">${esc(r)}</span>` : ''}</div>`
       prevKind = 'company'; continue
     }
 

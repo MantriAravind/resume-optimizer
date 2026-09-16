@@ -22,6 +22,13 @@
 
 const BULLET_LINE = /^\s*[•\-–—·▪●o\u2022\u25AA\u25CF\u2023\u2043]\s+/
 const norm = s => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+const sim = (a, b) => {
+  const A = new Set(norm(a).split(' ')), B = new Set(norm(b).split(' '))
+  if (!A.size || !B.size) return 0
+  let hit = 0; for (const w of A) if (B.has(w)) hit++
+  return hit / Math.max(A.size, B.size)
+}
+const HEADINGISH = /^[A-Z\s&/]{3,}$/
 
 // Continuation-line join (2026-09-16). The optimizer sometimes returns bullets
 // hard-wrapped across two lines, mirroring the original PDF's visual breaks.
@@ -81,14 +88,43 @@ export function mapOptimizedToBlocks(blocksDoc, optimizedText) {
     else notes.unmatchedSkillLabels.push(b.label)
   }
 
-  // paragraphs (rare in resumes): only when counts match exactly, same rule as bullets
+  // paragraphs: anchor each block to the contiguous run of other-lines whose
+  // concatenation best matches the block's ORIGINAL text (2026-09-16). The old
+  // count-equality rule never fired in practice — otherTexts always holds contact,
+  // title/date and degree lines too, so counts never matched and a rewritten summary
+  // silently stayed out of the PDF while the sheet/Word carried it (the Cleartelligence
+  // divergence). Similarity to the original is order-free, absorbs model output that
+  // arrives hard-wrapped across lines, and keeps the never-guess rule via a threshold.
   const paraBlocks = editable.filter(b => b.type === 'paragraph')
-  const paraTexts = otherTexts.filter(l => l.split(/\s+/).length >= 6 && !/^[A-Z\s&]+$/.test(l))
-  if (paraBlocks.length && paraBlocks.length === paraTexts.length) {
-    paraBlocks.forEach((b, i) => { mapped[b.id] = paraTexts[i] })
+  const usedIdx = new Set()
+  for (const b of paraBlocks) {
+    let best = null
+    for (let s = 0; s < otherTexts.length; s++) {
+      if (usedIdx.has(s) || HEADINGISH.test(otherTexts[s].trim())) continue
+      let acc = ''
+      for (let e = s; e < otherTexts.length && e - s < 8; e++) {
+        if (usedIdx.has(e) || HEADINGISH.test(otherTexts[e].trim())) break
+        acc = acc ? acc + ' ' + otherTexts[e] : otherTexts[e]
+        const score = sim(acc, b.text)
+        if (!best || score > best.score) best = { s, e, score, text: acc }
+      }
+    }
+    if (best && best.score >= 0.5) {
+      mapped[b.id] = best.text
+      for (let i = best.s; i <= best.e; i++) usedIdx.add(i)
+    } else {
+      ;(notes.unmatchedParagraphs ??= []).push(b.id)
+    }
   }
 
-  return { mapped, notes }
+  // every editable block whose intended content could not be placed must be REPORTED,
+  // so the caller can reset the sheet to the PDF's truth — one source of truth even
+  // when matching fails. Unreported unmapped blocks are exactly how the PDF and the
+  // Word file diverged.
+  const unplaced = []
+  if (notes.bulletCountMismatch) unplaced.push(...bulletBlocks.map(b => b.id))
+  unplaced.push(...(notes.unmatchedParagraphs || []))
+  return { mapped, notes, unplaced }
 }
 
 // The fit loop. For each editable block with a mapped rewrite: unchanged text passes
@@ -98,11 +134,15 @@ export function mapOptimizedToBlocks(blocksDoc, optimizedText) {
 export async function fitAndShorten(ctx, blocksDoc, mappedResult, shortenFn, { maxTries = 3 } = {}) {
   const { fitCheck, charBudget } = await import('./pdfFit.mjs')
   const { mapped } = mappedResult
+  const unplaced = new Set(mappedResult.unplaced || [])
   const out = []
   let pending = []           // [{ block, text, tries }]
   for (const b of blocksDoc.blocks) {
     if (!b.editable || mapped[b.id] === undefined || norm(mapped[b.id]) === norm(b.text)) {
-      out.push({ id: b.id, text: b.text, changed: false, fits: true, reverted: false, tries: 0 })
+      // a block the mapper WANTED to change but could not place keeps its original
+      // text in the PDF — report it reverted so the sheet resets to match
+      const wasUnplaced = b.editable && unplaced.has(b.id)
+      out.push({ id: b.id, text: b.text, changed: false, fits: true, reverted: wasUnplaced, tries: 0, ...(wasUnplaced ? { reason: 'unmapped' } : {}) })
       continue
     }
     const r = fitCheck(ctx, b, mapped[b.id])
