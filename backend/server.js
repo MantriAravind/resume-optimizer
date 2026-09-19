@@ -16,6 +16,7 @@ import { qaSurgicalOutput } from './pdfQa.mjs'
 import { renderHighlightedPages } from './pdfHighlight.mjs'
 import * as mupdf from 'mupdf'
 import { renderWithLayout, buildLayoutPage, layoutSheetCss } from './layoutRender.mjs'
+import { renderResumeDocx } from './renderTemplate.mjs'
 import mongoose from 'mongoose'
 import crypto from 'crypto'
 import { Document, Packer, Paragraph, TextRun, AlignmentType, LevelFormat, BorderStyle } from 'docx'
@@ -351,6 +352,16 @@ const userSchema = new mongoose.Schema({
     github:         { type: String, default: '' },
     graduationDate: { type: String, default: '' },
   },
+  // Template architecture (2026-09-18): the resume as STRUCTURED DETAILS — the
+  // single source of truth every optimize reads and the template renderer renders.
+  // Captured at upload by parseResumeStructured under the copy-never-write rule
+  // (verbatim resume wording, no AI rewriting), reviewed and approved by the user
+  // in /me/profile like everything else. Shape: { name, contact[], summary,
+  // skills[{label, items[]}], experience[{title, company, city, dates, bullets[]}],
+  // projects[{name, tech[], dates, github, bullets[]}], education[{degree, school,
+  // city, dates, gpa}], certifications[{name, org, date}], extraSections[] }.
+  resumeData:     { type: mongoose.Schema.Types.Mixed },
+
   updatedAt:      { type: Date, default: Date.now },
 })
 
@@ -678,6 +689,10 @@ app.get('/me/resume', requireUser, async (req, res) => {
       // second round trip would mean the board renders unfiltered first and then
       // visibly jumps.
       profile:        user?.profile        || {},
+      // Structured details (template architecture): the profile section renders and
+      // edits these; every optimize reads them. A page or two of strings — small
+      // enough to ride the same call.
+      resumeData:     user?.resumeData     || null,
     })
   } catch (error) {
     console.error('Get resume error:', error)
@@ -1828,8 +1843,358 @@ function normalizeSkillSeparators(out, original, skillsHeader) {
   return lines.join('\n')
 }
 
+// ── STRUCTURED OPTIMIZE ENGINE (template architecture, Step 4) ───────────────
+// The model receives and returns ONLY what it is allowed to change: the summary,
+// each role's bullet wordings, each project's bullet wordings, and the skill lines.
+// Titles, companies, dates, education and certifications are never in its output,
+// so the legacy gate's worst violations (invented sections, moved dates, deleted
+// roles) are impossible by construction. What remains checkable is checked.
+
+function serializeResumeData(d) {
+  const L = []
+  const bar = a => (a || []).filter(Boolean).join(' | ')
+  if (d.name) L.push(d.name)
+  if (d.contact?.length) L.push(bar(d.contact))
+  if (d.summary) { L.push('', 'SUMMARY', d.summary) }
+  if (d.skills?.length) {
+    L.push('', 'TECHNICAL SKILLS')
+    for (const s of d.skills) L.push(`${s.label}: ${(s.items || []).join(', ')}`)
+  }
+  if (d.experience?.length) {
+    L.push('', 'PROFESSIONAL EXPERIENCE')
+    for (const j of d.experience) {
+      L.push(bar([j.title, j.company]), bar([j.city, j.dates]))
+      for (const b of j.bullets || []) L.push(`\u2022 ${b}`)
+    }
+  }
+  if (d.projects?.length) {
+    L.push('', 'PROJECTS')
+    for (const p of d.projects) {
+      L.push(bar([p.name, (p.tech || []).join(', ')]))
+      if (p.dates) L.push(p.dates)
+      for (const b of p.bullets || []) L.push(`\u2022 ${b}`)
+      if (p.github) L.push(`GitHub: ${p.github}`)
+    }
+  }
+  if (d.education?.length) {
+    L.push('', 'EDUCATION')
+    for (const e of d.education) { L.push(bar([e.degree, e.school])); L.push(bar([e.city, e.dates, e.gpa ? `GPA: ${e.gpa}` : ''])) }
+  }
+  if (d.certifications?.length) {
+    L.push('', 'CERTIFICATIONS')
+    for (const c of d.certifications) L.push(bar([c.name, c.org, c.date]))
+  }
+  return L.join('\n')
+}
+
+const sentCount = t => String(t || '').split(/[.!?]+(?:\s+|$)/).filter(s => s.trim().length > 2).length
+const normTok = t => String(t || '').toLowerCase().replace(/[^a-z0-9+#./ -]/g, ' ').replace(/\s+/g, ' ').trim()
+const hasTerm = (hay, term) => normTok(hay).includes(normTok(term))
+
+// Every 4 consecutive words lifted from the posting is a violation (legacy Rule 3).
+function postingOverlaps(text, jobText) {
+  const words = normTok(jobText).split(' ').filter(w => w.length > 2)
+  const grams = new Set()
+  for (let i = 0; i + 3 < words.length; i++) grams.add(words.slice(i, i + 4).join(' '))
+  const tw = normTok(text).split(' ')
+  for (let i = 0; i + 3 < tw.length; i++) {
+    const g = tw.slice(i, i + 4).join(' ')
+    if (grams.has(g)) return g
+  }
+  return null
+}
+
+const PAST_OK = new Set(['embedded', 'automated', 'advanced', 'dedicated', 'distributed', 'unified', 'led'])
+const startsPast = b => {
+  const w = String(b || '').trim().split(/\s+/)[0] || ''
+  return /^[A-Z][a-z]+ed$/.test(w) && !PAST_OK.has(w.toLowerCase()) && w.toLowerCase() !== 'led' ? w : null
+}
+const isCurrentRole = j => /present|current/i.test(String(j?.dates || ''))
+const newDigits = (rewritten, original, confirmed) => {
+  const src = normTok(original) + ' ' + confirmed.map(normTok).join(' ')
+  return (String(rewritten).match(/\d[\d,.]*%?/g) || []).filter(n => !src.includes(normTok(n)))
+}
+
+// Gate a structured draft against its source. Returns a list of violation strings.
+function gateStructuredDraft(draft, rd, jobText, confirmed) {
+  const v = []
+  if (!draft || typeof draft !== 'object') return ['reply was not an object']
+  const jobs = draft.jobs, projB = draft.projectBullets, skills = draft.skills
+  if (!Array.isArray(jobs) || jobs.length !== (rd.experience || []).length) {
+    v.push(`jobs must be ${rd.experience?.length || 0} arrays of bullets, aligned to the roles in order`); return v
+  }
+  rd.experience.forEach((j, i) => {
+    const nb = Array.isArray(jobs[i]) ? jobs[i].length : -1
+    if (nb !== (j.bullets || []).length) v.push(`role ${i + 1} ("${j.title || j.company}") must have exactly ${(j.bullets || []).length} bullets, one for one \u2014 yours has ${nb}`)
+  })
+  if (!Array.isArray(projB) || projB.length !== (rd.projects || []).length) {
+    v.push(`projectBullets must be ${rd.projects?.length || 0} arrays, aligned to the projects in order`)
+  } else {
+    (rd.projects || []).forEach((p, i) => {
+      const nb = Array.isArray(projB[i]) ? projB[i].length : -1
+      if (nb !== (p.bullets || []).length) v.push(`project ${i + 1} must have exactly ${(p.bullets || []).length} bullets \u2014 yours has ${nb}`)
+    })
+  }
+  const srcSkills = rd.skills || []
+  if (!Array.isArray(skills) || skills.length !== srcSkills.length) {
+    v.push(`skills must be ${srcSkills.length} entries with the SAME labels in the SAME order`)
+  } else {
+    srcSkills.forEach((s, i) => {
+      if (String(skills[i]?.label || '') !== String(s.label)) v.push(`skills[${i}] label must stay exactly "${s.label}"`)
+      const items = (skills[i]?.items || []).map(String)
+      for (const orig of s.items || []) {
+        if (!items.some(x => normTok(x) === normTok(orig))) v.push(`original skill "${orig}" is missing from "${s.label}" \u2014 never remove an original skill`)
+      }
+      for (const it of items) {
+        const isOrig = (s.items || []).some(x => normTok(x) === normTok(it))
+        if (isOrig) continue
+        const isConf = confirmed.some(c => normTok(it).includes(normTok(c)) || normTok(c).includes(normTok(it)))
+        if (!isConf) v.push(`"${it}" added to "${s.label}" was neither in the resume nor confirmed by the candidate \u2014 remove it`)
+        // A new item may not duplicate an existing group: "Azure (A, B)" beside the
+        // original "Azure (X, Y)" reads as a defect. The confirmed skill stands alone.
+        const head = normTok(it).split(' ')[0]
+        const clash = /\(/.test(it) && (s.items || []).find(x => normTok(x).split(' ')[0] === head && normTok(x) !== normTok(it) && /\(/.test(x))
+        if (clash) v.push(`"${it}" duplicates the existing "${clash}" group in "${s.label}" \u2014 keep the original group unchanged and add the confirmed skill as its own item without repeating the platform grouping`)
+      }
+    })
+  }
+  if (draft.newSkillCategory) {
+    for (const it of draft.newSkillCategory.items || []) {
+      if (!confirmed.some(c => normTok(it).includes(normTok(c)) || normTok(c).includes(normTok(it)))) {
+        v.push(`newSkillCategory contains "${it}" which the candidate did not confirm \u2014 remove it`)
+      }
+    }
+  }
+  const sc0 = sentCount(rd.summary), sc1 = sentCount(draft.summary)
+  if (rd.summary && sc1 !== sc0) v.push(`the summary must keep exactly ${sc0} sentences \u2014 yours has ${sc1}`)
+  const checkText = (txt, srcTxt, where) => {
+    const g = postingOverlaps(txt, jobText)
+    if (g) v.push(`${where} lifts 4+ consecutive words from the posting ("${g}") \u2014 use their term, never their sentence`)
+    for (const n of newDigits(txt, srcTxt, confirmed)) v.push(`${where} introduces the number "${n}" which is in neither the resume nor the confirmed skills \u2014 never invent metrics`)
+    if (/[\u2014\u2013]|--/.test(txt)) v.push(`${where} uses a banned dash \u2014 use commas or full stops (plain hyphen only inside a certification name)`)
+  }
+  if (rd.summary) checkText(String(draft.summary || ''), rd.summary, 'the summary')
+  rd.experience.forEach((j, i) => (Array.isArray(jobs[i]) ? jobs[i] : []).forEach((b, k) => {
+    checkText(String(b), String(j.bullets?.[k] || ''), `role ${i + 1} bullet ${k + 1}`)
+    if (isCurrentRole(j)) { const w = startsPast(b); if (w) v.push(`role ${i + 1} is CURRENT (dates say Present) but bullet ${k + 1} opens with past tense "${w}" \u2014 use present tense`) }
+  }))
+  return v
+}
+
+// Assemble the final structured resume: profile copy + the draft's rewrites.
+function assembleOptimized(rd, draft) {
+  const out = structuredClone(rd)
+  if (rd.summary) out.summary = String(draft.summary || rd.summary)
+  out.experience = (rd.experience || []).map((j, i) => ({ ...j, bullets: (draft.jobs?.[i] || j.bullets || []).map(String) }))
+  out.projects = (rd.projects || []).map((p, i) => ({ ...p, bullets: (draft.projectBullets?.[i] || p.bullets || []).map(String) }))
+  out.skills = (rd.skills || []).map((s, i) => ({ label: s.label, items: (draft.skills?.[i]?.items || s.items || []).map(String) }))
+  if (draft.newSkillCategory?.label && draft.newSkillCategory.items?.length) {
+    out.skills.push({ label: String(draft.newSkillCategory.label), items: draft.newSkillCategory.items.map(String) })
+  }
+  return out
+}
+
+function findPlacementsStructured(data, confirmed) {
+  // Field names match the modal's card component exactly: skill (the pill),
+  // where, employer, section. No fragment and no removable — template-mode
+  // cards are informational; edits live in the profile.
+  return confirmed.map(k => {
+    let inSkills = null
+    for (const s of data.skills || []) if ((s.items || []).some(it => hasTerm(it, k))) { inSkills = s.label; break }
+    for (const j of data.experience || []) for (const b of j.bullets || []) if (hasTerm(b, k)) {
+      return { skill: k, where: inSkills ? 'both' : 'bullet', employer: j.company || j.title, section: 'experience', removable: false }
+    }
+    for (const p of data.projects || []) for (const b of p.bullets || []) if (hasTerm(b, k)) {
+      return { skill: k, where: inSkills ? 'both' : 'bullet', employer: p.name, section: 'project', removable: false }
+    }
+    if (hasTerm(data.summary, k)) return { skill: k, where: inSkills ? 'both' : 'summary', employer: null, section: 'summary', removable: false }
+    if (inSkills) return { skill: k, where: 'skills', employer: null, section: null, removable: false }
+    return { skill: k, where: 'missing', employer: null, section: null, removable: false }
+  })
+}
+
+// Preview body in the template's own look, inline-styled so nothing leaks into the
+// modal's stylesheet. Same content the downloads render; decorateHtml marks it after.
+function templateResumeBodyInline(d) {
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const bar = a => (a || []).filter(Boolean).map(esc).join(' | ')
+  const F = "font-family:Arial,'Liberation Sans',Helvetica,sans-serif"
+  let b = `<div style="${F};font-size:10.5pt;line-height:1.35;color:#000">`
+  const H = t => { b += `<div style="font-size:12pt;font-weight:bold;margin:9pt 0 3pt;padding-bottom:2pt;border-bottom:1pt solid #17365D">${esc(t)}</div>` }
+  const EH = t => { b += `<div style="font-weight:bold;margin-top:4pt">${t}</div>` }
+  const ED = t => { if (t) b += `<div style="font-size:10pt;font-style:italic;margin-bottom:1pt">${t}</div>` }
+  const BU = arr => { for (const x of arr || []) b += `<div style="margin:0 0 2pt 0.2in;text-indent:-0.15in">\u2022 ${esc(x)}</div>` }
+  b += `<div style="font-size:18pt;font-weight:bold;text-align:center">${esc(d.name)}</div>`
+  if (d.contact?.length) b += `<div style="font-size:10pt;text-align:center;margin-bottom:5pt">${bar(d.contact)}</div>`
+  if (d.summary) { H('PROFESSIONAL SUMMARY'); b += `<div style="margin-bottom:2pt">${esc(d.summary)}</div>` }
+  if (d.skills?.length) {
+    H(d.skillsHeading || 'TECHNICAL SKILLS')
+    for (const s of d.skills) b += `<div style="margin-bottom:1pt"><b>${esc(s.label)}:</b> ${esc((s.items || []).join(', '))}</div>`
+  }
+  const edu = () => { if (!d.education?.length) return; H('EDUCATION'); for (const e of d.education) { EH(bar([e.degree, e.school])); ED(bar([e.city, e.dates, e.gpa ? `GPA: ${e.gpa}` : ''])); BU(e.bullets) } }
+  const exp = () => { if (!d.experience?.length) return; H('PROFESSIONAL EXPERIENCE'); for (const j of d.experience) { EH(bar([j.title, j.company])); ED(bar([j.city, j.dates])); BU(j.bullets) } }
+  if (d.educationFirst) { edu(); exp() } else { exp() }
+  if (d.projects?.length) {
+    H('PROJECTS')
+    for (const p of d.projects) { EH(bar([p.name, (p.tech || []).join(', ')])); ED(p.dates ? esc(p.dates) : ''); BU(p.bullets); if (p.github) b += `<div style="margin:0 0 2pt 0.2in;text-indent:-0.15in">\u2022 GitHub: ${esc(p.github)}</div>` }
+  }
+  if (!d.educationFirst) edu()
+  if (d.certifications?.length) { H('CERTIFICATIONS'); for (const c of d.certifications) b += `<div style="margin-bottom:1pt">${bar([c.name, c.org, c.date])}</div>` }
+  for (const x of d.extraSections || []) {
+    if (!x.entries?.length) continue
+    H(String(x.heading).toUpperCase())
+    for (const e of x.entries) { if (e.title) EH(esc(e.title)); ED(e.details ? esc(e.details) : ''); BU(e.bullets) }
+  }
+  b += '</div>'
+  return b
+}
+
+async function optimizeStructured({ rd, jobText, confirmed, expYears, ask }) {
+  const editable = {
+    summary: rd.summary || '',
+    jobs: (rd.experience || []).map(j => j.bullets || []),
+    projectBullets: (rd.projects || []).map(p => p.bullets || []),
+    skills: (rd.skills || []).map(s => ({ label: s.label, items: s.items || [] })),
+  }
+  const yearsRule = expYears === null
+    ? 'Do NOT state a number of years in the summary.'
+    : `If the summary states years of experience it MUST say "${expYears}+ years" \u2014 that number is computed from their dates and is correct.`
+  const base = `You are an expert resume editor. Rewrite ONLY the parts below so the resume targets this job. You receive the candidate's full resume for context, but you return ONLY the editable parts, in the exact JSON shape given.
+
+${confirmed.length ? `THE CANDIDATE CONFIRMED THEY HAVE USED: ${confirmed.join(', ')}. Treat that as fact.` : 'The candidate confirmed no additional skills. Do not add any skill not already in the resume.'}
+
+HARD RULES:
+1. One for one: every role keeps its exact bullet count; every project too. Rewrite wording, never drop, merge, or add bullets.
+2. Attach, do not author: a confirmed skill rides on work the candidate described. Never write a bullet from the posting's duty list. If it has no honest home in a bullet, add it to the best-fitting skills category (or newSkillCategory as a last resort).
+3. Never copy the posting's sentences: use its TERM for their work, never 4+ consecutive words of its phrasing.
+4. Never invent metrics, team sizes, scale, or responsibility upgrades ("set up" never becomes "owned").
+5. Skills: same labels, same order. Keep every original item EXACTLY as written (reorder within a line so this posting's terms come first). Add each confirmed skill as its OWN comma-separated item in the category it honestly fits. NEVER create an item that duplicates a platform or tool already on the line: if "Azure (Synapse, Blob, Gen2)" exists, a confirmed Azure service is added as its own item ("Azure Synapse Analytics"), never as a second "Azure (...)" group.
+6. Summary keeps the exact sentence count. ${yearsRule}
+7. Voice: plain human verbs. Banned: spearheaded, leveraged, robust, seamless, cutting-edge, innovative, passionate, dynamic, results-driven, utilized. No em-dashes or en-dashes.
+8. Tense: roles whose dates end in Present are present tense throughout; past roles past tense.
+
+CANDIDATE'S RESUME (context, do not return it):
+${serializeResumeData(rd).slice(0, 14000)}
+
+JOB POSTING:
+${String(jobText).slice(0, 8000)}
+
+EDITABLE PARTS (rewrite these):
+${JSON.stringify(editable)}
+
+Return ONLY JSON: {"summary": string, "jobs": [[string,...],...], "projectBullets": [[string,...],...], "skills": [{"label": string, "items": [string,...]},...], "newSkillCategory": {"label": string, "items": [string,...]} | null, "feedback": "<2-3 sentences to the candidate>", "changes": ["<2-4 short lines, what changed and where>"]}`
+
+  const messages = [{ role: 'user', content: base }]
+  const LAST = 3
+  let draft = null, prevSig = null, gateLog = []
+  for (let attempt = 0; attempt <= LAST; attempt++) {
+    const replyText = await ask({
+      model: attempt === LAST ? MODEL_FALLBACK : MODEL_REWRITE,
+      maxTokens: 12000, reasoningEffort: 'low', messages,
+    })
+    try { draft = JSON.parse(replyText.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim()) }
+    catch { draft = null }
+    const viols = draft ? gateStructuredDraft(draft, rd, jobText, confirmed) : ['reply was not valid JSON']
+    gateLog = viols
+    if (!viols.length) break
+    const sig = viols.join('|')
+    const final = attempt === LAST || sig === prevSig
+    prevSig = sig
+    console.warn(`optimize-structured gate ${final ? 'final' : 'retry ' + (attempt + 1)}: ${viols.length} violation(s)`)
+    if (final) { draft = null; break }
+    messages.push({ role: 'assistant', content: replyText })
+    messages.push({ role: 'user', content: 'Your draft breaks the rules below. Fix ONLY these and return the same JSON shape. Everything else you got right must stay exactly as it is.\n\n' + viols.map(x => '- ' + x).join('\n') })
+  }
+
+  // Last resort: the profile itself is always a valid, honest resume. Ship it with
+  // the confirmed skills code-appended to one clearly-labeled final category \u2014 the
+  // tap screen promised them, and that promise is kept in code or the score lies.
+  let optimized, feedback, changes, degraded = false
+  if (draft) {
+    optimized = assembleOptimized(rd, draft)
+    feedback = String(draft.feedback || '')
+    changes = Array.isArray(draft.changes) ? draft.changes.map(c => String(c).trim()).filter(Boolean).slice(0, 5) : []
+  } else {
+    degraded = true
+    optimized = structuredClone(rd)
+    console.error('optimize-structured: gate never passed, shipping profile + code-placed skills. Last violations: ' + gateLog.slice(0, 6).join(' | '))
+    feedback = 'We kept your resume wording as it is and added your confirmed skills to the skills section.'
+    changes = []
+  }
+  const flat = serializeResumeData(optimized)
+  const stillMissing = confirmed.filter(k => !hasTerm(flat, k))
+  if (stillMissing.length) {
+    optimized.skills = optimized.skills || []
+    let extra = optimized.skills.find(s => s.label === 'Additional Skills')
+    if (!extra) { extra = { label: 'Additional Skills', items: [] }; optimized.skills.push(extra) }
+    for (const k of stillMissing) if (!extra.items.some(x => normTok(x) === normTok(k))) extra.items.push(k)
+    console.log('optimize-structured: code-placed confirmed skill(s): ' + stillMissing.join(', '))
+  }
+  return { optimized, feedback, changes, degraded }
+}
+
 app.post('/optimize', async (req, res) => {
   const { resumeText, jobText, confirmedSkills = [], jobTitle = '', yearsMin = null, resumeLayout = null } = req.body
+
+  // ── STRUCTURED PATH (template architecture) ─────────────────────────────
+  // Fires when the caller sends the profile's structured details. The legacy
+  // text path below is untouched and still serves callers without them.
+  const rdIn = req.body.resumeData ? sanitizeResumeData(req.body.resumeData) : null
+  if (rdIn && jobText) {
+    try {
+      const rtext = serializeResumeData(rdIn)
+      const found = await extractKeywords(rtext, jobText, String(jobTitle || ''))
+      const matchedKeywords = Array.isArray(req.body.matchedKeywords) ? req.body.matchedKeywords : found.matchedKeywords
+      const missingKeywords = Array.isArray(req.body.missingKeywords) ? req.body.missingKeywords : found.missingKeywords
+      const confirmed = (Array.isArray(confirmedSkills) ? confirmedSkills : []).filter(k => missingKeywords.includes(k))
+      const expMonths = totalExperienceMonths(rtext)
+      const expYears = expMonths === null ? null : Math.floor(expMonths / 12)
+
+      const { optimized, feedback, changes, degraded } = await optimizeStructured({
+        rd: rdIn, jobText, confirmed, expYears, ask: askModel,
+      })
+
+      const outText = serializeResumeData(optimized)
+      const landed = confirmed.filter(k => hasTerm(outText, k))
+      if (landed.length !== confirmed.length) console.error('optimize-structured: confirmed skill missing after code placement: ' + confirmed.filter(k => !landed.includes(k)).join(', '))
+      const placements = findPlacementsStructured(optimized, confirmed)
+
+      const total = matchedKeywords.length + missingKeywords.length
+      const scoreBefore = total ? Math.round((matchedKeywords.length / total) * 100) : 0
+      const scoreAfter = total ? Math.round(((matchedKeywords.length + landed.length) / total) * 100) : 0
+      const yearsRequired = Number.isFinite(Number(yearsMin)) && yearsMin !== null ? Number(yearsMin) : found.yearsRequired
+      const rubricAfter = scoreRubric({
+        matched: matchedKeywords, missing: missingKeywords, confirmed: landed,
+        roleMatch: found.roleMatch,
+        resumeTitle: found.latestTitle, jobTitle: String(jobTitle || ''),
+        yearsRequired, expMonths,
+      })
+
+      return res.json({
+        matchedKeywords,
+        missingKeywords,
+        addedKeywords: landed,
+        feedback: feedback + (degraded ? ' (We kept your original wording this time.)' : ''),
+        optimizedResume: outText,
+        optimizedResumeData: optimized,
+        scoreBefore,
+        scoreAfter,
+        score: scoreBefore,
+        rubricAfter,
+        placements,
+        optimizedHtml: templateResumeBodyInline(optimized),
+        sheet: null,
+        changes,
+        template: true,
+      })
+    } catch (error) {
+      console.error('optimize-structured error:', error)
+      if (error.status === 401) return res.status(401).json({ error: 'Invalid API key.' })
+      if (error.status === 402) return res.status(402).json({ error: 'No API credits remaining.' })
+      return res.status(500).json({ error: 'Something went wrong. Please try again.' })
+    }
+  }
+
   if (!resumeText || !jobText) {
     return res.status(400).json({ error: 'Please provide both resume text and job description.' })
   }
@@ -2721,6 +3086,161 @@ ${resumeText.slice(0, 12000)}`,
   }
 }
 
+// ── STRUCTURED RESUME PARSER (template architecture, 2026-09-18) ────────────
+// Parses the resume TEXT into the full profile schema by MEANING, regardless of the
+// source resume's own order or heading names. HARD RULE — copy, never write: every
+// bullet, title, and date lands in the schema word-for-word as the resume states it.
+// Rewriting happens only at optimize time, in front of the user. The verifier below
+// enforces the rule mechanically; parsing failures never block an upload.
+async function parseResumeStructured(resumeText) {
+  try {
+    const replyText = await askModel({
+      model: MODEL_EXTRACT,
+      maxTokens: 16000,
+      reasoningEffort: 'minimal',
+      messages: [{
+        role: 'user',
+        content: `Read this resume and return ONLY a JSON object. No preamble, no markdown fences.
+
+You are a COPYIST, not a writer. Every value must be copied word-for-word from the
+resume text. Do not rephrase, improve, summarize, expand, fix grammar, or invent
+anything. If the resume does not contain something, use null (or [] for lists).
+
+Shape:
+{
+  "name": string,
+  "contact": [string],            // each contact item separately: location, phone, email, links (no "|" separators)
+  "summary": string|null,          // the summary/objective paragraph verbatim
+  "skills": [{"label": string, "items": [string]}],   // see skills rule below
+  "experience": [{"title": string, "company": string, "city": string|null, "dates": string|null, "bullets": [string]}],
+  "projects": [{"name": string, "tech": [string], "dates": string|null, "github": string|null, "bullets": [string]}],
+  "education": [{"degree": string, "school": string, "city": string|null, "dates": string|null, "gpa": string|null}],
+  "certifications": [{"name": string, "org": string|null, "date": string|null}],
+  "extraSections": [{"heading": string, "entries": [{"title": string|null, "details": string|null, "bullets": [string]}]}]
+}
+
+Rules:
+- skills: when the skills section has labeled category lines ("Languages: C++, Java",
+  "Databases: MongoDB, MySQL"), return ONE entry PER LINE with that exact label and
+  its items. NEVER merge categories into a single "Skills" entry. Only use the label
+  "Skills" when the resume genuinely has one unlabeled list.
+- project/section names: link labels such as "Live Demo", "Demo", "GitHub", "Link"
+  are NOT part of the name — "Movie App Live Demo" has name "Movie App". Put a GitHub
+  URL in the github field; drop other link labels.
+- dates fields (experience, projects, education): ONLY date-like text — months,
+  years, "Present" (e.g. "Jan 2024 – Present"). Descriptive text on a project/title
+  line (e.g. after a "|") is NOT dates — it becomes that entry's first bullet.
+- bullets: strip the leading bullet glyph (•, -, *) but keep the sentence exactly as written.
+- A wrapped bullet is ONE bullet — join its lines with a single space.
+- experience/education/projects keep the resume's own entry order.
+- extraSections: anything real that fits none of the named sections (Leadership,
+  Publications, Volunteer, Awards...). Never move content there that belongs above.
+- Do not merge, split, deduplicate, or reorder bullets.
+
+RESUME:
+${resumeText.slice(0, 24000)}`,
+      }],
+    })
+    const raw = replyText.replace(/```json|```/g, '').trim()
+    const parsed = JSON.parse(raw)
+    return sanitizeResumeData(parsed)
+  } catch (err) {
+    console.error('structured resume parse failed:', err.message)
+    return null
+  }
+}
+
+// Bound every field to sane types and sizes; storage is Mixed, so this is the gate.
+function sanitizeResumeData(d) {
+  if (!d || typeof d !== 'object') return null
+  // Internal newlines/multi-spaces collapse to one space: every schema field is a
+  // single-line value, and a stray \n reaching the docx renderer is a defect.
+  const s = v => (typeof v === 'string' && v.trim() && v.trim().toLowerCase() !== 'null') ? v.replace(/[\s\u00a0]+/g, ' ').trim().slice(0, 600) : ''
+  const arr = (v, f, cap) => Array.isArray(v) ? v.slice(0, cap).map(f).filter(Boolean) : []
+  // A dates field must look like dates. When the model puts prose there (a project
+  // line's trailing description, say), the text moves to that entry's bullets —
+  // deterministically, so the defect can never reach the review screen.
+  const looksLikeDates = v => v && v.length <= 60 && /(\b(19|20)\d{2}\b|present|current|expected|graduated)/i.test(v)
+  const fixDates = e => {
+    if (e && e.dates && !looksLikeDates(e.dates)) {
+      const stray = e.dates
+      e.dates = ''
+      e.bullets = Array.isArray(e.bullets) ? e.bullets : []
+      const dup = e.bullets.some(b => String(b).toLowerCase().includes(stray.toLowerCase().slice(0, 40)))
+      if (!dup) e.bullets.unshift(stray)
+    }
+    return e
+  }
+  const out = {
+    name: s(d.name),
+    contact: arr(d.contact, s, 8),
+    summary: s(d.summary),
+    skills: arr(d.skills, x => x && s(x.label) ? { label: s(x.label), items: arr(x.items, s, 40) } : null, 12),
+    experience: arr(d.experience, x => x && (s(x.title) || s(x.company)) ? fixDates({
+      title: s(x.title), company: s(x.company), city: s(x.city), dates: s(x.dates),
+      bullets: arr(x.bullets, s, 15),
+    }) : null, 12),
+    projects: arr(d.projects, x => x && s(x.name) ? fixDates({
+      name: s(x.name), tech: arr(x.tech, s, 12), dates: s(x.dates), github: s(x.github),
+      bullets: arr(x.bullets, s, 12),
+    }) : null, 10),
+    education: arr(d.education, x => x && (s(x.degree) || s(x.school)) ? fixDates({
+      degree: s(x.degree), school: s(x.school), city: s(x.city), dates: s(x.dates), gpa: s(x.gpa),
+    }) : null, 6),
+    certifications: arr(d.certifications, x => x && s(x.name) ? { name: s(x.name), org: s(x.org), date: s(x.date) } : null, 12),
+    extraSections: arr(d.extraSections, x => x && s(x.heading) ? {
+      heading: s(x.heading),
+      entries: arr(x.entries, e => e ? { title: s(e.title), details: s(e.details), bullets: arr(e.bullets, s, 10) } : null, 8),
+    } : null, 6),
+  }
+  if (JSON.stringify(out).length > 400000) return null
+  return out
+}
+
+// The copy-never-write rule, enforced: every substantive parsed string must exist in
+// the source text (whitespace/case-normalized). Violations are reported per field so
+// the review screen can flag exactly what needs the user's eyes — parsed content is
+// NEVER silently trusted.
+function verifyResumeData(data, sourceText) {
+  if (!data) return { ok: false, violations: ['no parse'] }
+  const norm = t => String(t || '').toLowerCase().replace(/[\s\u00a0]+/g, ' ').replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"').trim()
+  const src = norm(sourceText)
+  const violations = []
+  const check = (text, where) => {
+    const n = norm(text)
+    if (n && n.length > 3 && !src.includes(n)) violations.push(`${where}: "${String(text).slice(0, 60)}"`)
+  }
+  check(data.name, 'name')
+  if (data.summary) check(data.summary, 'summary')
+  data.experience?.forEach((j, i) => {
+    check(j.title, `experience[${i}].title`)
+    check(j.company, `experience[${i}].company`)
+    j.bullets?.forEach((b, k) => check(b, `experience[${i}].bullet[${k}]`))
+  })
+  data.projects?.forEach((p, i) => p.bullets?.forEach((b, k) => check(b, `project[${i}].bullet[${k}]`)))
+  data.education?.forEach((e, i) => { check(e.degree, `education[${i}].degree`); check(e.school, `education[${i}].school`) })
+  return { ok: violations.length === 0, violations: violations.slice(0, 30) }
+}
+
+// Parse + verify with one corrective retry. On persistent violations the data still
+// returns, carrying its verification result — the review screen shows those fields
+// as needs-checking instead of the server pretending they are clean.
+async function parseAndVerifyResume(resumeText) {
+  let data = await parseResumeStructured(resumeText)
+  if (!data) return { data: null, verification: { ok: false, violations: ['parse failed'] } }
+  let verification = verifyResumeData(data, resumeText)
+  if (!verification.ok) {
+    console.warn('resume parse verification:', verification.violations.length, 'violation(s) — retrying once')
+    const retry = await parseResumeStructured(resumeText)
+    if (retry) {
+      const rv = verifyResumeData(retry, resumeText)
+      if (rv.violations.length < verification.violations.length) { data = retry; verification = rv }
+    }
+  }
+  if (!verification.ok) console.warn('resume parse verification final:', verification.violations.join(' | '))
+  return { data, verification }
+}
+
 app.post('/me/resume/upload', requireUser, (req, res) => {
   upload.single('resume')(req, res, async err => {
     if (err) {
@@ -2796,7 +3316,12 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
         })
       }
 
-      const profile = await readProfileFromResume(text)
+      // Flat board profile and full structured details, in parallel — independent
+      // reads of the same text, and neither may block the other or the upload.
+      const [profile, structured] = await Promise.all([
+        readProfileFromResume(text),
+        parseAndVerifyResume(text),
+      ])
 
       // Two independent opinions on whether this is a resume: the regex checks and
       // the model. Either objecting is enough to warn, because they fail on different
@@ -2815,6 +3340,10 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
         method,
         fileName: req.file.originalname,
         profile: profile || null,
+        // Structured details for the review screen: the user edits/approves these,
+        // then /me/profile stores what they approved.
+        resumeData: structured.data,
+        resumeDataVerification: structured.verification,
         // A7-S2: the fallback sentence, if any, so the client can show it at upload
         compat: compat ? { mode: compat.mode, reason: compat.reason, message: compat.message } : null,
       })
@@ -2861,7 +3390,10 @@ app.post('/me/resume/analyze', requireUser, async (req, res) => {
       return res.json({ status: assessment.status, message: assessment.message, text })
     }
 
-    const profile = await readProfileFromResume(text)
+    const [profile, structured] = await Promise.all([
+      readProfileFromResume(text),
+      parseAndVerifyResume(text),
+    ])
     const suspect = assessment.status === 'not_resume' || profile?.isResume === false
 
     res.json({
@@ -2872,6 +3404,8 @@ app.post('/me/resume/analyze', requireUser, async (req, res) => {
       checks: assessment.checks || null,
       text,
       profile: profile || null,
+      resumeData: structured.data,
+      resumeDataVerification: structured.verification,
     })
   } catch (error) {
     console.error('Resume analyse error:', error)
@@ -2886,10 +3420,14 @@ app.post('/me/resume/analyze', requireUser, async (req, res) => {
 // scrambled extraction produces bad matches with no visible cause.
 app.post('/me/profile', requireUser, async (req, res) => {
   try {
-    const { resumeText, resumeFileName, profile } = req.body || {}
+    const { resumeText, resumeFileName, profile, resumeData } = req.body || {}
     if (!resumeText || !String(resumeText).trim()) {
       return res.status(400).json({ error: 'Resume text is required.' })
     }
+    // The structured details as the user approved them in the review screen —
+    // sanitized through the same gate as the parser's own output, then stored as
+    // the single source of truth for every optimize.
+    const approvedResumeData = resumeData ? sanitizeResumeData(resumeData) : null
 
     const p = profile || {}
     const str = v => (typeof v === 'string' ? v.trim() : '')
@@ -2918,6 +3456,10 @@ app.post('/me/profile', requireUser, async (req, res) => {
       clerkUserId:    req.userId,
       resumeText:     String(resumeText),
       resumeFileName: str(resumeFileName),
+      // Only overwrite the stored structured details when this save carries them —
+      // a profile-page save without resumeData must not destroy the reviewed data,
+      // same rule as the parked-file guard below.
+      ...(approvedResumeData ? { resumeData: approvedResumeData } : {}),
       updatedAt:      new Date(),
       profile: {
         firstName:       str(p.firstName),
@@ -3715,8 +4257,99 @@ function fontFor(id) {
 }
 
 // ── DOWNLOAD WORD
+// ── TEMPLATE HTML TWIN (Step 4 Chunk B) ─────────────────────────────────────
+// The PDF download renders this through the same puppeteer/PDFShift pipeline the
+// legacy PDFs use. Metrics mirror the approved docx template exactly (twips/20=pt):
+// Letter, 0.6"/0.7" margins, Arial, 18/12/10.5/10pt, navy 17365D rules, hanging
+// bullets 0.2in/0.15in, headings keep with their content.
+function templateResumeHTML(d) {
+  const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const bar = a => (a || []).filter(Boolean).map(esc).join(' | ')
+  let b = ''
+  const heading = t => { b += `<h2>${esc(t)}</h2>` }
+  const entryHead = t => { b += `<p class="eh">${t}</p>` }
+  const entryDet = t => { if (t) b += `<p class="ed">${t}</p>` }
+  const bullets = arr => { for (const x of arr || []) b += `<p class="bu">\u2022 ${esc(x)}</p>` }
+
+  b += `<h1>${esc(d.name)}</h1>`
+  if (d.contact?.length) b += `<p class="ct">${bar(d.contact)}</p>`
+  if (d.summary) { heading('PROFESSIONAL SUMMARY'); b += `<p class="bd">${esc(d.summary)}</p>` }
+  if (d.skills?.length) {
+    heading(d.skillsHeading || 'TECHNICAL SKILLS')
+    for (const s of d.skills) b += `<p class="bd"><b>${esc(s.label)}:</b> ${esc((s.items || []).join(', '))}</p>`
+  }
+  const edu = () => {
+    if (!d.education?.length) return
+    heading('EDUCATION')
+    for (const e of d.education) {
+      entryHead(bar([e.degree, e.school]))
+      entryDet(bar([e.city, e.dates, e.gpa ? `GPA: ${e.gpa}` : '']))
+      bullets(e.bullets)
+    }
+  }
+  const exp = () => {
+    if (!d.experience?.length) return
+    heading('PROFESSIONAL EXPERIENCE')
+    for (const j of d.experience) { entryHead(bar([j.title, j.company])); entryDet(bar([j.city, j.dates])); bullets(j.bullets) }
+  }
+  if (d.educationFirst) { edu(); exp() } else { exp() }
+  if (d.projects?.length) {
+    heading('PROJECTS')
+    for (const p of d.projects) {
+      entryHead(bar([p.name, (p.tech || []).join(', ')]))
+      entryDet(p.dates ? esc(p.dates) : '')
+      bullets(p.bullets)
+      if (p.github) b += `<p class="bu">\u2022 GitHub: ${esc(p.github)}</p>`
+    }
+  }
+  if (!d.educationFirst) edu()
+  if (d.certifications?.length) {
+    heading('CERTIFICATIONS')
+    for (const c of d.certifications) b += `<p class="bd">${bar([c.name, c.org, c.date])}</p>`
+  }
+  for (const x of d.extraSections || []) {
+    if (!x.entries?.length) continue
+    heading(String(x.heading).toUpperCase())
+    for (const e of x.entries) { if (e.title) entryHead(esc(e.title)); entryDet(e.details ? esc(e.details) : ''); bullets(e.bullets) }
+  }
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page { size: Letter portrait; margin: 0.6in 0.7in; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: Arial, 'Liberation Sans', Helvetica, sans-serif; font-size: 10.5pt; color: #000; line-height: 1.22; }
+h1 { font-size: 18pt; font-weight: bold; text-align: center; margin-bottom: 1pt; }
+.ct { font-size: 10pt; text-align: center; margin-bottom: 5pt; }
+h2 { font-size: 12pt; font-weight: bold; margin-top: 7pt; margin-bottom: 3pt; padding-bottom: 2pt;
+     border-bottom: 1pt solid #17365D; break-after: avoid; page-break-after: avoid; }
+.eh { font-weight: bold; margin-top: 2pt; break-after: avoid; page-break-after: avoid; }
+.ed { font-size: 10pt; font-style: italic; margin-bottom: 1pt; break-after: avoid; page-break-after: avoid; }
+.bd { margin-bottom: 1pt; }
+.bu { margin-bottom: 1.5pt; padding-left: 0.2in; text-indent: -0.15in; break-inside: avoid; page-break-inside: avoid; }
+</style></head><body>${b}</body></html>`
+}
+
 app.post('/download-word', async (req, res) => {
   const { resumeText, font, length, kind, letterText, company } = req.body
+
+  // Template architecture: a request carrying structured details renders through the
+  // approved template. One renderer, no branching on the user's source format.
+  if (req.body.resumeData && kind !== 'letter') {
+    try {
+      const rdDl = sanitizeResumeData(req.body.resumeData)
+      if (!rdDl) return res.status(400).json({ error: 'Resume details are malformed.' })
+      const buffer = await renderResumeDocx(rdDl)
+      res.set({
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Disposition': 'attachment; filename="optimized-resume.docx"',
+        'Content-Length': buffer.length,
+      })
+      return res.send(buffer)
+    } catch (err) {
+      console.error('template docx render failed:', err)
+      return res.status(500).json({ error: 'Failed to generate the Word file. Please try again.' })
+    }
+  }
+
   if (!resumeText) return res.status(400).json({ error: 'No resume text provided.' })
 
   // Cover letter as a .docx: letterhead from the resume, date, greeting, body, sign-off.
@@ -4149,6 +4782,33 @@ async function renderPdfViaPdfShift(html) {
 
 app.post('/download-pdf', async (req, res) => {
   const { resumeText, font, length, kind, letterText, company } = req.body
+
+  if (req.body.resumeData && kind !== 'letter') {
+    const rdDl = sanitizeResumeData(req.body.resumeData)
+    if (!rdDl) return res.status(400).json({ error: 'Resume details are malformed.' })
+    const htmlT = templateResumeHTML(rdDl)
+    let pdfBuffer = null
+    try {
+      pdfBuffer = await renderPdfLocally(htmlT)
+    } catch (localErr) {
+      console.error('Local template PDF render failed:', localErr.message)
+      browserPromise = null
+      try {
+        pdfBuffer = await renderPdfViaPdfShift(htmlT)
+        console.warn('Served template PDF via PDFShift fallback')
+      } catch (fallbackErr) {
+        console.error('PDFShift fallback also failed:', fallbackErr.message)
+        return res.status(500).json({ error: 'Failed to generate PDF. Please try again.' })
+      }
+    }
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="optimized-resume.pdf"',
+      'Content-Length': pdfBuffer.length,
+    })
+    return res.send(pdfBuffer)
+  }
+
   if (!resumeText) return res.status(400).json({ error: 'No resume text provided.' })
   if (kind === 'letter' && !letterText) return res.status(400).json({ error: 'No letter text provided.' })
 
@@ -4183,7 +4843,7 @@ app.post('/download-pdf', async (req, res) => {
 
 // Bump on every change that ships. Printed at startup so "which code is running"
 // is read off the terminal, never inferred from behaviour.
-const SERVER_BUILD = '2026-09-14b preview: word-level amber diff + green skills; vector (PDF) preview pane'
+const SERVER_BUILD = '2026-09-18a template architecture: structured optimize, template preview + downloads'
 app.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT} · build: ${SERVER_BUILD}`)
-})
+})

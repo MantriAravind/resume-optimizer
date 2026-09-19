@@ -142,6 +142,20 @@ const CSS = `
   width:15px;height:15px;animation:ob-spin .7s linear infinite}
 @keyframes ob-spin{to{transform:rotate(360deg)}}
 
+.ob-sec{border:1px solid var(--border);border-radius:11px;overflow:hidden;margin-top:14px}
+.ob-sech{display:flex;align-items:center;justify-content:space-between;padding:9px 13px;background:#F9FAFB;
+  border-bottom:1px solid var(--border);font-size:12px;font-weight:700}
+.ob-secb{padding:13px}
+.ob-entry{border:1px solid #EEF0F3;border-radius:9px;padding:11px;margin-bottom:11px;background:#FCFCFD}
+.ob-entry:last-child{margin-bottom:0}
+.ob-bull{width:100%;border:1px solid var(--border);border-radius:7px;padding:9px 11px;font-size:12px;
+  line-height:1.6;font-family:inherit;color:var(--ink);resize:vertical;min-height:76px;background:#fff}
+.ob-bull:focus{outline:none;border-color:var(--blue)}
+.ob-mini{background:none;border:0;cursor:pointer;color:#B91C1C;font-size:11px;font-weight:650;font-family:inherit;padding:2px 4px}
+.ob-add{background:#fff;border:1px dashed #CBD5E1;color:#374151;border-radius:8px;padding:8px 13px;
+  font-size:12px;font-weight:650;cursor:pointer;font-family:inherit;margin-top:4px}
+.ob-add:hover{border-color:var(--blue);color:var(--blue)}
+.ob-warn{background:#FFFBEB;border:1px solid #FDE68A;color:#92400E}
 @media (max-width:640px){
   .ob-body{padding:28px 17px 55px}
   .ob h1{font-size:25px}
@@ -173,6 +187,10 @@ export default function OnboardingResume() {
   const [result, setResult] = useState(null)
   const [text, setText] = useState('')
   const [profile, setProfile] = useState({})
+  // Template architecture: the structured resume details (single source of truth for
+  // every optimize) and the parser's copy-rule verification result.
+  const [rd, setRd] = useState(null)
+  const [rdCheck, setRdCheck] = useState(null)
   const [pasteText, setPasteText] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -191,6 +209,8 @@ export default function OnboardingResume() {
     setResult(data)
     setText(data.text || '')
     setProfile(data.profile || {})
+    setRd(data.resumeData || null)
+    setRdCheck(data.resumeDataVerification || null)
     if (chosenFile) setFile(chosenFile)
     // No text at all, or barely any — a scan or a photo. Paste is the only way through.
     setStage(data.status === 'empty' || data.status === 'short' ? 'paste' : 'review')
@@ -284,7 +304,7 @@ export default function OnboardingResume() {
       const res = await fetch(`${BACKEND}/me/profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ resumeText: text, resumeFileName: file?.name || '', profile }),
+        body: JSON.stringify({ resumeText: text, resumeFileName: file?.name || '', profile, resumeData: rd }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -303,6 +323,7 @@ export default function OnboardingResume() {
     stopProgress()
     setStage('idle'); setFile(null); setResult(null)
     setText(''); setProfile({}); setPasteText(''); setError('')
+    setRd(null); setRdCheck(null)
   }
 
   const chrome = (
@@ -331,9 +352,9 @@ export default function OnboardingResume() {
     <div className="ob-priv">
       <Shield />
       <span>
-        We keep the text and the file, so your tailored resume can come back in your own
-        layout. Your resume is never sent to employers or third parties without you
-        choosing to.
+        We keep the text and the file. Your tailored resume comes back in a clean,
+        standardized, ATS-friendly format. Your resume is never sent to employers or
+        third parties without you choosing to.
       </span>
     </div>
   )
@@ -405,6 +426,154 @@ export default function OnboardingResume() {
     // locking that student out of jobs entirely is a far worse failure than an
     // incomplete profile.
     const missingRequired = FIELDS.filter(([k, , req]) => req && !profile[k]).map(([, l]) => l)
+
+    // ── Structured details editor (template architecture) ────────────────────
+    // Everything the optimizer will ever read, shown for the user to fix and approve.
+    // Edit helpers: immutable updates by section/index/field.
+    const upd = fn => setRd(r => fn(structuredClone(r || {})))
+    const setSec = (sec, i, field, v) => upd(r => { r[sec][i][field] = v; return r })
+    const setBullets = (sec, i, v) => upd(r => { r[sec][i].bullets = v.split('\n'); return r })
+    const rmEntry = (sec, i) => upd(r => { r[sec].splice(i, 1); return r })
+    const addEntry = (sec, blank) => upd(r => { r[sec] = r[sec] || []; r[sec].push(blank); return r })
+
+    const inp = (sec, i, field, label, ph) => (
+      <div className="ob-fld">
+        <label>{label}</label>
+        <input value={rd?.[sec]?.[i]?.[field] || ''} placeholder={ph || ''}
+          onChange={e => setSec(sec, i, field, e.target.value)} />
+      </div>
+    )
+
+    // Disclosure-doc warnings (soft — never block): missing dates, overlong bullets.
+    const rdWarnings = []
+    if (rd) {
+      rd.experience?.forEach((j, i) => {
+        if (!j.dates) rdWarnings.push(`"${j.title || j.company || 'Job ' + (i + 1)}" has no dates`)
+        j.bullets?.forEach(b => { if (b.trim().split(/\s+/).length > 45) rdWarnings.push(`A bullet under "${j.title || j.company}" is very long — consider splitting it`) })
+      })
+    }
+
+    const detailsEditor = rd && (
+      <div className="ob-sec">
+        <div className="ob-sech"><span>Your resume details — what every tailored resume is built from</span><span style={{ color: '#6B7280', fontWeight: 500 }}>check &amp; edit</span></div>
+        <div className="ob-secb">
+
+          {rdCheck && rdCheck.ok === false && (
+            <div className="ob-msg ob-warn"><AlertCircle />
+              <span><b>Please double-check the fields below.</b> Some details may not match your resume exactly{rdCheck.violations?.length ? ': ' + rdCheck.violations.slice(0, 5).join(' · ') : '.'}</span>
+            </div>
+          )}
+          {rdWarnings.length > 0 && (
+            <div className="ob-msg ob-warn"><AlertCircle /><span>{rdWarnings.slice(0, 4).join(' · ')}</span></div>
+          )}
+
+          <div className="ob-fld" style={{ marginBottom: 12 }}>
+            <label>Professional summary</label>
+            <textarea className="ob-bull" style={{ minHeight: 64 }} value={rd.summary || ''}
+              onChange={e => upd(r => { r.summary = e.target.value; return r })} />
+          </div>
+
+          <div className="ob-fld" style={{ marginBottom: 12 }}>
+            <label>Skills — one category per row</label>
+            {(rd.skills || []).map((s, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 7 }}>
+                <input style={{ flex: '0 0 34%' }} value={s.label || ''} placeholder="Category"
+                  onChange={e => setSec('skills', i, 'label', e.target.value)} />
+                <input style={{ flex: 1 }} value={(s.items || []).join(', ')} placeholder="Comma-separated skills"
+                  onChange={e => upd(r => { r.skills[i].items = e.target.value.split(',').map(x => x.trim()); return r })} />
+                <button className="ob-mini" onClick={() => rmEntry('skills', i)} title="Remove">✕</button>
+              </div>
+            ))}
+            <button className="ob-add" onClick={() => addEntry('skills', { label: '', items: [] })}>+ Add skill category</button>
+          </div>
+
+          <div className="ob-fld" style={{ marginBottom: 12 }}>
+            <label>Experience</label>
+            {(rd.experience || []).map((j, i) => (
+              <div className="ob-entry" key={i}>
+                <div className="ob-frow" style={{ marginBottom: 8 }}>
+                  {inp('experience', i, 'title', 'Job title')}
+                  {inp('experience', i, 'company', 'Company')}
+                </div>
+                <div className="ob-frow" style={{ marginBottom: 8 }}>
+                  {inp('experience', i, 'city', 'City')}
+                  {inp('experience', i, 'dates', 'Dates', 'e.g. Jan 2024 – Present')}
+                </div>
+                <div className="ob-fld">
+                  <label>Bullets — one per line</label>
+                  <textarea className="ob-bull" value={(j.bullets || []).join('\n')}
+                    onChange={e => setBullets('experience', i, e.target.value)} />
+                </div>
+                <button className="ob-mini" onClick={() => rmEntry('experience', i)}>Remove this job</button>
+              </div>
+            ))}
+            <button className="ob-add" onClick={() => addEntry('experience', { title: '', company: '', city: '', dates: '', bullets: [] })}>+ Add a job</button>
+          </div>
+
+          <div className="ob-fld" style={{ marginBottom: 12 }}>
+            <label>Projects</label>
+            {(rd.projects || []).map((p, i) => (
+              <div className="ob-entry" key={i}>
+                <div className="ob-frow" style={{ marginBottom: 8 }}>
+                  {inp('projects', i, 'name', 'Project name')}
+                  <div className="ob-fld">
+                    <label>Technologies</label>
+                    <input value={(p.tech || []).join(', ')} placeholder="Comma-separated"
+                      onChange={e => upd(r => { r.projects[i].tech = e.target.value.split(',').map(x => x.trim()); return r })} />
+                  </div>
+                </div>
+                <div className="ob-frow" style={{ marginBottom: 8 }}>
+                  {inp('projects', i, 'dates', 'Dates')}
+                  {inp('projects', i, 'github', 'GitHub link')}
+                </div>
+                <div className="ob-fld">
+                  <label>Bullets — one per line</label>
+                  <textarea className="ob-bull" value={(p.bullets || []).join('\n')}
+                    onChange={e => setBullets('projects', i, e.target.value)} />
+                </div>
+                <button className="ob-mini" onClick={() => rmEntry('projects', i)}>Remove this project</button>
+              </div>
+            ))}
+            <button className="ob-add" onClick={() => addEntry('projects', { name: '', tech: [], dates: '', github: '', bullets: [] })}>+ Add a project</button>
+          </div>
+
+          <div className="ob-fld" style={{ marginBottom: 12 }}>
+            <label>Education</label>
+            {(rd.education || []).map((e2, i) => (
+              <div className="ob-entry" key={i}>
+                <div className="ob-frow" style={{ marginBottom: 8 }}>
+                  {inp('education', i, 'degree', 'Degree')}
+                  {inp('education', i, 'school', 'School')}
+                </div>
+                <div className="ob-frow">
+                  {inp('education', i, 'city', 'City')}
+                  {inp('education', i, 'dates', 'Dates', 'e.g. Graduated: May 2024')}
+                </div>
+                <button className="ob-mini" style={{ marginTop: 8 }} onClick={() => rmEntry('education', i)}>Remove</button>
+              </div>
+            ))}
+            <button className="ob-add" onClick={() => addEntry('education', { degree: '', school: '', city: '', dates: '', gpa: '' })}>+ Add education</button>
+          </div>
+
+          <div className="ob-fld">
+            <label>Certifications</label>
+            {(rd.certifications || []).map((c, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 7 }}>
+                <input style={{ flex: 1 }} value={c.name || ''} placeholder="Certification"
+                  onChange={e => setSec('certifications', i, 'name', e.target.value)} />
+                <input style={{ flex: '0 0 26%' }} value={c.org || ''} placeholder="Issuer"
+                  onChange={e => setSec('certifications', i, 'org', e.target.value)} />
+                <input style={{ flex: '0 0 18%' }} value={c.date || ''} placeholder="Date"
+                  onChange={e => setSec('certifications', i, 'date', e.target.value)} />
+                <button className="ob-mini" onClick={() => rmEntry('certifications', i)} title="Remove">✕</button>
+              </div>
+            ))}
+            <button className="ob-add" onClick={() => addEntry('certifications', { name: '', org: '', date: '' })}>+ Add certification</button>
+          </div>
+
+        </div>
+      </div>
+    )
 
     return (
       <div className="ob"><style>{CSS}</style>{chrome}
@@ -507,6 +676,8 @@ export default function OnboardingResume() {
             </div>
 
           </div>
+
+          {detailsEditor}
         </div>
       </div>
     )

@@ -121,6 +121,22 @@ const CSS = `
 .pf-loadspin{width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--blue);
   border-radius:50%;margin:0 auto 14px;animation:pf-spin .7s linear infinite}
 
+.pf-sec{border:1px solid var(--border);border-radius:13px;overflow:hidden;margin-top:18px}
+.pf-sech{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;
+  background:#FAFBFC;border-bottom:1px solid var(--border);font-size:12.5px;font-weight:700}
+.pf-sech span:last-child{color:var(--muted);font-weight:500;font-size:11px}
+.pf-secb{padding:14px}
+.pf-entry{border:1px solid #EEF0F3;border-radius:10px;padding:12px;margin-bottom:12px;background:#FCFCFD}
+.pf-entry:last-child{margin-bottom:0}
+.pf-bull{width:100%;border:1px solid var(--border);border-radius:8px;padding:9px 11px;font-size:12px;
+  line-height:1.6;font-family:inherit;color:var(--ink);resize:vertical;min-height:80px;background:#fff}
+.pf-bull:focus{outline:none;border-color:var(--blue)}
+.pf-minirm{background:none;border:0;cursor:pointer;color:#B91C1C;font-size:11px;font-weight:650;font-family:inherit;padding:2px 4px}
+.pf-add{background:#fff;border:1px dashed #CBD5E1;color:#374151;border-radius:8px;padding:8px 13px;
+  font-size:12px;font-weight:650;cursor:pointer;font-family:inherit;margin-top:5px}
+.pf-add:hover{border-color:var(--blue);color:var(--blue)}
+.pf-warn{background:#FFFBEB;border:1px solid #FDE68A;color:#92400E}
+.pf-plain input{background:#fff;border-color:var(--border)}
 @media (max-width:1000px){ .pf-cols{grid-template-columns:1fr} }
 @media (max-width:640px){ .pf-body,.pf-htop{padding-left:16px;padding-right:16px} .pf-frow{grid-template-columns:1fr} }
 `
@@ -146,6 +162,10 @@ export default function ProfilePage() {
   const [fileName, setFileName]     = useState('')
   const [updatedAt, setUpdatedAt]   = useState(null)
   const [profile, setProfile]       = useState({})
+
+  // Template architecture: the structured resume details — what every optimize reads.
+  const [rd, setRd] = useState(null)
+  const [rdCheck, setRdCheck] = useState(null)
 
   const [replacing, setReplacing] = useState(false)
   const [dragOver, setDragOver]   = useState(false)
@@ -173,6 +193,7 @@ export default function ProfilePage() {
           p.email = user.primaryEmailAddress.emailAddress
         }
         setProfile(p)
+        setRd(data.resumeData || null)
       } catch {
         if (!cancelled) setError('Could not load your profile. Please refresh.')
       } finally {
@@ -207,6 +228,8 @@ export default function ProfilePage() {
       setFileName(data.fileName || f.name)
       setScrambled(data.status === 'not_resume')
       if (data.profile) setProfile(p => ({ ...p, ...data.profile }))
+      setRd(data.resumeData || null)
+      setRdCheck(data.resumeDataVerification || null)
       setReplacing(false)
       setSaved(false)
     } catch {
@@ -224,7 +247,7 @@ export default function ProfilePage() {
       const res = await fetch(`${BACKEND}/me/profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ resumeText, resumeFileName: fileName, profile }),
+        body: JSON.stringify({ resumeText, resumeFileName: fileName, profile, resumeData: rd }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) { setError(data.error || 'Could not save. Please try again.'); return }
@@ -279,6 +302,150 @@ export default function ProfilePage() {
   // Blocks Save, not the board. The student can still browse jobs with an incomplete
   // profile — they just cannot save one that is missing the basics.
   const missingRequired = PERSONAL.filter(([k, , req]) => req && !profile[k]).map(([, l]) => l)
+
+  // ── Structured details editor (same sections as the template renders) ──────
+  const upd = fn => { setSaved(false); setRd(r => fn(structuredClone(r || {}))) }
+  const setSec = (sec, i, field, v) => upd(r => { r[sec][i][field] = v; return r })
+  const setBullets = (sec, i, v) => upd(r => { r[sec][i].bullets = v.split('\n'); return r })
+  const rmEntry = (sec, i) => upd(r => { r[sec].splice(i, 1); return r })
+  const addEntry = (sec, blank) => upd(r => { r[sec] = r[sec] || []; r[sec].push(blank); return r })
+  const inp = (sec, i, field, label, ph) => (
+    <div className="pf-fld pf-plain">
+      <label>{label}</label>
+      <input value={rd?.[sec]?.[i]?.[field] || ''} placeholder={ph || ''}
+        onChange={e => setSec(sec, i, field, e.target.value)} />
+    </div>
+  )
+
+  const rdWarnings = []
+  if (rd) {
+    rd.experience?.forEach((j, i) => {
+      if (!j.dates) rdWarnings.push(`"${j.title || j.company || 'Job ' + (i + 1)}" has no dates`)
+      j.bullets?.forEach(b => { if (b.trim().split(/\s+/).length > 45) rdWarnings.push(`A bullet under "${j.title || j.company}" is very long — consider splitting it`) })
+    })
+  }
+
+  const detailsEditor = rd && (
+    <div className="pf-sec">
+      <div className="pf-sech"><span>Your resume details — every tailored resume is built from these</span><span>check &amp; edit, then Save below</span></div>
+      <div className="pf-secb">
+
+        {rdCheck && rdCheck.ok === false && (
+          <div className="pf-msg pf-warn" style={{ marginTop: 0, marginBottom: 12 }}><AlertCircle />
+            <span><b>Please double-check the fields below.</b> Some details may not match your resume exactly{rdCheck.violations?.length ? ': ' + rdCheck.violations.slice(0, 5).join(' · ') : '.'}</span>
+          </div>
+        )}
+        {rdWarnings.length > 0 && (
+          <div className="pf-msg pf-warn" style={{ marginTop: 0, marginBottom: 12 }}><AlertCircle /><span>{rdWarnings.slice(0, 4).join(' · ')}</span></div>
+        )}
+
+        <div className="pf-fld pf-plain" style={{ marginBottom: 13 }}>
+          <label>Professional summary</label>
+          <textarea className="pf-bull" style={{ minHeight: 66 }} value={rd.summary || ''}
+            onChange={e => upd(r => { r.summary = e.target.value; return r })} />
+        </div>
+
+        <div className="pf-fld pf-plain" style={{ marginBottom: 13 }}>
+          <label>Skills — one category per row</label>
+          {(rd.skills || []).map((s, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 7 }}>
+              <input style={{ flex: '0 0 34%' }} value={s.label || ''} placeholder="Category"
+                onChange={e => setSec('skills', i, 'label', e.target.value)} />
+              <input style={{ flex: 1 }} value={(s.items || []).join(', ')} placeholder="Comma-separated skills"
+                onChange={e => upd(r => { r.skills[i].items = e.target.value.split(',').map(x => x.trim()); return r })} />
+              <button className="pf-minirm" onClick={() => rmEntry('skills', i)} title="Remove">✕</button>
+            </div>
+          ))}
+          <button className="pf-add" onClick={() => addEntry('skills', { label: '', items: [] })}>+ Add skill category</button>
+        </div>
+
+        <div className="pf-fld pf-plain" style={{ marginBottom: 13 }}>
+          <label>Experience</label>
+          {(rd.experience || []).map((j, i) => (
+            <div className="pf-entry" key={i}>
+              <div className="pf-frow">
+                {inp('experience', i, 'title', 'Job title')}
+                {inp('experience', i, 'company', 'Company')}
+              </div>
+              <div className="pf-frow">
+                {inp('experience', i, 'city', 'City')}
+                {inp('experience', i, 'dates', 'Dates', 'e.g. Jan 2024 – Present')}
+              </div>
+              <div className="pf-fld pf-plain" style={{ marginBottom: 0 }}>
+                <label>Bullets — one per line</label>
+                <textarea className="pf-bull" value={(j.bullets || []).join('\n')}
+                  onChange={e => setBullets('experience', i, e.target.value)} />
+              </div>
+              <button className="pf-minirm" style={{ marginTop: 7 }} onClick={() => rmEntry('experience', i)}>Remove this job</button>
+            </div>
+          ))}
+          <button className="pf-add" onClick={() => addEntry('experience', { title: '', company: '', city: '', dates: '', bullets: [] })}>+ Add a job</button>
+        </div>
+
+        <div className="pf-fld pf-plain" style={{ marginBottom: 13 }}>
+          <label>Projects</label>
+          {(rd.projects || []).map((p, i) => (
+            <div className="pf-entry" key={i}>
+              <div className="pf-frow">
+                {inp('projects', i, 'name', 'Project name')}
+                <div className="pf-fld pf-plain">
+                  <label>Technologies</label>
+                  <input value={(p.tech || []).join(', ')} placeholder="Comma-separated"
+                    onChange={e => upd(r => { r.projects[i].tech = e.target.value.split(',').map(x => x.trim()); return r })} />
+                </div>
+              </div>
+              <div className="pf-frow">
+                {inp('projects', i, 'dates', 'Dates')}
+                {inp('projects', i, 'github', 'GitHub link')}
+              </div>
+              <div className="pf-fld pf-plain" style={{ marginBottom: 0 }}>
+                <label>Bullets — one per line</label>
+                <textarea className="pf-bull" value={(p.bullets || []).join('\n')}
+                  onChange={e => setBullets('projects', i, e.target.value)} />
+              </div>
+              <button className="pf-minirm" style={{ marginTop: 7 }} onClick={() => rmEntry('projects', i)}>Remove this project</button>
+            </div>
+          ))}
+          <button className="pf-add" onClick={() => addEntry('projects', { name: '', tech: [], dates: '', github: '', bullets: [] })}>+ Add a project</button>
+        </div>
+
+        <div className="pf-fld pf-plain" style={{ marginBottom: 13 }}>
+          <label>Education</label>
+          {(rd.education || []).map((e2, i) => (
+            <div className="pf-entry" key={i}>
+              <div className="pf-frow">
+                {inp('education', i, 'degree', 'Degree')}
+                {inp('education', i, 'school', 'School')}
+              </div>
+              <div className="pf-frow">
+                {inp('education', i, 'city', 'City')}
+                {inp('education', i, 'dates', 'Dates', 'e.g. Graduated: May 2024')}
+              </div>
+              <button className="pf-minirm" onClick={() => rmEntry('education', i)}>Remove</button>
+            </div>
+          ))}
+          <button className="pf-add" onClick={() => addEntry('education', { degree: '', school: '', city: '', dates: '', gpa: '' })}>+ Add education</button>
+        </div>
+
+        <div className="pf-fld pf-plain">
+          <label>Certifications</label>
+          {(rd.certifications || []).map((c, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 7 }}>
+              <input style={{ flex: 1 }} value={c.name || ''} placeholder="Certification"
+                onChange={e => setSec('certifications', i, 'name', e.target.value)} />
+              <input style={{ flex: '0 0 26%' }} value={c.org || ''} placeholder="Issuer"
+                onChange={e => setSec('certifications', i, 'org', e.target.value)} />
+              <input style={{ flex: '0 0 18%' }} value={c.date || ''} placeholder="Date"
+                onChange={e => setSec('certifications', i, 'date', e.target.value)} />
+              <button className="pf-minirm" onClick={() => rmEntry('certifications', i)} title="Remove">✕</button>
+            </div>
+          ))}
+          <button className="pf-add" onClick={() => addEntry('certifications', { name: '', org: '', date: '' })}>+ Add certification</button>
+        </div>
+
+      </div>
+    </div>
+  )
 
   return (
     <SidebarLayout>
@@ -372,22 +539,24 @@ export default function ProfilePage() {
                 </div>
               </div>
 
-              {error && <div className="pf-msg pf-err"><AlertCircle />{error}</div>}
-              {saved && !error && <div className="pf-msg pf-ok"><Check />Saved.</div>}
-
-              <div className="pf-foot">
-                <button className="pf-save" onClick={handleSave} disabled={saving || missingRequired.length > 0}>
-                  {saving ? <><span className="pf-spin" />Saving…</> : 'Save changes'}
-                </button>
-                {missingRequired.length > 0 && (
-                  <span style={{ fontSize: 12, color: '#B91C1C', alignSelf: 'center' }}>
-                    Add {missingRequired.join(', ')} to save
-                  </span>
-                )}
-              </div>
-
                 </div>
 
+          </div>
+
+          {detailsEditor}
+
+          {error && <div className="pf-msg pf-err"><AlertCircle />{error}</div>}
+          {saved && !error && <div className="pf-msg pf-ok"><Check />Saved.</div>}
+
+          <div className="pf-foot">
+            <button className="pf-save" onClick={handleSave} disabled={saving || missingRequired.length > 0}>
+              {saving ? <><span className="pf-spin" />Saving…</> : 'Save changes'}
+            </button>
+            {missingRequired.length > 0 && (
+              <span style={{ fontSize: 12, color: '#B91C1C', alignSelf: 'center' }}>
+                Add {missingRequired.join(', ')} to save
+              </span>
+            )}
           </div>
         </div>
       </div>

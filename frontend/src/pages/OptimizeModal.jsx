@@ -208,6 +208,13 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
   // at download time instead.
   const docRef = useRef(null)
   const [dlLoading, setDlLoading] = useState('')
+  // Template architecture (Step 4C): the profile's structured details ride the
+  // optimize request; the response carries the optimized details every download
+  // renders from. In template mode the sheet is read-only — the data is the truth,
+  // and detail edits live in the Profile page.
+  const [profileRd, setProfileRd] = useState(null)
+  const [optimizedRd, setOptimizedRd] = useState(null)
+  const [templateMode, setTemplateMode] = useState(false)
 
   // The modal element itself, so focus can be moved into it on open and kept there.
   // Without this the search input BEHIND the modal keeps focus, every keystroke goes
@@ -374,6 +381,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
         const jd = full.description || job.description || ''
         setResumeText(resume)
         setResumeLayout(me.resumeLayout || null)
+        setProfileRd(me.resumeData || null)
         setCompatMode(me.resumeCompat?.mode || null)
         setJobText(jd)
 
@@ -515,11 +523,14 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
           jobTitle: job.title || '',  // same key as /analyze, so the rubric inputs are a cache hit
           yearsMin: job.yearsMin ?? null,
           resumeLayout,               // A7: render in the resume's own layout when we have it
+          resumeData: profileRd || undefined,   // Step 4C: structured path when the profile has details
         }),
       })
       if (!res.ok) throw new Error('optimize failed')
       const d = await res.json()
       setOptimized(d.optimizedResume || '')
+      setOptimizedRd(d.optimizedResumeData || null)
+      setTemplateMode(Boolean(d.template))
       setAdded(d.addedKeywords || [])
       setScoreAfter(d.rubricAfter?.total ?? d.scoreAfter ?? liveScore)
       setFeedback(d.feedback || '')
@@ -540,7 +551,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       // the skills state set a few lines up is NOT visible yet inside this function
       // (React state lands after it returns) — the first preview showed amber-only
       // until Edit→Preview refetched (2026-09-15). Pass the fresh list directly.
-      if (compatMode === 'surgical') surgicalFit(d.optimizedResume || '', { preview: true, skills: d.addedKeywords || [] })
+      if (!d.template && compatMode === 'surgical') surgicalFit(d.optimizedResume || '', { preview: true, skills: d.addedKeywords || [] })
 
       // If this job is ALREADY in the tracker — they applied straight from the board
       // first — save the rewrite against that row now, rather than losing it when the
@@ -677,7 +688,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
     setDlLoading(type)
     // A7-S7: on the surgical path the PDF the student saw IS the file — download the
     // served bytes, no re-render. Word still goes through /download-docx from text.
-    if (type === 'pdf' && !isLetter && surgState === 'ready' && surgical?.pdf && !surgEdit) {
+    if (type === 'pdf' && !isLetter && !templateMode && surgState === 'ready' && surgical?.pdf && !surgEdit) {
       try {
         const bytes = Uint8Array.from(atob(surgical.pdf), c => c.charCodeAt(0))
         const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }))
@@ -697,6 +708,9 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
           font: DOC_FONT,
           length: 'standard',
           ...(tab === 'letter' ? {} : { resumeLayout }),
+          // Step 4C: in template mode both files render from the SAME structured
+          // details on the server — they cannot differ from each other.
+          ...(!isLetter && templateMode && optimizedRd ? { resumeData: optimizedRd } : {}),
           ...(isLetter ? { kind: 'letter', letterText: letterSheetToText(letterRef.current) || letter, company: job.company || '' } : {}),
         }),
       })
@@ -967,7 +981,9 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                   <button className={`om-tab ${tab === 'letter' ? 'on' : ''}`} onClick={openLetter}><PenLine size={12} />Cover letter</button>
                   {tab === 'resume' && surgState === 'fitting' && <span className="om-tab-hint">Fitting into your exact PDF layout…</span>}
                   {tab === 'resume' && (surgState === 'ready' || surgState === 'failed') && surgEdit && <span className="om-tab-hint"><button className="om-link-btn" onClick={() => surgicalFit(sheetToText(docRef.current) || optimized)}>Preview in my layout</button> · edits included</span>}
-                  {tab === 'resume' && !(surgState === 'ready' && !surgEdit) && <span className="om-tab-hint">{sheetStyle ? (sheetStyle.fontKnown ? `Your layout, your font (${sheetStyle.family}) · ` : `Your layout · ${sheetStyle.family} isn't available here, closest match shown · `) : ''}Click anywhere to edit · <mark className="om-mark">green</mark> = skills you tapped · <mark className="om-mark-new">amber</mark> = wording the rewrite changed</span>}
+                  {tab === 'resume' && !(surgState === 'ready' && !surgEdit) && (templateMode
+                    ? <span className="om-tab-hint">Your standardized, ATS-friendly format · to change details, edit your Profile · <mark className="om-mark">green</mark> = skills you tapped · <mark className="om-mark-new">amber</mark> = wording the rewrite changed</span>
+                    : <span className="om-tab-hint">{sheetStyle ? (sheetStyle.fontKnown ? `Your layout, your font (${sheetStyle.family}) · ` : `Your layout · ${sheetStyle.family} isn't available here, closest match shown · `) : ''}Click anywhere to edit · <mark className="om-mark">green</mark> = skills you tapped · <mark className="om-mark-new">amber</mark> = wording the rewrite changed</span>)}
                   {tab === 'letter' && letterState === 'ready' && <span className="om-tab-hint">Click a paragraph to edit · letterhead and sign-off come from your resume</span>}
                 </div>
                 {tab === 'resume' ? (<>
@@ -1009,14 +1025,14 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                       }}
                       className="om-sheet"
                       style={sheetStyle ? { fontFamily: sheetStyle.fontFamily, padding: `${sheetStyle.page.top}pt ${sheetStyle.page.right}pt 48pt ${sheetStyle.page.left}pt`, maxWidth: `${sheetStyle.page.width}pt` } : undefined}
-                      contentEditable
+                      contentEditable={!templateMode}
                       suppressContentEditableWarning
                       spellCheck={false}
                     />
                   ) : (
                     <div className="om-paper">
                       <div className="om-paper-h"><span>Click anywhere to edit · {DOC_FONT}</span><span /></div>
-                      <pre key={docVersion} ref={docRef} className="om-resume" contentEditable suppressContentEditableWarning spellCheck={false}>
+                      <pre key={docVersion} ref={docRef} className="om-resume" contentEditable={!templateMode} suppressContentEditableWarning spellCheck={false}>
                         <ResumeView text={optimized} skills={added} originalText={resumeText} />
                       </pre>
                     </div>
@@ -1064,6 +1080,26 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                         <div className="om-rail-h">{placements.length} {placements.length === 1 ? 'skill' : 'skills'} woven in</div>
                         <div className="om-rail-s">Each card says exactly <b>where</b> a skill went. Wrong place? <b>✕</b> pulls it back to your Skills section.</div>
                         {placements.map(p => {
+                          // Template mode: informational cards, no ✕ (details are
+                          // edited in the Profile), honest where-lines from the
+                          // structured placements.
+                          if (templateMode) {
+                            const line = p.where === 'both'
+                              ? <>→ Skills section <b>+ your {p.employer || 'experience'} {p.section === 'project' ? 'project' : 'bullet'}</b></>
+                              : p.where === 'bullet'
+                                ? <>→ your {p.employer || 'experience'} {p.section === 'project' ? 'project' : 'bullet'} · ATS reads it there</>
+                                : p.where === 'summary'
+                                  ? <>→ your summary · ATS reads it there</>
+                                  : p.where === 'missing'
+                                    ? <>→ couldn't be placed — not in this version</>
+                                    : <>→ Skills section only · be ready to say where you used it</>
+                            return (
+                              <div key={p.skill} className={`om-wov ${p.where === 'skills' || p.where === 'missing' ? 'skillonly' : ''}`}>
+                                <div className="om-wov-r1"><span className="om-chip have">{p.skill}</span></div>
+                                <div className="om-wov-w">{line}</div>
+                              </div>
+                            )
+                          }
                           const isRemoved = removed[p.skill] !== undefined
                           const fw = finalPl ? finalPl[p.skill] : undefined
                           const skillsOnly = !p.removable || isRemoved
