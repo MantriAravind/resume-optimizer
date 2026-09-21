@@ -80,7 +80,9 @@ function letterSheetToText(root) {
 function decorateHtml(html, skills, originalText) {
   if (!html) return html
   const orig = new Set((originalText || '').toLowerCase().match(/[a-z][\w+#.-]*/g) || [])
-  const skillRe = skills.length ? new RegExp('(' + skills.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi') : null
+  // Word-boundary guards for tech terms: "Go" must not match inside "MongoDB",
+  // "Node" not inside "Node.js" — but "C++" and "Go," still mark whole.
+  const skillRe = skills.length ? new RegExp('(?<![\\w+#.])(' + skills.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')(?!\\.?[\\w+#])', 'gi') : null
   const decorateRun = run => {
     const parts = skillRe ? run.split(skillRe) : [run]
     return parts.map((seg, i) => {
