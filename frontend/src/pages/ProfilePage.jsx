@@ -160,6 +160,12 @@ const CSS = `
 .pf-ok{background:#F0FDF4;border:1px solid #BBF7D0;color:#166534}
 .pf-warnb{background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;margin-top:0;margin-bottom:13px;align-items:flex-start;line-height:1.5}
 
+.pf-pending{position:sticky;top:0;z-index:40;display:flex;gap:11px;align-items:center;padding:12px 15px;
+  margin-bottom:15px;background:#FFFBEB;border:1.5px solid #F59E0B;border-radius:11px;font-size:12.5px;
+  color:#78350F;line-height:1.45;box-shadow:0 6px 18px rgba(120,53,15,.12)}
+.pf-pending svg{width:16px;height:16px;flex:none;color:#B45309}
+.pf-pending span{flex:1}
+.pf-pending .pf-btn{flex:none}
 .pf-toast{position:fixed;right:22px;top:72px;background:#172033;color:#fff;padding:11px 15px;border-radius:9px;
   font-size:12.5px;font-weight:650;opacity:0;transform:translateY(-6px);pointer-events:none;transition:.2s;z-index:60}
 .pf-toast.show{opacity:1;transform:translateY(0)}
@@ -257,6 +263,17 @@ export default function ProfilePage() {
   const [uploading, setUploading] = useState(false)
   const [scrambled, setScrambled] = useState(false)
   const [viewingOrig, setViewingOrig] = useState(false)
+  // An upload only counts after review + Save. First real user (2026-09-21) uploaded,
+  // skipped Save, went to the board, and was confused that matches used the old
+  // resume. The pending state must be impossible to miss and hard to abandon.
+  const [pendingUpload, setPendingUpload] = useState(false)
+
+  useEffect(() => {
+    if (!pendingUpload) return
+    const warn = e => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [pendingUpload])
 
   useEffect(() => {
     let cancelled = false
@@ -315,6 +332,9 @@ export default function ProfilePage() {
       setReplacing(false)
       setSaved(false)
       setEditingExp(null); setEditingProj(null)
+      setPendingUpload(true)
+      setTab('resume'); setSection('contact')
+      window.scrollTo({ top: 0 })
     } catch {
       setError('Could not reach the server. Please try again.')
     } finally {
@@ -351,6 +371,7 @@ export default function ProfilePage() {
       if (!res.ok) { setError(data.error || 'Could not save. Please try again.'); return }
       if (rdUse) setRd({ ...rdUse, skills: cleanSkills(rdUse.skills) })
       setSaved(true)
+      setPendingUpload(false)
       setUpdatedAt(data.updatedAt)
       ping(msg || 'Changes saved')
       setTimeout(() => setSaved(false), 3000)
@@ -555,7 +576,10 @@ export default function ProfilePage() {
             <h1>Your profile</h1>
             <p>Review what Optyply uses to personalize jobs and build your resume.</p>
           </div>
-          <button className="pf-goboard" onClick={() => navigate('/jobs')}>
+          <button className="pf-goboard" onClick={() => {
+            if (pendingUpload && !window.confirm("Your new resume isn't saved yet — job matches will keep using your PREVIOUS resume. Leave anyway?")) return
+            navigate('/jobs')
+          }}>
             Go to job board <ArrowRight />
           </button>
         </div>
@@ -566,6 +590,16 @@ export default function ProfilePage() {
         </div>
 
         <div className="pf-body">
+
+          {pendingUpload && (
+            <div className="pf-pending">
+              <AlertCircle />
+              <span><b>New resume uploaded — not saved yet.</b> Optyply is still using your previous resume. Review the details below, then press Save.</span>
+              <button className="pf-btn primary" onClick={() => handleSave('Resume saved')} disabled={saving || missingRequired.length > 0}>
+                {saving ? 'Saving…' : 'Save now'}
+              </button>
+            </div>
+          )}
 
           {tab === 'overview' && (
             <div className="pf-grid">
