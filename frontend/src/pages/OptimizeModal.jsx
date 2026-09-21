@@ -701,9 +701,11 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
       return
     }
     try {
+      // Downloads are authenticated (developer security conditions, 2026-09-20).
+      const token = await getToken()
       const res = await fetch(`${BACKEND}/download-${type}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         // Whatever is on screen is what downloads, edits included.
         body: JSON.stringify({
           resumeText: sheetToText(docRef.current) || optimized,

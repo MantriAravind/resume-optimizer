@@ -2,36 +2,30 @@ import { useState, useEffect, useRef } from 'react'
 import { useAuth, useUser } from '@clerk/clerk-react'
 import { useNavigate } from 'react-router-dom'
 import SidebarLayout from '../components/SidebarLayout'
-import { FileText, Check, AlertCircle, RotateCcw, X, ArrowRight } from 'lucide-react'
+import { FileText, Check, AlertCircle, RotateCcw, X, ArrowRight, Pencil, Eye, CircleCheck, ArrowUp, ArrowDown } from 'lucide-react'
 
 const BACKEND = import.meta.env.VITE_BACKEND_URL || 'https://resume-optimizer-cuii.onrender.com'
 const MAX_BYTES = 10 * 1024 * 1024
 
-
-// The right-hand column. targetRole, yearsExperience and field are NOT here — they
-// live in the header sentence, because they are the only ones that change what the
-// job board shows. Everything in this list is just the student's details.
-// targetRole lives in this grid rather than in its own row. It is the only field that
-// changes what the board shows — it runs through categorizeJob() on save and ranks the
-// board — but a separate sentence for one field was more weight than the page needed.
-//
-// Required is visual plus a blocked Save — never a blocked board. A resume with no
-// phone number is common, and locking that student out of jobs entirely would be a
-// far worse failure than an incomplete profile.
-const PERSONAL = [
+// Contact is ONE structured source of truth (developer decision 2026-09-20): these
+// fields fill the account profile AND the server derives the resume's contact line
+// from them on every save (Location | Phone | Email | LinkedIn | GitHub | Portfolio,
+// empties skipped). The resume contact email is separate from the Clerk login email.
+const CONTACT_FIELDS = [
   ['firstName', 'First name', true],
-  ['lastName',  'Last name',  true],
-  ['email',     'Email',      true],
-  ['phone',     'Phone',      true],
-  ['linkedin',  'LinkedIn'],
-  ['github',    'GitHub'],
-  ['location',   'Location'],
-  ['targetRole', 'Target role', true],
+  ['lastName', 'Last name', true],
+  ['location', 'Location'],
+  ['phone', 'Phone', true],
+  ['email', 'Resume contact email', true],
+  ['linkedin', 'LinkedIn'],
+  ['github', 'GitHub'],
+  ['portfolio', 'Portfolio / personal website'],
 ]
 
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700;800&display=swap');
-.pf{--blue:#2563EB;--blue-dark:#1D4ED8;--ink:#0A0A0B;--muted:#6B7280;--border:#E5E7EB;--red:#DC2626;
+.pf{--blue:#2563EB;--blue-dark:#1D4ED8;--blue-soft:#EEF4FF;--ink:#0A0A0B;--muted:#6B7280;--border:#E5E7EB;
+  --red:#DC2626;--green:#159B69;--green-soft:#ECFBF5;--surface2:#F8FAFC;
   font-family:'Space Grotesk',-apple-system,sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased}
 .pf *{box-sizing:border-box;margin:0;padding:0}
 
@@ -40,9 +34,6 @@ const CSS = `
 .pf-banner svg{width:15px;height:15px;flex:none}
 
 .pf-htop{padding:17px 26px 0;display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
-/* The board button sits in the title row, where a primary action belongs. Keeping it
-   out of the sentence row means the sentence gets the full width and the two never
-   compete for space on a narrow window. */
 .pf-goboard{background:var(--blue);color:#fff;border:0;padding:9px 18px;border-radius:9px;
   font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;
   align-items:center;gap:7px;flex:none;white-space:nowrap}
@@ -51,100 +42,181 @@ const CSS = `
 .pf-htop h1{font-size:21px;font-weight:800;letter-spacing:-.025em}
 .pf-htop p{font-size:12.5px;color:var(--muted);margin-top:2px}
 
-/* The sentence carries the two fields the student actually sets. The field the board
-   filters on is derived from the role on save — see /me/profile in server.js. */
-/* An unread value gets real words, not a hole in a sentence — "roles in all fields"
-   is both true and grammatical where an empty box was neither. */
+.pf-tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin:14px 26px 0;overflow-x:auto}
+.pf-tab{background:none;border:0;border-bottom:2px solid transparent;padding:11px 14px;
+  font-size:13px;font-weight:650;color:var(--muted);cursor:pointer;font-family:inherit;white-space:nowrap}
+.pf-tab:hover{color:var(--ink)}
+.pf-tab.on{color:var(--blue);border-bottom-color:var(--blue)}
 
-.pf-body{padding:16px 26px 44px}
-.pf-cols{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start}
-.pf-panel{border:1px solid var(--border);border-radius:13px;overflow:hidden}
-.pf-ph{display:flex;justify-content:space-between;align-items:center;gap:10px;
-  padding:10px 14px;background:#FAFBFC;border-bottom:1px solid var(--border)}
-.pf-pt{font-size:12.5px;font-weight:700;display:flex;align-items:center;gap:7px}
-.pf-pt svg{width:14px;height:14px;color:var(--blue)}
-.pf-mini{padding:6px 12px;border-radius:7px;font-size:11.5px;font-weight:620;border:1px solid #D5DAE2;
-  background:#fff;color:#374151;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px}
-.pf-mini:hover{background:#F8FAFC}
-.pf-mini svg{width:12px;height:12px}
+.pf-body{padding:18px 26px 44px}
+.pf-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(280px,.85fr);gap:16px;align-items:start}
+.pf-stack{display:grid;gap:16px}
+.pf-card{background:#fff;border:1px solid var(--border);border-radius:13px;padding:18px;box-shadow:0 8px 24px rgba(21,32,51,.05)}
+.pf-chead{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:14px}
+.pf-eyebrow{text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-size:10.5px;font-weight:700;margin-bottom:5px}
+.pf-card h2{font-size:16px;font-weight:700}
+.pf-card h3{font-size:14px;font-weight:700}
+.pf-sub{color:var(--muted);font-size:12.5px;line-height:1.5}
 
-.pf-fline{display:flex;align-items:center;gap:11px;padding:11px 14px;border-bottom:1px solid #F3F4F6}
-.pf-fico{width:33px;height:33px;border-radius:8px;background:#EEF2FF;display:grid;place-items:center;flex:none}
-.pf-fico svg{width:15px;height:15px;color:var(--blue)}
-.pf-panel.bad .pf-fico{background:#FEF2F2}
-.pf-panel.bad .pf-fico svg{color:var(--red)}
-.pf-fname{font-size:12.5px;font-weight:645}
-.pf-fmeta{font-size:10.5px;color:var(--muted);margin-top:2px}
-.pf-panel.bad .pf-fmeta{color:#B91C1C}
-.pf-flag{display:flex;gap:8px;padding:10px 14px;background:#FFFBEB;border-bottom:1px solid #FDE68A;
-  font-size:11.5px;color:#78350F;line-height:1.5}
-.pf-flag svg{width:13px;height:13px;flex:none;margin-top:1px}
+.pf-identity{display:grid;grid-template-columns:52px 1fr auto;gap:13px;align-items:center}
+.pf-avatar{width:52px;height:52px;border-radius:50%;background:var(--blue-soft);color:var(--blue);
+  display:grid;place-items:center;font-weight:800;font-size:17px}
+.pf-role{margin-top:3px;color:var(--muted);font-size:12.5px}
+.pf-status{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 10px;font-size:11px;
+  font-weight:700;background:var(--green-soft);color:var(--green)}
+.pf-status.warn{background:#FFFBEB;color:#92400E}
+.pf-status svg{width:13px;height:13px}
+.pf-cline{display:flex;gap:14px;flex-wrap:wrap;margin-top:13px;color:var(--muted);font-size:12px}
 
-.pf-rt{display:block;width:100%;border:0;padding:12px 14px;font-size:11.5px;line-height:1.72;
-  color:#374151;font-family:inherit;resize:vertical;height:520px;background:#fff}
-.pf-rt:focus{outline:none}
-.pf-rtf{padding:8px 14px;background:#FAFBFC;border-top:1px solid #F3F4F6;font-size:10px;
-  color:#9CA3AF;display:flex;justify-content:space-between;gap:8px}
+.pf-frow2{display:grid;grid-template-columns:42px 1fr auto;align-items:center;gap:12px;padding:13px;
+  background:var(--surface2);border-radius:11px}
+.pf-fico{width:42px;height:42px;border-radius:9px;background:var(--blue-soft);color:var(--blue);display:grid;place-items:center}
+.pf-fico svg{width:19px;height:19px}
+.pf-fname{font-weight:650;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pf-fmeta{font-size:11px;color:var(--muted);margin-top:3px}
+.pf-notice{margin-top:12px;padding:10px 12px;border-radius:9px;background:var(--blue-soft);color:#244A93;font-size:12px;line-height:1.5}
 
-.pf-drop{margin:13px 14px;border:2px dashed #CBD5E1;border-radius:12px;padding:26px 16px;
-  text-align:center;background:#F9FAFB;cursor:pointer}
-.pf-drop:hover,.pf-drop.over{border-color:var(--blue);background:#F7FAFF}
-.pf-drop .ic{font-size:25px;margin-bottom:7px}
-.pf-drop .t{font-size:13.5px;font-weight:650;margin-bottom:3px}
-.pf-drop .h{font-size:11.5px;color:#9CA3AF}
+.pf-btn{border:1px solid var(--border);background:#fff;color:var(--ink);border-radius:9px;padding:8px 13px;
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;font-weight:650;
+  font-size:12.5px;font-family:inherit;white-space:nowrap}
+.pf-btn svg{width:14px;height:14px}
+.pf-btn:hover{border-color:var(--blue);color:var(--blue)}
+.pf-btn.primary{background:var(--blue);color:#fff;border-color:var(--blue)}
+.pf-btn.primary:hover{background:var(--blue-dark);color:#fff}
+.pf-btn.ghost{border-color:transparent;color:var(--muted)}
+.pf-btn.ghost:hover{color:var(--blue)}
+.pf-btn:disabled{opacity:.55;cursor:default}
+.pf-actions{display:flex;gap:8px;flex-wrap:wrap}
 
-.pf-fields{padding:13px}
-.pf-frow{display:grid;grid-template-columns:1fr 1fr;gap:11px}
-.pf-fld{margin-bottom:12px}
-.pf-fld label{display:block;font-size:10px;font-weight:650;color:var(--muted);
-  text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
-.pf-req{color:#DC2626;margin-left:2px}
-.pf-fld input.needed{border-color:#FCA5A5;background:#FEF2F2}
-.pf-fld input{width:100%;padding:8px 11px;border:1px solid #BAE6FD;border-radius:7px;
-  font-size:12.5px;font-family:inherit;background:#F0F9FF;color:var(--ink)}
-.pf-fld input:focus{outline:none;border-color:var(--blue)}
-.pf-fld .hint{font-size:9.5px;margin-top:3px;color:#0369A1}
+.pf-checklist{display:grid;gap:12px}
+.pf-check{display:flex;align-items:flex-start;gap:10px;font-size:12.5px;font-weight:600}
+.pf-check svg{width:16px;height:16px;color:var(--green);flex:none;margin-top:1px}
+.pf-check.pend svg{color:var(--muted)}
+.pf-check small{display:block;color:var(--muted);font-size:11px;font-weight:500;margin-top:2px}
 
-.pf-msg{display:flex;gap:9px;font-size:12.5px;padding:11px 14px;border-radius:10px;line-height:1.55;margin-top:14px}
-.pf-msg svg{width:15px;height:15px;flex:none;margin-top:1px}
-.pf-ok{background:#F0FDF4;border:1px solid #BBF7D0;color:#166534}
-.pf-err{background:#FEF2F2;border:1px solid #FECACA;color:#991B1B}
-.pf-foot{display:flex;gap:11px;margin-top:16px}
-.pf-save{background:var(--blue);color:#fff;border:0;padding:11px 22px;border-radius:9px;
-  font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:8px}
-.pf-save:hover:not(:disabled){background:var(--blue-dark)}
-.pf-save:disabled{background:#BFDBFE;cursor:default}
-.pf-spin{border:2.5px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;
-  width:14px;height:14px;animation:pf-spin .7s linear infinite}
-@keyframes pf-spin{to{transform:rotate(360deg)}}
-.pf-load{padding:70px 24px;text-align:center;color:var(--muted);font-size:14px}
-.pf-loadspin{width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--blue);
-  border-radius:50%;margin:0 auto 14px;animation:pf-spin .7s linear infinite}
+.pf-rlayout{display:grid;grid-template-columns:218px minmax(0,1fr);gap:16px;align-items:start}
+.pf-snav{background:#fff;border:1px solid var(--border);border-radius:13px;padding:8px;display:grid;gap:3px;position:sticky;top:14px}
+.pf-snav button{border:0;background:transparent;color:var(--muted);border-radius:8px;padding:10px 11px;text-align:left;
+  display:flex;justify-content:space-between;gap:10px;cursor:pointer;font-size:12.5px;font-weight:600;font-family:inherit}
+.pf-snav button.on{background:var(--blue-soft);color:var(--blue);font-weight:700}
+.pf-snav em{font-style:normal;color:var(--green)}
 
-.pf-sec{border:1px solid var(--border);border-radius:13px;overflow:hidden;margin-top:18px}
-.pf-sech{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;
-  background:#FAFBFC;border-bottom:1px solid var(--border);font-size:12.5px;font-weight:700}
-.pf-sech span:last-child{color:var(--muted);font-weight:500;font-size:11px}
-.pf-secb{padding:14px}
-.pf-entry{border:1px solid #EEF0F3;border-radius:10px;padding:12px;margin-bottom:12px;background:#FCFCFD}
-.pf-entry:last-child{margin-bottom:0}
-.pf-bull{width:100%;border:1px solid var(--border);border-radius:8px;padding:9px 11px;font-size:12px;
-  line-height:1.6;font-family:inherit;color:var(--ink);resize:vertical;min-height:80px;background:#fff}
-.pf-bull:focus{outline:none;border-color:var(--blue)}
-.pf-minirm{background:none;border:0;cursor:pointer;color:#B91C1C;font-size:11px;font-weight:650;font-family:inherit;padding:2px 4px}
+.pf-fld{margin-bottom:11px}
+.pf-fld label{display:block;font-size:10.5px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+.pf-fld input,.pf-fld textarea{width:100%;border:1px solid var(--border);border-radius:8px;padding:9px 11px;
+  font-size:13px;font-family:inherit;color:var(--ink);background:#fff}
+.pf-fld input:focus,.pf-fld textarea:focus{outline:none;border-color:var(--blue)}
+.pf-fld input.needed{border-color:#FCA5A5;background:#FFFBFA}
+.pf-fgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 13px}
+.pf-req{color:var(--red);margin-left:2px}
+
+.pf-entry{padding:14px 0;border-top:1px solid var(--border)}
+.pf-entry:first-of-type{border-top:0;padding-top:0}
+.pf-etop{display:flex;justify-content:space-between;gap:10px}
+.pf-etitle{font-size:13.5px;font-weight:700}
+.pf-emeta{font-size:12px;color:var(--muted);margin-top:2px}
+.pf-ebullets{margin:9px 0 0 17px;display:grid;gap:5px}
+.pf-ebullets li{font-size:12.5px;color:#374151;line-height:1.55}
+.pf-eform{background:var(--surface2);border:1px solid var(--border);border-radius:11px;padding:13px;margin-top:11px}
+.pf-brow{display:flex;gap:7px;margin-bottom:7px;align-items:flex-start}
+.pf-brow textarea{flex:1;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12.5px;
+  font-family:inherit;line-height:1.5;resize:vertical;min-height:38px;background:#fff}
+.pf-brow textarea:focus{outline:none;border-color:var(--blue)}
+.pf-ib{background:#fff;border:1px solid var(--border);border-radius:7px;width:28px;height:28px;display:grid;
+  place-items:center;cursor:pointer;color:var(--muted);flex:none}
+.pf-ib svg{width:13px;height:13px}
+.pf-ib:hover{border-color:var(--blue);color:var(--blue)}
+.pf-ib.rm:hover{border-color:#FCA5A5;color:var(--red)}
+.pf-ib:disabled{opacity:.35;cursor:default}
+.pf-cur{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:var(--ink);margin-bottom:11px;cursor:pointer}
+.pf-cur input{width:15px;height:15px;accent-color:var(--blue)}
+
+.pf-srow{display:flex;gap:8px;margin-bottom:7px;align-items:center}
+.pf-srow input{border:1px solid var(--border);border-radius:8px;padding:9px 11px;font-size:12.5px;font-family:inherit}
+.pf-srow input:focus{outline:none;border-color:var(--blue)}
 .pf-add{background:#fff;border:1px dashed #CBD5E1;color:#374151;border-radius:8px;padding:8px 13px;
   font-size:12px;font-weight:650;cursor:pointer;font-family:inherit;margin-top:5px}
 .pf-add:hover{border-color:var(--blue);color:var(--blue)}
-.pf-warn{background:#FFFBEB;border:1px solid #FDE68A;color:#92400E}
-.pf-plain input{background:#fff;border-color:var(--border)}
-@media (max-width:1000px){ .pf-cols{grid-template-columns:1fr} }
-@media (max-width:640px){ .pf-body,.pf-htop{padding-left:16px;padding-right:16px} .pf-frow{grid-template-columns:1fr} }
+.pf-sacts{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-top:15px;padding-top:14px;border-top:1px solid var(--border)}
+.pf-help{font-size:11px;color:var(--muted);line-height:1.5}
+
+.pf-rt{width:100%;border:1px solid var(--border);border-radius:8px;padding:10px;font-size:11.5px;line-height:1.55;
+  font-family:inherit;color:#374151;height:170px;resize:vertical;margin-top:10px;background:#fff}
+.pf-rawtog{background:none;border:0;color:var(--muted);font-size:11.5px;font-weight:650;cursor:pointer;
+  font-family:inherit;margin-top:10px;text-decoration:underline;text-underline-offset:3px}
+.pf-rawtog:hover{color:var(--blue)}
+.pf-drop{border:1.5px dashed #CBD5E1;border-radius:11px;padding:22px 14px;text-align:center;cursor:pointer;margin-top:12px}
+.pf-drop.over{border-color:var(--blue);background:var(--blue-soft)}
+.pf-drop .ic{font-size:20px}
+.pf-drop .t{font-size:12.5px;font-weight:650;margin-top:5px}
+.pf-drop .h{font-size:11px;color:var(--muted);margin-top:3px}
+.pf-flag{display:flex;gap:9px;align-items:flex-start;margin-top:11px;padding:10px 12px;background:#FFFBEB;
+  border:1px solid #FDE68A;border-radius:9px;font-size:12px;color:#78350F;line-height:1.5}
+.pf-flag svg{width:14px;height:14px;flex:none;margin-top:1px}
+
+.pf-msg{display:flex;gap:9px;align-items:center;padding:10px 13px;border-radius:9px;font-size:12.5px;margin-top:13px}
+.pf-msg svg{width:14px;height:14px;flex:none}
+.pf-err{background:#FEF2F2;border:1px solid #FECACA;color:#991B1B}
+.pf-ok{background:#F0FDF4;border:1px solid #BBF7D0;color:#166534}
+.pf-warnb{background:#FFFBEB;border:1px solid #FDE68A;color:#92400E;margin-top:0;margin-bottom:13px;align-items:flex-start;line-height:1.5}
+
+.pf-toast{position:fixed;right:22px;top:72px;background:#172033;color:#fff;padding:11px 15px;border-radius:9px;
+  font-size:12.5px;font-weight:650;opacity:0;transform:translateY(-6px);pointer-events:none;transition:.2s;z-index:60}
+.pf-toast.show{opacity:1;transform:translateY(0)}
+
+.pf-load{display:flex;gap:11px;align-items:center;justify-content:center;padding:80px 0;color:var(--muted);font-size:13px}
+.pf-loadspin,.pf-spin{width:15px;height:15px;border:2px solid var(--border);border-top-color:var(--blue);
+  border-radius:50%;animation:pfspin .7s linear infinite;display:inline-block}
+@keyframes pfspin{to{transform:rotate(360deg)}}
+
+@media (max-width:1000px){ .pf-grid,.pf-rlayout{grid-template-columns:1fr}
+  .pf-snav{position:static;display:flex;overflow-x:auto} .pf-snav button{white-space:nowrap} }
+@media (max-width:640px){ .pf-body,.pf-htop{padding-left:16px;padding-right:16px}
+  .pf-tabs{margin-left:16px;margin-right:16px} .pf-fgrid{grid-template-columns:1fr}
+  .pf-identity{grid-template-columns:44px 1fr} .pf-identity .pf-status{grid-column:1/-1;width:max-content}
+  .pf-frow2{grid-template-columns:38px 1fr} .pf-frow2 .pf-actions{grid-column:1/-1} }
 `
 
 function formatDate(iso) {
   if (!iso) return null
   try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) }
   catch { return null }
+}
+
+// Dates live in storage as one string ("Jan 2024 – Present"). The editor shows
+// start / end / current and composes back on apply — no data model change.
+function splitDates(s) {
+  const t = String(s || '').trim()
+  const m = t.match(/^(.*?)\s*[–—-]\s*(.+)$/)
+  if (!m) return { start: t, end: '', current: false }
+  const current = /present|current/i.test(m[2])
+  return { start: m[1].trim(), end: current ? '' : m[2].trim(), current }
+}
+function composeDates(start, end, current) {
+  const a = String(start || '').trim(), b = current ? 'Present' : String(end || '').trim()
+  if (a && b) return `${a} – ${b}`
+  return a || b || ''
+}
+
+// Skills cleanup on save (developer spec): trim, drop empties, dedupe within and
+// across categories (first occurrence wins), never save an empty category row.
+function cleanSkills(rows) {
+  const seen = new Set()
+  const out = []
+  for (const r of rows || []) {
+    const label = String(r.label || '').trim()
+    const items = []
+    for (const raw of (Array.isArray(r.items) ? r.items : [])) {
+      const it = String(raw || '').trim()
+      if (!it) continue
+      const key = it.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      items.push(it)
+    }
+    if (label && items.length) out.push({ label, items })
+  }
+  return out
 }
 
 export default function ProfilePage() {
@@ -154,23 +226,37 @@ export default function ProfilePage() {
   const inputRef = useRef(null)
 
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving]   = useState(false)
-  const [error, setError]     = useState('')
-  const [saved, setSaved]     = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [saved, setSaved] = useState(false)
+  const [toast, setToast] = useState('')
 
   const [resumeText, setResumeText] = useState('')
-  const [fileName, setFileName]     = useState('')
-  const [updatedAt, setUpdatedAt]   = useState(null)
-  const [profile, setProfile]       = useState({})
+  const [fileName, setFileName] = useState('')
+  const [updatedAt, setUpdatedAt] = useState(null)
+  const [profile, setProfile] = useState({})
 
-  // Template architecture: the structured resume details — what every optimize reads.
   const [rd, setRd] = useState(null)
   const [rdCheck, setRdCheck] = useState(null)
 
+  const [tab, setTab] = useState('overview')
+  const [section, setSection] = useState('contact')
+  const [showRaw, setShowRaw] = useState(false)
+  const [roleEditing, setRoleEditing] = useState(false)
+  const [roleDraft, setRoleDraft] = useState('')
+
+  // Expand-to-edit: at most one experience/project open; drafts are copies, so
+  // Cancel restores by simply dropping the draft.
+  const [editingExp, setEditingExp] = useState(null)
+  const [expDraft, setExpDraft] = useState(null)
+  const [editingProj, setEditingProj] = useState(null)
+  const [projDraft, setProjDraft] = useState(null)
+
   const [replacing, setReplacing] = useState(false)
-  const [dragOver, setDragOver]   = useState(false)
+  const [dragOver, setDragOver] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [scrambled, setScrambled] = useState(false)
+  const [viewingOrig, setViewingOrig] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -184,10 +270,6 @@ export default function ProfilePage() {
         setResumeText(data.resumeText || '')
         setFileName(data.resumeFileName || '')
         setUpdatedAt(data.updatedAt || null)
-        // The resume's email wins — a student often applies with a different address
-        // to the one they signed up with, and the resume is what an employer sees.
-        // The account email is only a fallback, so a resume without one does not
-        // leave a required box empty and block Save for no reason.
         const p = data.profile || {}
         if (!p.email && user?.primaryEmailAddress?.emailAddress) {
           p.email = user.primaryEmailAddress.emailAddress
@@ -221,7 +303,7 @@ export default function ProfilePage() {
       const data = await res.json().catch(() => ({}))
       if (!res.ok) { setError(data.error || 'Could not read that file.'); return }
       if (data.status === 'empty' || data.status === 'short') {
-        setError(data.message + ' Paste the text into the box on the left instead.')
+        setError(data.message + ' Paste the text into the extracted-text box instead.')
         return
       }
       setResumeText(data.text || '')
@@ -232,6 +314,7 @@ export default function ProfilePage() {
       setRdCheck(data.resumeDataVerification || null)
       setReplacing(false)
       setSaved(false)
+      setEditingExp(null); setEditingProj(null)
     } catch {
       setError('Could not reach the server. Please try again.')
     } finally {
@@ -239,20 +322,37 @@ export default function ProfilePage() {
     }
   }
 
-  async function handleSave() {
-    if (!resumeText.trim()) { setError('Your resume text is empty.'); return }
+  function ping(msg) {
+    setToast(msg)
+    setTimeout(() => setToast(''), 1800)
+  }
+
+  // rdNext/profileNext exist because React state updates are asynchronous: a save
+  // fired right after setRd would otherwise post the PRE-edit state (found 2026-09-21:
+  // a deleted bullet reappeared on refresh). Callers that just changed state pass the
+  // exact object they set.
+  async function handleSave(msg, rdNext, profileNext) {
+    if (!resumeText.trim()) { setError('Your resume text is empty — replace your resume first.'); return }
+    const rdUse = rdNext !== undefined ? rdNext : rd
+    const profileUse = profileNext !== undefined ? profileNext : profile
     setSaving(true); setError(''); setSaved(false)
     try {
       const token = await getToken()
+      const body = {
+        resumeText, resumeFileName: fileName, profile: profileUse,
+        resumeData: rdUse ? { ...rdUse, skills: cleanSkills(rdUse.skills) } : null,
+      }
       const res = await fetch(`${BACKEND}/me/profile`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ resumeText, resumeFileName: fileName, profile, resumeData: rd }),
+        body: JSON.stringify(body),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) { setError(data.error || 'Could not save. Please try again.'); return }
+      if (rdUse) setRd({ ...rdUse, skills: cleanSkills(rdUse.skills) })
       setSaved(true)
       setUpdatedAt(data.updatedAt)
+      ping(msg || 'Changes saved')
       setTimeout(() => setSaved(false), 3000)
     } catch {
       setError('Could not reach the server. Please try again.')
@@ -261,7 +361,89 @@ export default function ProfilePage() {
     }
   }
 
+  // View original (developer spec): the untouched uploaded file, fetched privately
+  // with the auth token — PDFs open in a tab, Word files download.
+  async function viewOriginal() {
+    setViewingOrig(true)
+    try {
+      const token = await getToken()
+      const res = await fetch(`${BACKEND}/me/resume-file`, { headers: { Authorization: `Bearer ${token}` } })
+      if (!res.ok) { setError("The original file isn't available — it may predate file storage. Replace the resume to store it."); return }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      if (/\.pdf$/i.test(fileName)) {
+        window.open(url, '_blank', 'noopener')
+      } else {
+        const a = document.createElement('a')
+        a.href = url; a.download = fileName || 'resume'
+        document.body.appendChild(a); a.click(); a.remove()
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
+    } catch {
+      setError('Could not fetch the original file. Please try again.')
+    } finally {
+      setViewingOrig(false)
+    }
+  }
+
   const set = (k, v) => setProfile(p => ({ ...p, [k]: v }))
+  const upd = fn => { setSaved(false); setRd(r => fn(structuredClone(r || {}))) }
+
+  // ── expand-to-edit plumbing ──
+  function openExp(i) {
+    if ((editingExp !== null || editingProj !== null) &&
+      !window.confirm('You have an entry open for editing. Discard its unsaved changes?')) return
+    setEditingProj(null); setProjDraft(null)
+    const j = structuredClone(rd.experience[i])
+    const d = splitDates(j.dates)
+    setExpDraft({ ...j, _start: d.start, _end: d.end, _current: d.current, bullets: j.bullets?.length ? j.bullets : [''] })
+    setEditingExp(i)
+  }
+  function applyExp() {
+    const d = expDraft
+    const next = structuredClone(rd)
+    next.experience[editingExp] = {
+      title: d.title || '', company: d.company || '', city: d.city || '',
+      dates: composeDates(d._start, d._end, d._current),
+      bullets: d.bullets.map(b => String(b).trim()).filter(Boolean),
+    }
+    setRd(next)
+    setEditingExp(null); setExpDraft(null)
+    handleSave(undefined, next)
+  }
+  function openProj(i) {
+    if ((editingExp !== null || editingProj !== null) &&
+      !window.confirm('You have an entry open for editing. Discard its unsaved changes?')) return
+    setEditingExp(null); setExpDraft(null)
+    const p = structuredClone(rd.projects[i])
+    const d = splitDates(p.dates)
+    setProjDraft({ ...p, _start: d.start, _end: d.end, _current: d.current, bullets: p.bullets?.length ? p.bullets : [''] })
+    setEditingProj(i)
+  }
+  function applyProj() {
+    const d = projDraft
+    const next = structuredClone(rd)
+    next.projects[editingProj] = {
+      name: d.name || '', tech: (Array.isArray(d.tech) ? d.tech : []).map(t => t.trim()).filter(Boolean),
+      dates: composeDates(d._start, d._end, d._current), github: d.github || '',
+      bullets: d.bullets.map(b => String(b).trim()).filter(Boolean),
+    }
+    setRd(next)
+    setEditingProj(null); setProjDraft(null)
+    handleSave(undefined, next)
+  }
+  const moveBullet = (setDraft, i, dir) => setDraft(d => {
+    const b = [...d.bullets]; const j = i + dir
+    if (j < 0 || j >= b.length) return d
+    ;[b[i], b[j]] = [b[j], b[i]]
+    return { ...d, bullets: b }
+  })
+  const moveRow = (sec, i, dir) => upd(r => {
+    const a = r[sec]; const j = i + dir
+    if (j < 0 || j >= a.length) return r
+    ;[a[i], a[j]] = [a[j], a[i]]
+    return r
+  })
 
   if (loading) {
     return (
@@ -273,306 +455,462 @@ export default function ProfilePage() {
     )
   }
 
-  // yearsExperience is still extracted and still saved — it is only hidden. Nothing
-  // in the product reads it yet, but a job card showing "5+ years" or an experience
-  // filter would need it, and by then everyone who signed up already has the value.
-  // Deleting it would mean asking every user to re-upload.
+  const missingRequired = CONTACT_FIELDS.filter(([k, , req]) => req && !profile[k]).map(([, l]) => l)
+    .concat(!profile.targetRole ? ['Target role'] : [])
   const broken = !profile.targetRole
   const when = formatDate(updatedAt)
+  const initials = ((profile.firstName || '?')[0] + (profile.lastName || ' ')[0]).toUpperCase().trim()
+  const contactPreview = [profile.location, profile.phone, profile.email, profile.linkedin, profile.github, profile.portfolio]
+    .map(x => String(x || '').trim()).filter(Boolean)
+  const contactOk = CONTACT_FIELDS.every(([k, , req]) => !req || profile[k])
+  const sectionsCount = rd ? ['summary', 'skills', 'experience', 'projects', 'education', 'certifications']
+    .filter(s => (Array.isArray(rd[s]) ? rd[s].length : rd[s])).length : 0
+  const ready = contactOk && !!profile.targetRole && !!rd
 
-  // Plain boxes, no caption underneath. The hints ("From your resume" / "Couldn't read
-  // this") and the amber tint made every empty optional field look like a task — a
-  // student with no GitHub read it as something they had failed to do. The only tint
-  // left is on a required field that is empty, because that one genuinely blocks Save.
   const fld = ([key, label, required]) => {
     const empty = !profile[key]
     return (
       <div className="pf-fld" key={key}>
         <label>{label}{required && <span className="pf-req">*</span>}</label>
-        <input
-          className={required && empty ? 'needed' : ''}
-          value={profile[key] || ''}
-          placeholder={required ? 'Required' : ''}
-          onChange={e => set(key, e.target.value)}
-        />
+        <input className={required && empty ? 'needed' : ''} value={profile[key] || ''}
+          placeholder={required ? 'Required' : ''} onChange={e => set(key, e.target.value)} />
       </div>
     )
   }
 
-  // Blocks Save, not the board. The student can still browse jobs with an incomplete
-  // profile — they just cannot save one that is missing the basics.
-  const missingRequired = PERSONAL.filter(([k, , req]) => req && !profile[k]).map(([, l]) => l)
+  const has = {
+    contact: contactOk,
+    summary: !!rd?.summary,
+    skills: !!rd?.skills?.length,
+    experience: !!rd?.experience?.length,
+    projects: !!rd?.projects?.length,
+    education: !!rd?.education?.length,
+    certifications: !!rd?.certifications?.length,
+  }
+  const SECTIONS = [
+    ['contact', 'Contact'], ['summary', 'Summary'], ['skills', 'Skills'], ['experience', 'Experience'],
+    ['projects', 'Projects'], ['education', 'Education'], ['certifications', 'Certifications'],
+  ]
 
-  // ── Structured details editor (same sections as the template renders) ──────
-  const upd = fn => { setSaved(false); setRd(r => fn(structuredClone(r || {}))) }
-  const setSec = (sec, i, field, v) => upd(r => { r[sec][i][field] = v; return r })
-  const setBullets = (sec, i, v) => upd(r => { r[sec][i].bullets = v.split('\n'); return r })
-  const rmEntry = (sec, i) => upd(r => { r[sec].splice(i, 1); return r })
-  const addEntry = (sec, blank) => upd(r => { r[sec] = r[sec] || []; r[sec].push(blank); return r })
-  const inp = (sec, i, field, label, ph) => (
-    <div className="pf-fld pf-plain">
-      <label>{label}</label>
-      <input value={rd?.[sec]?.[i]?.[field] || ''} placeholder={ph || ''}
-        onChange={e => setSec(sec, i, field, e.target.value)} />
+  const saveBar = (help, msg) => (
+    <div className="pf-sacts">
+      <span className="pf-help">{help}</span>
+      <button className="pf-btn primary" onClick={() => handleSave(msg)} disabled={saving || missingRequired.length > 0}>
+        {saving ? <><span className="pf-spin" />Saving…</> : 'Save changes'}
+      </button>
     </div>
   )
 
-  const rdWarnings = []
-  if (rd) {
-    rd.experience?.forEach((j, i) => {
-      if (!j.dates) rdWarnings.push(`"${j.title || j.company || 'Job ' + (i + 1)}" has no dates`)
-      j.bullets?.forEach(b => { if (b.trim().split(/\s+/).length > 45) rdWarnings.push(`A bullet under "${j.title || j.company}" is very long — consider splitting it`) })
-    })
-  }
+  const noRd = (
+    <div className="pf-card"><p className="pf-sub">No structured details yet — replace your resume on the Overview tab and they will appear here.</p></div>
+  )
 
-  const detailsEditor = rd && (
-    <div className="pf-sec">
-      <div className="pf-sech"><span>Your resume details — every tailored resume is built from these</span><span>check &amp; edit, then Save below</span></div>
-      <div className="pf-secb">
-
-        {rdCheck && rdCheck.ok === false && (
-          <div className="pf-msg pf-warn" style={{ marginTop: 0, marginBottom: 12 }}><AlertCircle />
-            <span><b>Please double-check the fields below.</b> Some details may not match your resume exactly{rdCheck.violations?.length ? ': ' + rdCheck.violations.slice(0, 5).join(' · ') : '.'}</span>
-          </div>
-        )}
-        {rdWarnings.length > 0 && (
-          <div className="pf-msg pf-warn" style={{ marginTop: 0, marginBottom: 12 }}><AlertCircle /><span>{rdWarnings.slice(0, 4).join(' · ')}</span></div>
-        )}
-
-        <div className="pf-fld pf-plain" style={{ marginBottom: 13 }}>
-          <label>Contact line — one item per row (location, phone, email, links)</label>
-          {(rd.contact || []).map((c, i) => (
-            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 7 }}>
-              <input style={{ flex: 1 }} value={c || ''} placeholder="e.g. linkedin.com/in/yourname"
-                onChange={e => upd(r => { r.contact[i] = e.target.value; return r })} />
-              <button className="pf-minirm" onClick={() => upd(r => { r.contact.splice(i, 1); return r })} title="Remove">✕</button>
-            </div>
-          ))}
-          <button className="pf-add" onClick={() => upd(r => { r.contact = r.contact || []; r.contact.push(''); return r })}>+ Add contact item</button>
+  const bulletEditor = (draft, setDraft) => (
+    <div className="pf-fld" style={{ marginBottom: 0 }}>
+      <label>Bullets — one field per bullet</label>
+      {draft.bullets.map((b, i) => (
+        <div className="pf-brow" key={i}>
+          <textarea value={b} onChange={e => setDraft(d => { const bs = [...d.bullets]; bs[i] = e.target.value; return { ...d, bullets: bs } })} />
+          <button className="pf-ib" title="Move up" disabled={i === 0} onClick={() => moveBullet(setDraft, i, -1)}><ArrowUp /></button>
+          <button className="pf-ib" title="Move down" disabled={i === draft.bullets.length - 1} onClick={() => moveBullet(setDraft, i, 1)}><ArrowDown /></button>
+          <button className="pf-ib rm" title="Delete bullet" onClick={() => setDraft(d => ({ ...d, bullets: d.bullets.filter((_, k) => k !== i) }))}><X /></button>
         </div>
-
-        <div className="pf-fld pf-plain" style={{ marginBottom: 13 }}>
-          <label>Professional summary</label>
-          <textarea className="pf-bull" style={{ minHeight: 66 }} value={rd.summary || ''}
-            onChange={e => upd(r => { r.summary = e.target.value; return r })} />
-        </div>
-
-        <div className="pf-fld pf-plain" style={{ marginBottom: 13 }}>
-          <label>Skills — one category per row</label>
-          {(rd.skills || []).map((s, i) => (
-            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 7 }}>
-              <input style={{ flex: '0 0 34%' }} value={s.label || ''} placeholder="Category"
-                onChange={e => setSec('skills', i, 'label', e.target.value)} />
-              <input style={{ flex: 1 }} value={(s.items || []).join(', ')} placeholder="Comma-separated skills"
-                onChange={e => upd(r => { r.skills[i].items = e.target.value.split(',').map(x => x.trim()); return r })} />
-              <button className="pf-minirm" onClick={() => rmEntry('skills', i)} title="Remove">✕</button>
-            </div>
-          ))}
-          <button className="pf-add" onClick={() => addEntry('skills', { label: '', items: [] })}>+ Add skill category</button>
-        </div>
-
-        <div className="pf-fld pf-plain" style={{ marginBottom: 13 }}>
-          <label>Experience</label>
-          {(rd.experience || []).map((j, i) => (
-            <div className="pf-entry" key={i}>
-              <div className="pf-frow">
-                {inp('experience', i, 'title', 'Job title')}
-                {inp('experience', i, 'company', 'Company')}
-              </div>
-              <div className="pf-frow">
-                {inp('experience', i, 'city', 'City')}
-                {inp('experience', i, 'dates', 'Dates', 'e.g. Jan 2024 – Present')}
-              </div>
-              <div className="pf-fld pf-plain" style={{ marginBottom: 0 }}>
-                <label>Bullets — one per line</label>
-                <textarea className="pf-bull" value={(j.bullets || []).join('\n')}
-                  onChange={e => setBullets('experience', i, e.target.value)} />
-              </div>
-              <button className="pf-minirm" style={{ marginTop: 7 }} onClick={() => rmEntry('experience', i)}>Remove this job</button>
-            </div>
-          ))}
-          <button className="pf-add" onClick={() => addEntry('experience', { title: '', company: '', city: '', dates: '', bullets: [] })}>+ Add a job</button>
-        </div>
-
-        <div className="pf-fld pf-plain" style={{ marginBottom: 13 }}>
-          <label>Projects</label>
-          {(rd.projects || []).map((p, i) => (
-            <div className="pf-entry" key={i}>
-              <div className="pf-frow">
-                {inp('projects', i, 'name', 'Project name')}
-                <div className="pf-fld pf-plain">
-                  <label>Technologies</label>
-                  <input value={(p.tech || []).join(', ')} placeholder="Comma-separated"
-                    onChange={e => upd(r => { r.projects[i].tech = e.target.value.split(',').map(x => x.trim()); return r })} />
-                </div>
-              </div>
-              <div className="pf-frow">
-                {inp('projects', i, 'dates', 'Dates')}
-                {inp('projects', i, 'github', 'GitHub link')}
-              </div>
-              <div className="pf-fld pf-plain" style={{ marginBottom: 0 }}>
-                <label>Bullets — one per line</label>
-                <textarea className="pf-bull" value={(p.bullets || []).join('\n')}
-                  onChange={e => setBullets('projects', i, e.target.value)} />
-              </div>
-              <button className="pf-minirm" style={{ marginTop: 7 }} onClick={() => rmEntry('projects', i)}>Remove this project</button>
-            </div>
-          ))}
-          <button className="pf-add" onClick={() => addEntry('projects', { name: '', tech: [], dates: '', github: '', bullets: [] })}>+ Add a project</button>
-        </div>
-
-        <div className="pf-fld pf-plain" style={{ marginBottom: 13 }}>
-          <label>Education</label>
-          {(rd.education || []).map((e2, i) => (
-            <div className="pf-entry" key={i}>
-              <div className="pf-frow">
-                {inp('education', i, 'degree', 'Degree')}
-                {inp('education', i, 'school', 'School')}
-              </div>
-              <div className="pf-frow">
-                {inp('education', i, 'city', 'City')}
-                {inp('education', i, 'dates', 'Dates', 'e.g. Graduated: May 2024')}
-              </div>
-              <button className="pf-minirm" onClick={() => rmEntry('education', i)}>Remove</button>
-            </div>
-          ))}
-          <button className="pf-add" onClick={() => addEntry('education', { degree: '', school: '', city: '', dates: '', gpa: '' })}>+ Add education</button>
-        </div>
-
-        <div className="pf-fld pf-plain">
-          <label>Certifications</label>
-          {(rd.certifications || []).map((c, i) => (
-            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 7 }}>
-              <input style={{ flex: 1 }} value={c.name || ''} placeholder="Certification"
-                onChange={e => setSec('certifications', i, 'name', e.target.value)} />
-              <input style={{ flex: '0 0 26%' }} value={c.org || ''} placeholder="Issuer"
-                onChange={e => setSec('certifications', i, 'org', e.target.value)} />
-              <input style={{ flex: '0 0 18%' }} value={c.date || ''} placeholder="Date"
-                onChange={e => setSec('certifications', i, 'date', e.target.value)} />
-              <button className="pf-minirm" onClick={() => rmEntry('certifications', i)} title="Remove">✕</button>
-            </div>
-          ))}
-          <button className="pf-add" onClick={() => addEntry('certifications', { name: '', org: '', date: '' })}>+ Add certification</button>
-        </div>
-
-      </div>
+      ))}
+      <button className="pf-add" onClick={() => setDraft(d => ({ ...d, bullets: [...d.bullets, ''] }))}>+ Add bullet</button>
     </div>
+  )
+
+  const datesEditor = (draft, setDraft) => (
+    <>
+      <div className="pf-fgrid">
+        <div className="pf-fld"><label>Start date</label>
+          <input value={draft._start} placeholder="e.g. Jan 2024" onChange={e => setDraft(d => ({ ...d, _start: e.target.value }))} /></div>
+        <div className="pf-fld"><label>End date</label>
+          <input value={draft._end} placeholder="e.g. Dec 2024" disabled={draft._current}
+            onChange={e => setDraft(d => ({ ...d, _end: e.target.value }))} /></div>
+      </div>
+      <label className="pf-cur">
+        <input type="checkbox" checked={draft._current}
+          onChange={e => setDraft(d => ({ ...d, _current: e.target.checked }))} />
+        Currently working here
+      </label>
+    </>
   )
 
   return (
     <SidebarLayout>
       <div className="pf">
         <style>{CSS}</style>
+        <div className={`pf-toast ${toast ? 'show' : ''}`}>{toast}</div>
 
         {broken && (
           <div className="pf-banner">
             <AlertCircle />
-            <span><b>Your resume didn't come through cleanly.</b> Some fields are blank — check the text and fill in what's missing.</span>
+            <span><b>Your profile is missing its target role.</b> Set it below — it decides which jobs your board shows.</span>
           </div>
         )}
 
         <div className="pf-htop">
           <div>
             <h1>Your profile</h1>
-            <p>Read from your resume. Edit anything that looks wrong.</p>
+            <p>Review what Optyply uses to personalize jobs and build your resume.</p>
           </div>
           <button className="pf-goboard" onClick={() => navigate('/jobs')}>
             Go to job board <ArrowRight />
           </button>
         </div>
 
+        <div className="pf-tabs">
+          <button className={`pf-tab ${tab === 'overview' ? 'on' : ''}`} onClick={() => setTab('overview')}>Overview</button>
+          <button className={`pf-tab ${tab === 'resume' ? 'on' : ''}`} onClick={() => setTab('resume')}>Resume details</button>
+        </div>
+
         <div className="pf-body">
-          <div className="pf-cols">
 
-            {/* ── LEFT: the resume ── */}
-            <div className={`pf-panel ${scrambled ? 'bad' : ''}`}>
-              <div className="pf-ph">
-                <div className="pf-pt"><FileText />Your resume</div>
-                <button className="pf-mini" onClick={() => setReplacing(v => !v)}>
-                  {replacing ? <><X />Cancel</> : <><RotateCcw />Replace</>}
-                </button>
-              </div>
-              <div className="pf-fline">
-                <div className="pf-fico"><FileText /></div>
-                <div style={{ minWidth: 0 }}>
-                  <div className="pf-fname">{fileName || 'Your resume'}</div>
-                  <div className="pf-fmeta">
-                    {when ? `Updated ${when}` : 'Not saved yet'}
+          {tab === 'overview' && (
+            <div className="pf-grid">
+              <div className="pf-stack">
+
+                <div className="pf-card">
+                  <div className="pf-identity">
+                    <span className="pf-avatar">{initials || '?'}</span>
+                    <div>
+                      <h2>{[profile.firstName, profile.lastName].filter(Boolean).join(' ') || 'Your name'}</h2>
+                      <div className="pf-role">{[profile.targetRole, profile.location].filter(Boolean).join(' · ') || 'Set your target role below'}</div>
+                    </div>
+                    <span className={`pf-status ${ready ? '' : 'warn'}`}>
+                      {ready ? <CircleCheck /> : <AlertCircle />}{ready ? 'Profile ready' : 'Needs review'}
+                    </span>
                   </div>
+                  {contactPreview.length > 0 && (
+                    <div className="pf-cline">{contactPreview.map((c, i) => <span key={i}>{c}</span>)}</div>
+                  )}
+                </div>
+
+                <div className="pf-card">
+                  <div className="pf-chead">
+                    <div><div className="pf-eyebrow">Source resume</div><h2>Your uploaded resume</h2></div>
+                    <button className="pf-btn ghost" onClick={() => { setTab('resume'); setSection('contact') }}><Pencil />Edit details</button>
+                  </div>
+                  <div className="pf-frow2">
+                    <div className="pf-fico"><FileText /></div>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="pf-fname">{fileName || 'No file yet'}</div>
+                      <div className="pf-fmeta">{when ? `Updated ${when}` : 'Not saved yet'}</div>
+                    </div>
+                    <div className="pf-actions">
+                      <button className="pf-btn" onClick={() => setReplacing(v => !v)}>
+                        {replacing ? <><X />Cancel</> : <><RotateCcw />Replace</>}
+                      </button>
+                      <button className="pf-btn" onClick={viewOriginal} disabled={viewingOrig || !fileName}>
+                        {viewingOrig ? <span className="pf-spin" /> : <Eye />}View original
+                      </button>
+                    </div>
+                  </div>
+
+                  {scrambled && (
+                    <div className="pf-flag"><AlertCircle />
+                      <span><b>This came out jumbled.</b> Your resume may have two columns, which PDFs often scramble. Fix the extracted text below, or replace it with a single-column version.</span>
+                    </div>
+                  )}
+
+                  {replacing && (
+                    <>
+                      <div className="pf-flag"><AlertCircle />
+                        <span>A new file re-reads everything. Details you corrected by hand will be overwritten, and you review the new extraction before it counts.</span>
+                      </div>
+                      <div className={`pf-drop ${dragOver ? 'over' : ''}`}
+                        onClick={() => inputRef.current?.click()}
+                        onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+                        onDragLeave={() => setDragOver(false)}
+                        onDrop={e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files?.[0]) }}>
+                        <div className="ic">📄</div>
+                        <div className="t">{uploading ? 'Reading…' : 'Drop a new resume, or click to choose'}</div>
+                        <div className="h">PDF or Word · up to 10MB</div>
+                      </div>
+                      <input ref={inputRef} type="file" accept=".pdf,.doc,.docx" style={{ display: 'none' }}
+                        onChange={e => handleFile(e.target.files?.[0])} />
+                    </>
+                  )}
+
+                  <div className="pf-notice">Replacing this file starts a new extraction review. Your saved profile stays unchanged until you save the new details.</div>
+
+                  <button className="pf-rawtog" onClick={() => setShowRaw(v => !v)}>
+                    {showRaw || scrambled ? 'Hide extracted text' : `Show extracted text · ${resumeText.length.toLocaleString()} characters`}
+                  </button>
+                  {(showRaw || scrambled) && (
+                    <textarea className="pf-rt" value={resumeText} onChange={e => setResumeText(e.target.value)} />
+                  )}
+                </div>
+
+                <div className="pf-card">
+                  <div className="pf-chead">
+                    <div><div className="pf-eyebrow">Job-board default</div><h2>Target role</h2>
+                      <p className="pf-sub" style={{ marginTop: 4 }}>Optyply uses this role to show relevant jobs when you open the job board.</p></div>
+                    {!roleEditing && <button className="pf-btn ghost" onClick={() => { setRoleDraft(profile.targetRole || ''); setRoleEditing(true) }}><Pencil />Change</button>}
+                  </div>
+                  {!roleEditing ? (
+                    <div className="pf-frow2">
+                      <div className="pf-fico"><Check /></div>
+                      <div>
+                        <div className="pf-fname">{profile.targetRole || 'Not set'}</div>
+                        <div className="pf-fmeta">You can still search and use every filter on the job board.</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="pf-fld"><label>Target role</label>
+                        <input value={roleDraft} onChange={e => setRoleDraft(e.target.value)} placeholder="e.g. Software Engineer" /></div>
+                      <div className="pf-sacts">
+                        <span className="pf-help">Choose the core role, not a long list of job titles.</span>
+                        <div className="pf-actions">
+                          <button className="pf-btn" onClick={() => setRoleEditing(false)}>Cancel</button>
+                          <button className="pf-btn primary" disabled={saving || !roleDraft.trim()}
+                            onClick={() => { const p2 = { ...profile, targetRole: roleDraft.trim() }; setProfile(p2); setRoleEditing(false); handleSave('Target role saved', undefined, p2) }}>
+                            Save role
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
 
-              {scrambled && (
-                <div className="pf-flag">
-                  <AlertCircle />
-                  <span><b>This came out jumbled.</b> Your resume may have two columns, which PDFs often scramble. Fix the text below, or replace it with a single-column version.</span>
+              <div className="pf-stack">
+                <div className="pf-card">
+                  <div className="pf-chead"><div><div className="pf-eyebrow">Profile checks</div><h2>{ready ? 'Ready for matching' : 'Almost there'}</h2></div></div>
+                  <div className="pf-checklist">
+                    <div className={`pf-check ${contactOk ? '' : 'pend'}`}><CircleCheck /><div>Contact details confirmed<small>{contactOk ? 'Name, email and phone reviewed' : `Missing: ${missingRequired.filter(m => m !== 'Target role').join(', ') || '—'}`}</small></div></div>
+                    <div className={`pf-check ${rd ? '' : 'pend'}`}><CircleCheck /><div>Resume content reviewed<small>{rd ? `${sectionsCount} sections on file` : 'Upload a resume to fill this'}</small></div></div>
+                    <div className={`pf-check ${profile.targetRole ? '' : 'pend'}`}><CircleCheck /><div>Target role selected<small>{profile.targetRole || 'Not set yet'}</small></div></div>
+                  </div>
                 </div>
-              )}
-
-              {replacing && (
-                <>
-                  <div className="pf-flag">
-                    <AlertCircle />
-                    <span>A new file replaces the text below and re-reads every field. Anything you have corrected by hand will be overwritten.</span>
-                  </div>
-                  <div
-                    className={`pf-drop ${dragOver ? 'over' : ''}`}
-                    onClick={() => inputRef.current?.click()}
-                    onDragOver={e => { e.preventDefault(); setDragOver(true) }}
-                    onDragLeave={() => setDragOver(false)}
-                    onDrop={e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files?.[0]) }}
-                  >
-                    <div className="ic">📄</div>
-                    <div className="t">{uploading ? 'Reading…' : 'Drop a new resume, or click to choose'}</div>
-                    <div className="h">PDF or Word · up to 10MB</div>
-                  </div>
-                  <input ref={inputRef} type="file" accept=".pdf,.doc,.docx" style={{ display: 'none' }}
-                    onChange={e => handleFile(e.target.files?.[0])} />
-                </>
-              )}
-
-              <textarea className="pf-rt" value={resumeText} onChange={e => setResumeText(e.target.value)} />
-              <div className="pf-rtf">
-                <span>{resumeText.length.toLocaleString()} characters · what your job matches and rewrites are built from</span>
-                <span>editable</span>
+                <div className="pf-card">
+                  <div className="pf-eyebrow">Privacy</div>
+                  <h3>Your resume is private</h3>
+                  <p className="pf-sub" style={{ marginTop: 6 }}>Employers cannot view this profile. Optyply uses it only for job matching and resume optimization.</p>
+                </div>
               </div>
             </div>
+          )}
 
-            {/* ── RIGHT: the details ── */}
-            <div>
-              <div className="pf-panel">
-                <div className="pf-ph"><div className="pf-pt"><Check />What we read from it</div></div>
-                <div className="pf-fields">
-                  <div className="pf-frow">{fld(PERSONAL[0])}{fld(PERSONAL[1])}</div>
-                  <div className="pf-frow">{fld(PERSONAL[2])}{fld(PERSONAL[3])}</div>
-                  <div className="pf-frow">{fld(PERSONAL[4])}{fld(PERSONAL[5])}</div>
-                  <div className="pf-frow">{fld(PERSONAL[6])}{fld(PERSONAL[7])}</div>
+          {tab === 'resume' && (
+            <>
+              {rdCheck && rdCheck.ok === false && (
+                <div className="pf-msg pf-warnb"><AlertCircle />
+                  <span><b>Please double-check your details.</b> Some may not match your resume exactly{rdCheck.violations?.length ? ': ' + rdCheck.violations.slice(0, 5).join(' · ') : '.'}</span>
+                </div>
+              )}
+              <div className="pf-rlayout">
+                <nav className="pf-snav" aria-label="Resume sections">
+                  {SECTIONS.map(([id, label]) => (
+                    <button key={id} className={section === id ? 'on' : ''} onClick={() => setSection(id)}>
+                      {label} {has[id] && <em>✓</em>}
+                    </button>
+                  ))}
+                </nav>
+                <div>
+
+                  {section === 'contact' && (
+                    <div className="pf-card">
+                      <div className="pf-chead"><div><div className="pf-eyebrow">Resume section</div><h2>Contact information</h2>
+                        <p className="pf-sub" style={{ marginTop: 4 }}>One source of truth: these fields fill your account details AND build the contact line on every generated resume (empties are skipped). Your login email is separate and never changes here.</p></div></div>
+                      <div className="pf-fgrid">{CONTACT_FIELDS.map(fld)}</div>
+                      {contactPreview.length > 0 && (
+                        <div className="pf-notice">On your resume: {contactPreview.join(' | ')}</div>
+                      )}
+                      {saveBar('Changes apply to future optimized resumes.')}
+                    </div>
+                  )}
+
+                  {section === 'summary' && (!rd ? noRd : (
+                    <div className="pf-card">
+                      <div className="pf-chead"><div><div className="pf-eyebrow">Resume section</div><h2>Professional summary</h2></div></div>
+                      <div className="pf-fld"><label>Summary</label>
+                        <textarea style={{ minHeight: 110, lineHeight: 1.55 }} value={rd.summary || ''}
+                          onChange={e => upd(r => { r.summary = e.target.value; return r })} /></div>
+                      {saveBar('Keep this factual. Job-specific wording is handled during optimization.')}
+                    </div>
+                  ))}
+
+                  {section === 'skills' && (!rd ? noRd : (
+                    <div className="pf-card">
+                      <div className="pf-chead"><div><div className="pf-eyebrow">Resume section</div><h2>Skills</h2>
+                        <p className="pf-sub" style={{ marginTop: 4 }}>Categories render as lines on your resume ("Languages: Python, SQL"). Comma-separate the skills; duplicates are removed on save.</p></div></div>
+                      {(rd.skills || []).map((s, i) => (
+                        <div className="pf-srow" key={i}>
+                          <input style={{ flex: '0 0 32%' }} value={s.label || ''} placeholder="Category"
+                            onChange={e => upd(r => { r.skills[i].label = e.target.value; return r })} />
+                          <input style={{ flex: 1 }} value={(s.items || []).join(', ')} placeholder="Comma-separated skills"
+                            onChange={e => upd(r => { r.skills[i].items = e.target.value.split(','); return r })} />
+                          <button className="pf-ib" title="Move up" disabled={i === 0} onClick={() => moveRow('skills', i, -1)}><ArrowUp /></button>
+                          <button className="pf-ib" title="Move down" disabled={i === (rd.skills.length - 1)} onClick={() => moveRow('skills', i, 1)}><ArrowDown /></button>
+                          <button className="pf-ib rm" title="Remove category" onClick={() => upd(r => { r.skills.splice(i, 1); return r })}><X /></button>
+                        </div>
+                      ))}
+                      <button className="pf-add" onClick={() => upd(r => { r.skills = r.skills || []; r.skills.push({ label: '', items: [] }); return r })}>+ Add category</button>
+                      {saveBar('Empty rows and duplicate skills are dropped automatically on save.')}
+                    </div>
+                  ))}
+
+                  {section === 'experience' && (!rd ? noRd : (
+                    <div className="pf-card">
+                      <div className="pf-chead"><div><div className="pf-eyebrow">Resume section</div><h2>Experience</h2></div>
+                        <button className="pf-btn" onClick={() => {
+                          upd(r => { r.experience = r.experience || []; r.experience.push({ title: '', company: '', city: '', dates: '', bullets: [] }); return r })
+                          setTimeout(() => openExp(rd.experience?.length ?? 0), 0)
+                        }}>Add experience</button></div>
+                      {(rd.experience || []).map((j, i) => (
+                        <div className="pf-entry" key={i}>
+                          {editingExp === i && expDraft ? (
+                            <div className="pf-eform">
+                              <div className="pf-fgrid">
+                                <div className="pf-fld"><label>Job title</label><input value={expDraft.title || ''} onChange={e => setExpDraft(d => ({ ...d, title: e.target.value }))} /></div>
+                                <div className="pf-fld"><label>Company</label><input value={expDraft.company || ''} onChange={e => setExpDraft(d => ({ ...d, company: e.target.value }))} /></div>
+                              </div>
+                              <div className="pf-fld"><label>City / location</label><input value={expDraft.city || ''} onChange={e => setExpDraft(d => ({ ...d, city: e.target.value }))} /></div>
+                              {datesEditor(expDraft, setExpDraft)}
+                              {bulletEditor(expDraft, setExpDraft)}
+                              <div className="pf-sacts">
+                                <button className="pf-btn ghost" style={{ color: 'var(--red)' }}
+                                  onClick={() => { if (window.confirm('Remove this job from your resume?')) { const next = structuredClone(rd); next.experience.splice(i, 1); setRd(next); setEditingExp(null); setExpDraft(null); handleSave(undefined, next) } }}>
+                                  Remove this job
+                                </button>
+                                <div className="pf-actions">
+                                  <button className="pf-btn" onClick={() => { setEditingExp(null); setExpDraft(null) }}>Cancel</button>
+                                  <button className="pf-btn primary" onClick={applyExp} disabled={saving}>Save</button>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="pf-etop">
+                                <div>
+                                  <div className="pf-etitle">{j.title || 'Untitled role'}</div>
+                                  <div className="pf-emeta">{[j.company, j.city].filter(Boolean).join(' · ')}</div>
+                                  {j.dates && <div className="pf-emeta">{j.dates}</div>}
+                                </div>
+                                <button className="pf-btn ghost" onClick={() => openExp(i)}><Pencil />Edit</button>
+                              </div>
+                              {j.bullets?.length > 0 && (
+                                <ul className="pf-ebullets">{j.bullets.map((b, k) => <li key={k}>{b}</li>)}</ul>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      ))}
+                      <div className="pf-sacts"><span className="pf-help">Current roles use present tense; past roles use past tense — this is checked automatically at optimize time.</span></div>
+                    </div>
+                  ))}
+
+                  {section === 'projects' && (!rd ? noRd : (
+                    <div className="pf-card">
+                      <div className="pf-chead"><div><div className="pf-eyebrow">Resume section</div><h2>Projects</h2></div>
+                        <button className="pf-btn" onClick={() => {
+                          upd(r => { r.projects = r.projects || []; r.projects.push({ name: '', tech: [], dates: '', github: '', bullets: [] }); return r })
+                          setTimeout(() => openProj(rd.projects?.length ?? 0), 0)
+                        }}>Add project</button></div>
+                      {(rd.projects || []).map((p, i) => (
+                        <div className="pf-entry" key={i}>
+                          {editingProj === i && projDraft ? (
+                            <div className="pf-eform">
+                              <div className="pf-fgrid">
+                                <div className="pf-fld"><label>Project name</label><input value={projDraft.name || ''} onChange={e => setProjDraft(d => ({ ...d, name: e.target.value }))} /></div>
+                                <div className="pf-fld"><label>Technologies — comma-separated</label>
+                                  <input value={(projDraft.tech || []).join(', ')} onChange={e => setProjDraft(d => ({ ...d, tech: e.target.value.split(',') }))} /></div>
+                              </div>
+                              <div className="pf-fld"><label>Project link or GitHub link</label><input value={projDraft.github || ''} placeholder="Optional" onChange={e => setProjDraft(d => ({ ...d, github: e.target.value }))} /></div>
+                              {datesEditor(projDraft, setProjDraft)}
+                              {bulletEditor(projDraft, setProjDraft)}
+                              <div className="pf-sacts">
+                                <button className="pf-btn ghost" style={{ color: 'var(--red)' }}
+                                  onClick={() => { if (window.confirm('Remove this project from your resume?')) { const next = structuredClone(rd); next.projects.splice(i, 1); setRd(next); setEditingProj(null); setProjDraft(null); handleSave(undefined, next) } }}>
+                                  Remove this project
+                                </button>
+                                <div className="pf-actions">
+                                  <button className="pf-btn" onClick={() => { setEditingProj(null); setProjDraft(null) }}>Cancel</button>
+                                  <button className="pf-btn primary" onClick={applyProj} disabled={saving}>Save</button>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="pf-etop">
+                                <div>
+                                  <div className="pf-etitle">{p.name || 'Untitled project'}</div>
+                                  <div className="pf-emeta">{(p.tech || []).filter(Boolean).join(' · ')}</div>
+                                  {p.dates && <div className="pf-emeta">{p.dates}</div>}
+                                </div>
+                                <button className="pf-btn ghost" onClick={() => openProj(i)}><Pencil />Edit</button>
+                              </div>
+                              {p.bullets?.length > 0 && (
+                                <ul className="pf-ebullets">{p.bullets.map((b, k) => <li key={k}>{b}</li>)}</ul>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      ))}
+                      <div className="pf-sacts"><span className="pf-help">{(rd.projects || []).length} project{(rd.projects || []).length === 1 ? '' : 's'}</span></div>
+                    </div>
+                  ))}
+
+                  {section === 'education' && (!rd ? noRd : (
+                    <div className="pf-card">
+                      <div className="pf-chead"><div><div className="pf-eyebrow">Resume section</div><h2>Education</h2>
+                        <p className="pf-sub" style={{ marginTop: 4 }}>Education may appear before experience for current students.</p></div>
+                        <button className="pf-btn" onClick={() => upd(r => { r.education = r.education || []; r.education.push({ degree: '', school: '', city: '', dates: '', gpa: '' }); return r })}>Add education</button></div>
+                      {(rd.education || []).map((e2, i) => (
+                        <div className="pf-entry" key={i}>
+                          <div className="pf-fgrid">
+                            <div className="pf-fld"><label>Degree</label><input value={e2.degree || ''} onChange={ev => upd(r => { r.education[i].degree = ev.target.value; return r })} /></div>
+                            <div className="pf-fld"><label>School</label><input value={e2.school || ''} onChange={ev => upd(r => { r.education[i].school = ev.target.value; return r })} /></div>
+                          </div>
+                          <div className="pf-fgrid">
+                            <div className="pf-fld"><label>City</label><input value={e2.city || ''} onChange={ev => upd(r => { r.education[i].city = ev.target.value; return r })} /></div>
+                            <div className="pf-fld"><label>Dates</label><input value={e2.dates || ''} placeholder="e.g. Graduated: May 2024" onChange={ev => upd(r => { r.education[i].dates = ev.target.value; return r })} /></div>
+                          </div>
+                          <div className="pf-fgrid">
+                            <div className="pf-fld"><label>GPA — only if strong</label><input value={e2.gpa || ''} placeholder="Optional" onChange={ev => upd(r => { r.education[i].gpa = ev.target.value; return r })} /></div>
+                            <div />
+                          </div>
+                          <button className="pf-btn ghost" style={{ color: 'var(--red)' }} onClick={() => upd(r => { r.education.splice(i, 1); return r })}>Remove</button>
+                        </div>
+                      ))}
+                      {saveBar('')}
+                    </div>
+                  ))}
+
+                  {section === 'certifications' && (!rd ? noRd : (
+                    <div className="pf-card">
+                      <div className="pf-chead"><div><div className="pf-eyebrow">Resume section</div><h2>Certifications</h2></div></div>
+                      {(rd.certifications || []).length === 0 && (
+                        <div className="pf-notice">No certifications on your resume. This section stays hidden in generated resumes until you add one.</div>
+                      )}
+                      {(rd.certifications || []).map((c, i) => (
+                        <div className="pf-srow" key={i}>
+                          <input style={{ flex: 1 }} value={c.name || ''} placeholder="Certification"
+                            onChange={e => upd(r => { r.certifications[i].name = e.target.value; return r })} />
+                          <input style={{ flex: '0 0 26%' }} value={c.org || ''} placeholder="Issuer"
+                            onChange={e => upd(r => { r.certifications[i].org = e.target.value; return r })} />
+                          <input style={{ flex: '0 0 16%' }} value={c.date || ''} placeholder="Date"
+                            onChange={e => upd(r => { r.certifications[i].date = e.target.value; return r })} />
+                          <button className="pf-ib rm" title="Remove" onClick={() => upd(r => { r.certifications.splice(i, 1); return r })}><X /></button>
+                        </div>
+                      ))}
+                      <button className="pf-add" onClick={() => upd(r => { r.certifications = r.certifications || []; r.certifications.push({ name: '', org: '', date: '' }); return r })}>+ Add certification</button>
+                      {saveBar('Only add certifications you have earned.')}
+                    </div>
+                  ))}
 
                 </div>
               </div>
-
-                </div>
-
-          </div>
-
-          {detailsEditor}
+            </>
+          )}
 
           {error && <div className="pf-msg pf-err"><AlertCircle />{error}</div>}
           {saved && !error && <div className="pf-msg pf-ok"><Check />Saved.</div>}
-
-          <div className="pf-foot">
-            <button className="pf-save" onClick={handleSave} disabled={saving || missingRequired.length > 0}>
-              {saving ? <><span className="pf-spin" />Saving…</> : 'Save changes'}
-            </button>
-            {missingRequired.length > 0 && (
-              <span style={{ fontSize: 12, color: '#B91C1C', alignSelf: 'center' }}>
-                Add {missingRequired.join(', ')} to save
-              </span>
-            )}
-          </div>
         </div>
       </div>
     </SidebarLayout>
   )
 }
-

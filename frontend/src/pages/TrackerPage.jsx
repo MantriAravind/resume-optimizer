@@ -218,9 +218,10 @@ export default function TrackerPage() {
       if (!rt.ok) { alert('No optimized resume was saved for this application.'); return }
       const { resumeText } = await rt.json()
 
+      // Downloads are authenticated (developer security conditions, 2026-09-20).
       const res = await fetch(`${BACKEND}/download-${type}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ resumeText, font: DOC_FONT, length: 'standard' }),
       })
       if (!res.ok) { alert('Download failed. Please try again.'); return }

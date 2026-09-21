@@ -3409,6 +3409,7 @@ app.get('/me/resume-file', requireUser, async (req, res) => {
     const buf = Buffer.isBuffer(f.data) ? f.data : Buffer.from(f.data.buffer || f.data)
     res.setHeader('Content-Type', f.mime || 'application/octet-stream')
     res.setHeader('Content-Length', buf.length)
+    res.setHeader('Cache-Control', 'private, no-store')
     res.setHeader('Content-Disposition', `attachment; filename="${(f.name || 'resume').replace(/"/g, '')}"`)
     res.send(buf)
   } catch (error) {
@@ -3469,6 +3470,15 @@ app.post('/me/profile', requireUser, async (req, res) => {
     // sanitized through the same gate as the parser's own output, then stored as
     // the single source of truth for every optimize.
     const approvedResumeData = resumeData ? sanitizeResumeData(resumeData) : null
+    // The resume's contact line is DERIVED from the confirmed profile fields, in
+    // fixed order, skipping empties — never from parsed resume text and never
+    // hand-edited. Overwritten on every save, so a garbled parse cannot survive.
+    if (approvedResumeData) {
+      const p0 = req.body.profile || {}
+      const derivedContact = [p0.location, p0.phone, p0.email, p0.linkedin, p0.github, p0.portfolio]
+        .map(x => String(x || '').trim()).filter(Boolean).map(x => x.slice(0, 120))
+      if (derivedContact.length) approvedResumeData.contact = derivedContact
+    }
 
     const p = profile || {}
     const str = v => (typeof v === 'string' ? v.trim() : '')
@@ -3514,6 +3524,7 @@ app.post('/me/profile', requireUser, async (req, res) => {
         location:        str(p.location),
         phone:           str(p.phone),
         linkedin:        str(p.linkedin),
+        portfolio:       str(p.portfolio),
         github:          str(p.github),
         graduationDate:  str(p.graduationDate),
       },
@@ -3558,7 +3569,13 @@ app.post('/me/profile', requireUser, async (req, res) => {
           ...(pl?.pendingResumeBlocks ? {} : { resumeBlocks: 1 }),
         } },
       )
-    } else {
+    } else if (parked?.data || (user?.resumeFile?.name && user.resumeFile.name !== fileName)) {
+      // Clear only on a genuine mismatch: a parked upload from a DIFFERENT file than
+      // the text being saved, or a stored original whose name no longer matches the
+      // saved text's file. An ordinary re-save of the already-promoted file (every
+      // profile-page Save after the first) matches by name and must leave the stored
+      // original alone. Found 2026-09-21: the old unconditional clear meant any save
+      // after promotion silently destroyed the original file — "View original" 404'd.
       await User.updateOne(
         { clerkUserId: req.userId },
         { $unset: { resumeFile: 1, pendingResumeFile: 1, resumeLayout: 1, pendingResumeLayout: 1, resumeCompat: 1, pendingResumeCompat: 1, resumeBlocks: 1, pendingResumeBlocks: 1 } },
@@ -4373,8 +4390,30 @@ h2 { font-size: 12pt; font-weight: bold; margin-top: 7pt; margin-bottom: 3pt; pa
 </style></head><body>${b}</body></html>`
 }
 
-app.post('/download-word', async (req, res) => {
+// Document-generation guard (developer security conditions, 2026-09-20):
+// authenticated callers only, per-user rate limit. In-memory is enough for a
+// single Render instance; restarts reset the window, which only ever helps users.
+const docGenLog = new Map()
+function docGenLimiter(req, res, next) {
+  const now = Date.now()
+  const windowMs = 60 * 60 * 1000, max = 40
+  const hits = (docGenLog.get(req.userId) || []).filter(t => now - t < windowMs)
+  if (hits.length >= max) {
+    return res.status(429).json({ error: 'Too many documents generated this hour. Please try again later.' })
+  }
+  hits.push(now)
+  docGenLog.set(req.userId, hits)
+  if (docGenLog.size > 5000) {
+    for (const [k, v] of docGenLog) if (!v.some(t => now - t < windowMs)) docGenLog.delete(k)
+  }
+  next()
+}
+
+app.post('/download-word', requireUser, docGenLimiter, async (req, res) => {
   const { resumeText, font, length, kind, letterText, company } = req.body
+  if (String(resumeText || '').length > 200000 || String(letterText || '').length > 60000) {
+    return res.status(413).json({ error: 'Document text is too large.' })
+  }
 
   // Template architecture: a request carrying structured details renders through the
   // approved template. One renderer, no branching on the user's source format.
@@ -4825,8 +4864,11 @@ async function renderPdfViaPdfShift(html) {
   return Buffer.from(await response.arrayBuffer())
 }
 
-app.post('/download-pdf', async (req, res) => {
+app.post('/download-pdf', requireUser, docGenLimiter, async (req, res) => {
   const { resumeText, font, length, kind, letterText, company } = req.body
+  if (String(resumeText || '').length > 200000 || String(letterText || '').length > 60000) {
+    return res.status(413).json({ error: 'Document text is too large.' })
+  }
 
   if (req.body.resumeData && kind !== 'letter') {
     const rdDl = sanitizeResumeData(req.body.resumeData)
