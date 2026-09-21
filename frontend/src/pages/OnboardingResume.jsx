@@ -468,6 +468,18 @@ export default function OnboardingResume() {
           )}
 
           <div className="ob-fld" style={{ marginBottom: 12 }}>
+            <label>Contact line — one item per row (location, phone, email, links)</label>
+            {(rd.contact || []).map((c, i) => (
+              <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 7 }}>
+                <input style={{ flex: 1 }} value={c || ''} placeholder="e.g. linkedin.com/in/yourname"
+                  onChange={e => upd(r => { r.contact[i] = e.target.value; return r })} />
+                <button className="ob-mini" onClick={() => upd(r => { r.contact.splice(i, 1); return r })} title="Remove">✕</button>
+              </div>
+            ))}
+            <button className="ob-add" onClick={() => upd(r => { r.contact = r.contact || []; r.contact.push(''); return r })}>+ Add contact item</button>
+          </div>
+
+          <div className="ob-fld" style={{ marginBottom: 12 }}>
             <label>Professional summary</label>
             <textarea className="ob-bull" style={{ minHeight: 64 }} value={rd.summary || ''}
               onChange={e => upd(r => { r.summary = e.target.value; return r })} />

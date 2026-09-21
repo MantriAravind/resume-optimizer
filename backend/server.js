@@ -1888,6 +1888,13 @@ function serializeResumeData(d) {
 }
 
 const sentCount = t => String(t || '').split(/[.!?]+(?:\s+|$)/).filter(s => s.trim().length > 2).length
+// A tapped chip can be a compound phrase lifted from the posting ("TypeScript,
+// Node.js, React, or PostgreSQL"). Its atoms are the real skills; the literal
+// string with its commas and "or" must never land on a resume.
+const skillAtoms = k => {
+  const parts = String(k || '').split(/,|\bor\b|\band\b|\//i).map(s => s.trim()).filter(s => s.length > 1)
+  return parts.length ? parts : [String(k || '').trim()]
+}
 const normTok = t => String(t || '').toLowerCase().replace(/[^a-z0-9+#./ -]/g, ' ').replace(/\s+/g, ' ').trim()
 const hasTerm = (hay, term) => normTok(hay).includes(normTok(term))
 
@@ -1974,9 +1981,27 @@ function gateStructuredDraft(draft, rd, jobText, confirmed) {
     if (/[\u2014\u2013]|--/.test(txt)) v.push(`${where} uses a banned dash \u2014 use commas or full stops (plain hyphen only inside a certification name)`)
   }
   if (rd.summary) checkText(String(draft.summary || ''), rd.summary, 'the summary')
+  // Past-role tense flips: the model likes normalizing "Developed" to "Develop".
+  // For a past role, a rewritten opener equal to the original's opener with the
+  // past suffix stripped is a flip \u2014 caught by stem comparison, no NLP needed.
+  const tenseFlip = (nw, ow) => {
+    const a = String(nw || '').toLowerCase(), b = String(ow || '').toLowerCase()
+    return b.endsWith('ed') && (a + 'ed' === b || a + 'd' === b || (a.endsWith('y') && a.slice(0, -1) + 'ied' === b))
+  }
   rd.experience.forEach((j, i) => (Array.isArray(jobs[i]) ? jobs[i] : []).forEach((b, k) => {
     checkText(String(b), String(j.bullets?.[k] || ''), `role ${i + 1} bullet ${k + 1}`)
-    if (isCurrentRole(j)) { const w = startsPast(b); if (w) v.push(`role ${i + 1} is CURRENT (dates say Present) but bullet ${k + 1} opens with past tense "${w}" \u2014 use present tense`) }
+    if (isCurrentRole(j)) {
+      const w = startsPast(b); if (w) v.push(`role ${i + 1} is CURRENT (dates say Present) but bullet ${k + 1} opens with past tense "${w}" \u2014 use present tense`)
+    } else {
+      const nw = String(b || '').trim().split(/\s+/)[0], ow = String(j.bullets?.[k] || '').trim().split(/\s+/)[0]
+      if (tenseFlip(nw, ow)) v.push(`role ${i + 1} ("${j.title || j.company}") is a PAST role but bullet ${k + 1} opens with present tense "${nw}" (original said "${ow}") \u2014 past roles stay past tense`)
+    }
+  }))
+  ;(rd.projects || []).forEach((pr, i) => (Array.isArray(projB?.[i]) ? projB[i] : []).forEach((b, k) => {
+    if (!/present|current/i.test(String(pr.dates || ''))) {
+      const nw = String(b || '').trim().split(/\s+/)[0], ow = String(pr.bullets?.[k] || '').trim().split(/\s+/)[0]
+      if (tenseFlip(nw, ow)) v.push(`project ${i + 1} ("${pr.name}") is dated in the past but bullet ${k + 1} opens with present tense "${nw}" (original said "${ow}") \u2014 keep the original tense`)
+    }
   }))
   return v
 }
@@ -2009,6 +2034,11 @@ function findPlacementsStructured(data, confirmed) {
     }
     if (hasTerm(data.summary, k)) return { skill: k, where: inSkills ? 'both' : 'summary', employer: null, section: 'summary', removable: false }
     if (inSkills) return { skill: k, where: 'skills', employer: null, section: null, removable: false }
+    // Compound chip: delivered when every atom sits somewhere in the skills lines.
+    const atoms = skillAtoms(k)
+    if (atoms.length > 1 && atoms.every(a => (data.skills || []).some(s => (s.items || []).some(it => hasTerm(it, a))))) {
+      return { skill: k, where: 'skills', employer: null, section: null, removable: false }
+    }
     return { skill: k, where: 'missing', employer: null, section: null, removable: false }
   })
 }
@@ -2018,7 +2048,7 @@ function findPlacementsStructured(data, confirmed) {
 function templateResumeBodyInline(d) {
   const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const bar = a => (a || []).filter(Boolean).map(esc).join(' | ')
-  const F = "font-family:Arial,'Liberation Sans',Helvetica,sans-serif"
+  const F = "font-family:'Liberation Sans',Arial,Helvetica,sans-serif"
   let b = `<div style="${F};font-size:10.5pt;line-height:1.35;color:#000">`
   const H = t => { b += `<div style="font-size:12pt;font-weight:bold;margin:9pt 0 3pt;padding-bottom:2pt;border-bottom:1pt solid #17365D">${esc(t)}</div>` }
   const EH = t => { b += `<div style="font-weight:bold;margin-top:4pt">${t}</div>` }
@@ -2122,13 +2152,21 @@ Return ONLY JSON: {"summary": string, "jobs": [[string,...],...], "projectBullet
     changes = []
   }
   const flat = serializeResumeData(optimized)
-  const stillMissing = confirmed.filter(k => !hasTerm(flat, k))
+  // A confirmed skill is delivered when every atom of it is present; a compound
+  // chip whose atoms all exist already needs nothing appended.
+  const stillMissing = confirmed.filter(k => !skillAtoms(k).every(a => hasTerm(flat, a)))
   if (stillMissing.length) {
-    optimized.skills = optimized.skills || []
-    let extra = optimized.skills.find(s => s.label === 'Additional Skills')
-    if (!extra) { extra = { label: 'Additional Skills', items: [] }; optimized.skills.push(extra) }
-    for (const k of stillMissing) if (!extra.items.some(x => normTok(x) === normTok(k))) extra.items.push(k)
-    console.log('optimize-structured: code-placed confirmed skill(s): ' + stillMissing.join(', '))
+    const novel = []
+    for (const k of stillMissing) for (const a of skillAtoms(k)) {
+      if (!hasTerm(flat, a) && !novel.some(x => normTok(x) === normTok(a))) novel.push(a)
+    }
+    if (novel.length) {
+      optimized.skills = optimized.skills || []
+      let extra = optimized.skills.find(s => s.label === 'Additional Skills')
+      if (!extra) { extra = { label: 'Additional Skills', items: [] }; optimized.skills.push(extra) }
+      for (const a of novel) if (!extra.items.some(x => normTok(x) === normTok(a))) extra.items.push(a)
+      console.log('optimize-structured: code-placed confirmed skill atom(s): ' + novel.join(', '))
+    }
   }
   return { optimized, feedback, changes, degraded }
 }
@@ -2155,7 +2193,7 @@ app.post('/optimize', async (req, res) => {
       })
 
       const outText = serializeResumeData(optimized)
-      const landed = confirmed.filter(k => hasTerm(outText, k))
+      const landed = confirmed.filter(k => skillAtoms(k).every(a => hasTerm(outText, a)))
       if (landed.length !== confirmed.length) console.error('optimize-structured: confirmed skill missing after code placement: ' + confirmed.filter(k => !landed.includes(k)).join(', '))
       const placements = findPlacementsStructured(optimized, confirmed)
 
@@ -3211,6 +3249,9 @@ function verifyResumeData(data, sourceText) {
     if (n && n.length > 3 && !src.includes(n)) violations.push(`${where}: "${String(text).slice(0, 60)}"`)
   }
   check(data.name, 'name')
+  // Contact items are checked too: a glued value (email fused onto a LinkedIn
+  // handle) exists nowhere in the source text and must be flagged for review.
+  data.contact?.forEach((c, i) => check(c, `contact[${i}]`))
   if (data.summary) check(data.summary, 'summary')
   data.experience?.forEach((j, i) => {
     check(j.title, `experience[${i}].title`)
@@ -4316,7 +4357,11 @@ function templateResumeHTML(d) {
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 @page { size: Letter portrait; margin: 0.6in 0.7in; }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: Arial, 'Liberation Sans', Helvetica, sans-serif; font-size: 10.5pt; color: #000; line-height: 1.22; }
+/* Liberation Sans is the CANONICAL production PDF font (recruiter decision,
+   2026-09-19): Arial-metric equivalent, freely embeddable, named first so every
+   host renders identically instead of falling back by accident. The editable
+   Word output keeps Arial as its preferred font. */
+body { font-family: 'Liberation Sans', Arial, Helvetica, sans-serif; font-size: 10.5pt; color: #000; line-height: 1.22; }
 h1 { font-size: 18pt; font-weight: bold; text-align: center; margin-bottom: 1pt; }
 .ct { font-size: 10pt; text-align: center; margin-bottom: 5pt; }
 h2 { font-size: 12pt; font-weight: bold; margin-top: 7pt; margin-bottom: 3pt; padding-bottom: 2pt;

@@ -340,6 +340,18 @@ export default function ProfilePage() {
         )}
 
         <div className="pf-fld pf-plain" style={{ marginBottom: 13 }}>
+          <label>Contact line — one item per row (location, phone, email, links)</label>
+          {(rd.contact || []).map((c, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 7 }}>
+              <input style={{ flex: 1 }} value={c || ''} placeholder="e.g. linkedin.com/in/yourname"
+                onChange={e => upd(r => { r.contact[i] = e.target.value; return r })} />
+              <button className="pf-minirm" onClick={() => upd(r => { r.contact.splice(i, 1); return r })} title="Remove">✕</button>
+            </div>
+          ))}
+          <button className="pf-add" onClick={() => upd(r => { r.contact = r.contact || []; r.contact.push(''); return r })}>+ Add contact item</button>
+        </div>
+
+        <div className="pf-fld pf-plain" style={{ marginBottom: 13 }}>
           <label>Professional summary</label>
           <textarea className="pf-bull" style={{ minHeight: 66 }} value={rd.summary || ''}
             onChange={e => upd(r => { r.summary = e.target.value; return r })} />
