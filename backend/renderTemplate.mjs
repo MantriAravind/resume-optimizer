@@ -76,7 +76,7 @@ function educationSection (edu, out) {
 }
 
 // resume schema (v2):
-// { name, contact:[..], summary, skills:[{label, items:[..]}], skillsHeading?,
+// { name, contact:[..], summary, summaryBullets:[..], skills:[{label, items:[..]}], skillsHeading?,
 //   experience:[{title, company, city, dates, bullets:[..]}],
 //   projects:[{name, tech:[..], dates, github?, bullets:[..]}],
 //   education:[{degree, school, city, dates, gpa?, showGpa?, bullets?}],
@@ -89,9 +89,10 @@ export function buildResumeDoc (r) {
   out.push(P('CandidateName', [T(r.name || '')]))
   if (r.contact?.length) out.push(P('ContactInfo', [T(bar(r.contact))]))
 
-  if (r.summary) {
+  if (r.summary || r.summaryBullets?.length) {
     out.push(sectionHeading('PROFESSIONAL SUMMARY'))
-    out.push(P('BodyText', [T(r.summary)]))
+    if (r.summary) out.push(P('BodyText', [T(r.summary)]))
+    for (const b of r.summaryBullets || []) out.push(bullet(b))
   }
 
   if (r.skills?.length) {

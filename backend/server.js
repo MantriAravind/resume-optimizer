@@ -1865,6 +1865,7 @@ function serializeResumeData(d) {
   if (d.name) L.push(d.name)
   if (d.contact?.length) L.push(bar(d.contact))
   if (d.summary) { L.push('', 'SUMMARY', d.summary) }
+  else if (d.summaryBullets?.length) { L.push('', 'SUMMARY', ...d.summaryBullets.map(b => `\u2022 ${b}`)) }
   if (d.skills?.length) {
     L.push('', 'TECHNICAL SKILLS')
     for (const s of d.skills) L.push(`${s.label}: ${(s.items || []).join(', ')}`)
@@ -2041,7 +2042,7 @@ function findPlacementsStructured(data, confirmed) {
     for (const p of data.projects || []) for (const b of p.bullets || []) if (hasTerm(b, k)) {
       return { skill: k, where: inSkills ? 'both' : 'bullet', employer: p.name, section: 'project', removable: false }
     }
-    if (hasTerm(data.summary, k)) return { skill: k, where: inSkills ? 'both' : 'summary', employer: null, section: 'summary', removable: false }
+    if (hasTerm(data.summary, k) || (data.summaryBullets || []).some(sb => hasTerm(sb, k))) return { skill: k, where: inSkills ? 'both' : 'summary', employer: null, section: 'summary', removable: false }
     if (inSkills) return { skill: k, where: 'skills', employer: null, section: null, removable: false }
     // Compound chip: delivered when every atom sits somewhere in the skills lines.
     const atoms = skillAtoms(k)
@@ -2066,6 +2067,7 @@ function templateResumeBodyInline(d) {
   b += `<div style="font-size:18pt;font-weight:bold;text-align:center">${esc(d.name)}</div>`
   if (d.contact?.length) b += `<div style="font-size:10pt;text-align:center;margin-bottom:5pt">${bar(d.contact)}</div>`
   if (d.summary) { H('PROFESSIONAL SUMMARY'); b += `<div style="margin-bottom:2pt">${esc(d.summary)}</div>` }
+  else if (d.summaryBullets?.length) { H('PROFESSIONAL SUMMARY'); BU(d.summaryBullets) }
   if (d.skills?.length) {
     H(d.skillsHeading || 'TECHNICAL SKILLS')
     for (const s of d.skills) b += `<div style="margin-bottom:1pt"><b>${esc(s.label)}:</b> ${esc((s.items || []).join(', '))}</div>`
@@ -2090,6 +2092,9 @@ function templateResumeBodyInline(d) {
 
 async function optimizeStructured({ rd, jobText, confirmed, expYears, ask }) {
   const editable = {
+    // v1 scope cut (2026-09-22): a BULLETED summary (rd.summaryBullets) is not
+    // offered for rewrite — it passes through verbatim via assembleOptimized's
+    // structuredClone. Paragraph summaries keep the existing rewrite behavior.
     summary: rd.summary || '',
     jobs: (rd.experience || []).map(j => j.bullets || []),
     projectBullets: (rd.projects || []).map(p => p.bullets || []),
@@ -3180,7 +3185,8 @@ Shape:
 {
   "name": string,
   "contact": [string],            // each contact item separately: location, phone, email, links (no "|" separators)
-  "summary": string|null,          // the summary/objective paragraph verbatim
+  "summary": string|null,          // the summary/objective PARAGRAPH verbatim; null when it is bulleted
+  "summaryBullets": [string],      // when the summary/objective is BULLET POINTS: one string per bullet, verbatim; [] when it is a paragraph
   "skills": [{"label": string, "items": [string]}],   // see skills rule below
   "experience": [{"title": string, "company": string, "city": string|null, "dates": string|null, "bullets": [string]}],
   "projects": [{"name": string, "tech": [string], "dates": string|null, "github": string|null, "bullets": [string]}],
@@ -3190,6 +3196,8 @@ Shape:
 }
 
 Rules:
+- summary: fill summary OR summaryBullets, never both. A bulleted summary goes
+  bullet-by-bullet into summaryBullets (glyphs stripped) with summary null.
 - skills: when the skills section has labeled category lines ("Languages: C++, Java",
   "Databases: MongoDB, MySQL"), return ONE entry PER LINE with that exact label and
   its items. NEVER merge categories into a single "Skills" entry. Only use the label
@@ -3245,6 +3253,7 @@ function sanitizeResumeData(d) {
     name: s(d.name),
     contact: arr(d.contact, s, 8),
     summary: s(d.summary),
+    summaryBullets: arr(d.summaryBullets, s, 8),
     skills: arr(d.skills, x => x && s(x.label) ? { label: s(x.label), items: arr(x.items, s, 40) } : null, 12),
     experience: arr(d.experience, x => x && (s(x.title) || s(x.company)) ? fixDates({
       title: s(x.title), company: s(x.company), city: s(x.city), dates: s(x.dates),
@@ -3297,6 +3306,7 @@ function verifyResumeData(data, sourceText) {
   // handle) exists nowhere in the source text and must be flagged for review.
   data.contact?.forEach((c, i) => check(c, `contact[${i}]`))
   if (data.summary) check(data.summary, 'summary')
+  data.summaryBullets?.forEach((b, i) => check(b, `summary.bullet[${i}]`))
   data.experience?.forEach((j, i) => {
     check(j.title, `experience[${i}].title`)
     check(j.company, `experience[${i}].company`)
@@ -4440,6 +4450,7 @@ function templateResumeHTML(d) {
   b += `<h1>${esc(d.name)}</h1>`
   if (d.contact?.length) b += `<p class="ct">${bar(d.contact)}</p>`
   if (d.summary) { heading('PROFESSIONAL SUMMARY'); b += `<p class="bd">${esc(d.summary)}</p>` }
+  else if (d.summaryBullets?.length) { heading('PROFESSIONAL SUMMARY'); bullets(d.summaryBullets) }
   if (d.skills?.length) {
     heading(d.skillsHeading || 'TECHNICAL SKILLS')
     for (const s of d.skills) b += `<p class="bd"><b>${esc(s.label)}:</b> ${esc((s.items || []).join(', '))}</p>`

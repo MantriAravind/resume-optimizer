@@ -605,7 +605,7 @@ export default function ProfilePage() {
     .map(x => String(x || '').trim()).filter(Boolean)
   const contactOk = CONTACT_FIELDS.every(([k, , req]) => !req || profile[k])
   const sectionsCount = rd ? ['summary', 'skills', 'experience', 'projects', 'education', 'certifications']
-    .filter(s => (Array.isArray(rd[s]) ? rd[s].length : rd[s])).length : 0
+    .filter(s => s === 'summary' ? (rd.summary || rd.summaryBullets?.length) : (Array.isArray(rd[s]) ? rd[s].length : rd[s])).length : 0
   const ready = contactOk && !!profile.targetRole && !!rd
 
   const contactBad = contactIssues(profile)
@@ -624,7 +624,7 @@ export default function ProfilePage() {
 
   const has = {
     contact: contactOk,
-    summary: !!rd?.summary,
+    summary: !!(rd?.summary || rd?.summaryBullets?.length),
     skills: !!rd?.skills?.length,
     experience: !!rd?.experience?.length,
     projects: !!rd?.projects?.length,
@@ -880,8 +880,18 @@ export default function ProfilePage() {
                     <div className="pf-card">
                       <div className="pf-chead"><div><div className="pf-eyebrow">Resume section</div><h2>Professional summary</h2></div></div>
                       <div className="pf-fld"><label>Summary</label>
-                        <textarea style={{ minHeight: 110, lineHeight: 1.55 }} value={rd.summary || ''}
-                          onChange={e => upd(r => { r.summary = e.target.value; return r })} /></div>
+                        <textarea style={{ minHeight: 110, lineHeight: 1.55 }}
+                          value={rd.summaryBullets?.length ? rd.summaryBullets.join('\n') : (rd.summary || '')}
+                          onChange={e => upd(r => {
+                            // One paragraph, or one bullet per line: multiple lines
+                            // become summaryBullets; a single line stays a paragraph.
+                            const lines = e.target.value.split('\n').map(t => t.replace(/^[\s\u2022\u25aa\u00b7*-]+/, '').trim())
+                            const real = lines.filter(Boolean)
+                            if (real.length > 1) { r.summaryBullets = real; r.summary = '' }
+                            else { r.summary = e.target.value; r.summaryBullets = [] }
+                            return r
+                          })} /></div>
+                      <div className="pf-hint" style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 4 }}>One paragraph, or one bullet point per line.</div>
                       {saveBar('Keep this factual. Job-specific wording is handled during optimization.')}
                     </div>
                   ))}
