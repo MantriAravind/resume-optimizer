@@ -109,6 +109,7 @@ const CSS = `
 .pf-fld input.needed{border-color:#FCA5A5;background:#FFFBFA}
 .pf-fld input.invalid{border-color:var(--red);background:#FFF8F8}
 .pf-fielderr{font-size:11px;color:var(--red);margin-top:4px;line-height:1.4}
+.pf-note{background:#FFF8E6;border:1px solid #F5D77E;border-radius:8px;padding:9px 12px;font-size:12.5px;color:#7A5D00;margin-bottom:10px;line-height:1.45}
 .pf-fgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 13px}
 .pf-req{color:var(--red);margin-left:2px}
 
@@ -272,6 +273,7 @@ export default function ProfilePage() {
 
   const [rd, setRd] = useState(null)
   const [rdCheck, setRdCheck] = useState(null)
+  const [rdNotices, setRdNotices] = useState([])
 
   const [tab, setTab] = useState('overview')
   const [section, setSection] = useState('contact')
@@ -357,6 +359,7 @@ export default function ProfilePage() {
           })
           setRd(d.resumeData || null)
           setRdCheck(d.verification || null)
+          setRdNotices(Array.isArray(d.completeness) ? d.completeness : [])
           setSaved(false)
           setPendingUpload(true)
           setTab('resume'); setSection('contact')
@@ -405,6 +408,7 @@ export default function ProfilePage() {
       })
       setRd(data.resumeData || null)
       setRdCheck(data.resumeDataVerification || null)
+      setRdNotices(Array.isArray(data.completeness) ? data.completeness : [])
       setReplacing(false)
       setSaved(false)
       setEditingExp(null); setEditingProj(null)
@@ -435,6 +439,7 @@ export default function ProfilePage() {
     setPendingUpload(false)
     setScrambled(false)
     setRdCheck(null)
+    setRdNotices([])
     setLoading(true)
     try {
       const token = await getToken()
@@ -492,6 +497,7 @@ export default function ProfilePage() {
       if (rdUse) setRd({ ...rdUse, skills: cleanSkills(rdUse.skills) })
       setSaved(true)
       setPendingUpload(false)
+      setRdNotices([])
       setUpdatedAt(data.updatedAt)
       ping(msg || 'Changes saved')
       setTimeout(() => setSaved(false), 3000)
@@ -863,6 +869,10 @@ export default function ProfilePage() {
                   ))}
                 </nav>
                 <div>
+
+                  {rdNotices.filter(n => n.section === section).map((n, i) => (
+                    <div key={i} className="pf-note">{n.message}</div>
+                  ))}
 
                   {section === 'contact' && (
                     <div className="pf-card">

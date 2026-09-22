@@ -700,7 +700,8 @@ app.get('/me/resume', requireUser, async (req, res) => {
       draft: draft ? {
         fileName: draft.fileName || '', text: draft.text || '',
         profile: draft.profile || null, resumeData: draft.resumeData || null,
-        verification: draft.verification || null, createdAt: draft.createdAt || null,
+        verification: draft.verification || null, completeness: draft.completeness || [],
+        createdAt: draft.createdAt || null,
       } : null,
     })
   } catch (error) {
@@ -3083,6 +3084,7 @@ const resumeDraftSchema = new mongoose.Schema({
   profile:      mongoose.Schema.Types.Mixed,   // flat parsed contact/profile fields
   resumeData:   mongoose.Schema.Types.Mixed,   // structured sections as parsed
   verification: mongoose.Schema.Types.Mixed,
+  completeness: mongoose.Schema.Types.Mixed,   // section-level capture warnings
   createdAt:    { type: Date, default: Date.now, expires: 60 * 60 * 24 },
 })
 const ResumeDraft = mongoose.model('ResumeDraft', resumeDraftSchema)
@@ -3320,14 +3322,116 @@ function verifyResumeData(data, sourceText) {
 // Parse + verify with one corrective retry. On persistent violations the data still
 // returns, carrying its verification result — the review screen shows those fields
 // as needs-checking instead of the server pretending they are clean.
+// ── COMPLETENESS SCAN (Phase 2, 2026-09-22) ─────────────────────────────────
+// The verifier proves parsed text EXISTS in the source, so it catches invention;
+// it is structurally silent about text the parse DROPPED (found when a bulleted
+// summary vanished without a word of warning). This scan covers that direction:
+// a cheap, deterministic look at the RAW text — which section headings exist and
+// how many bullet lines sit under each — compared with what the parse captured.
+// Warnings only, never blocking: raw-text counts are heuristic, and a false
+// positive that locks the flow is worse than a missed warning (the disabled-Save
+// lesson). Slack of 2 on bullet counts keeps ordinary extraction noise quiet.
+const COMPLETENESS_HEADING = /^(professional\s+|executive\s+|career\s+)?(summary|profile|objective|(technical\s+|core\s+|key\s+)?skills|experience|work\s+experience|professional\s+experience|employment(\s+history)?|projects?(\s+experience)?|education|certifications?)\s*:?\s*$/i
+function completenessKey(line) {
+  const t = String(line || '').trim()
+  if (!t || t.length > 60) return null
+  const m = t.match(COMPLETENESS_HEADING)
+  if (!m) return null
+  const h = m[2].toLowerCase()
+  if (/summary|profile|objective/.test(h)) return 'summary'
+  if (/skills/.test(h)) return 'skills'
+  if (/experience|employment/.test(h)) return 'experience'
+  if (/project/.test(h)) return 'projects'
+  if (/education/.test(h)) return 'education'
+  if (/certification/.test(h)) return 'certifications'
+  return null
+}
+function assessCompleteness(text, data) {
+  if (!text || !data) return []
+  const spans = {}
+  let cur = null
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line) continue
+    const key = completenessKey(line)
+    if (key) { cur = key; spans[cur] = spans[cur] || { lines: 0, bullets: 0 }; continue }
+    if (!cur) continue
+    spans[cur].lines++
+    if (/^[\u2022\u25aa\u25cf\u00b7*o\-\u2013\u2014]\s+/.test(line)) spans[cur].bullets++
+  }
+  const parsedBullets = {
+    summary: (data.summaryBullets || []).length,
+    experience: (data.experience || []).reduce((n, j) => n + (j.bullets || []).length, 0),
+    projects: (data.projects || []).reduce((n, p) => n + (p.bullets || []).length, 0),
+  }
+  const parsedHas = {
+    summary: !!(data.summary || (data.summaryBullets || []).length),
+    skills: !!(data.skills || []).length,
+    experience: !!(data.experience || []).length,
+    projects: !!(data.projects || []).length,
+    education: !!(data.education || []).length,
+    certifications: !!(data.certifications || []).length,
+  }
+  const notices = []
+  for (const [key, span] of Object.entries(spans)) {
+    if (span.lines === 0) continue
+    if (!parsedHas[key]) {
+      notices.push({ section: key, message: `Your resume has a ${key} section, but nothing was captured from it — please check it.` })
+      continue
+    }
+    const want = span.bullets, got = parsedBullets[key]
+    if (got !== undefined && want >= 2 && want - got >= 2) {
+      notices.push({ section: key, message: `Your resume shows about ${want} bullet points under ${key} — ${got} were captured. Please check for missing lines.` })
+    }
+  }
+  return notices
+}
+
+// Deterministic summary rescue (2026-09-22). The model intermittently returns
+// NEITHER summary nor summaryBullets for a bulleted summary — worked, then
+// dropped it on the same PDF minutes apart. The completeness scanner already
+// locates the summary span in the raw text, so when the parse comes back
+// without one, the server lifts the span's lines itself: verbatim from the
+// text (so the verifier passes them by construction), no model involved.
+// Model flake stops mattering for summaries.
+function rescueSummaryFromText(resumeText) {
+  const lines = String(resumeText || '').split(/\r?\n/)
+  const bullets = []
+  const paras = []
+  let inSummary = false
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (!line) continue
+    const key = completenessKey(line)
+    if (key === 'summary') { inSummary = true; continue }
+    if (key) { if (inSummary) break; continue }
+    if (!inSummary) continue
+    const m = line.match(/^[\u2022\u25aa\u25cf\u00b7*\-\u2013\u2014]\s+(.*)$/)
+    if (m) bullets.push(m[1].trim())
+    else if (bullets.length) bullets[bullets.length - 1] += ' ' + line   // wrapped continuation
+    else paras.push(line)
+  }
+  if (bullets.length) return { summary: null, summaryBullets: bullets.slice(0, 8) }
+  if (paras.length) return { summary: paras.join(' ').slice(0, 1200), summaryBullets: [] }
+  return null
+}
+
 async function parseAndVerifyResume(resumeText) {
   let data = await parseResumeStructured(resumeText)
   if (!data) return { data: null, verification: { ok: false, violations: ['parse failed'] } }
+  if (!data.summary && !(data.summaryBullets || []).length) {
+    const rescued = rescueSummaryFromText(resumeText)
+    if (rescued) { Object.assign(data, rescued); console.warn('summary rescued deterministically from text span') }
+  }
   let verification = verifyResumeData(data, resumeText)
   if (!verification.ok) {
     console.warn('resume parse verification:', verification.violations.length, 'violation(s) — retrying once')
     const retry = await parseResumeStructured(resumeText)
     if (retry) {
+      if (!retry.summary && !(retry.summaryBullets || []).length) {
+        const rescued = rescueSummaryFromText(resumeText)
+        if (rescued) Object.assign(retry, rescued)
+      }
       const rv = verifyResumeData(retry, resumeText)
       if (rv.violations.length < verification.violations.length) { data = retry; verification = rv }
     }
@@ -3428,13 +3532,14 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
       // Only clean parses become drafts — a not-a-resume upload never persists.
       // A draft write failing must never block the upload; the response still
       // carries everything and the client works exactly as before.
+      const completeness = suspect ? [] : assessCompleteness(text, structured.data)
       if (!suspect) {
         try {
           await ResumeDraft.findOneAndUpdate(
             { clerkUserId: req.userId },
             { clerkUserId: req.userId, fileName: req.file.originalname, text, pages: pages || 0,
               profile: profile || null, resumeData: structured.data || null,
-              verification: structured.verification || null, createdAt: new Date() },
+              verification: structured.verification || null, completeness, createdAt: new Date() },
             { upsert: true },
           )
         } catch (e) { console.warn('resume draft save failed:', e.message) }
@@ -3455,6 +3560,7 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
         // then /me/profile stores what they approved.
         resumeData: structured.data,
         resumeDataVerification: structured.verification,
+        completeness,
         // A7-S2: the fallback sentence, if any, so the client can show it at upload
         compat: compat ? { mode: compat.mode, reason: compat.reason, message: compat.message } : null,
       })
@@ -3509,13 +3615,14 @@ app.post('/me/resume/analyze', requireUser, async (req, res) => {
     const suspect = assessment.status === 'not_resume' || profile?.isResume === false
 
     // Phase 1: pasted text gets the same draft treatment as an upload (no file).
+    const completeness = suspect ? [] : assessCompleteness(text, structured.data)
     if (!suspect) {
       try {
         await ResumeDraft.findOneAndUpdate(
           { clerkUserId: req.userId },
           { clerkUserId: req.userId, fileName: '', text, pages: 0,
             profile: profile || null, resumeData: structured.data || null,
-            verification: structured.verification || null, createdAt: new Date() },
+            verification: structured.verification || null, completeness, createdAt: new Date() },
           { upsert: true },
         )
       } catch (e) { console.warn('resume draft save failed:', e.message) }
@@ -3531,6 +3638,7 @@ app.post('/me/resume/analyze', requireUser, async (req, res) => {
       profile: profile || null,
       resumeData: structured.data,
       resumeDataVerification: structured.verification,
+      completeness,
     })
   } catch (error) {
     console.error('Resume analyse error:', error)
