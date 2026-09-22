@@ -3510,6 +3510,38 @@ app.post('/me/resume/analyze', requireUser, async (req, res) => {
   }
 })
 
+// ── ME / RESUME DRAFT UPDATE (Phase 1.4) ────────────────────────────────────
+// While a review is pending, the client syncs typed edits here (debounced), so
+// a reload restores what the person TYPED, not just the parse. Only the draft
+// changes — the active profile is untouched until the save. Contact fields are
+// whitelisted; resumeData passes the same sanitize gate as the parser's output.
+app.post('/me/resume/draft', requireUser, async (req, res) => {
+  try {
+    const set = {}
+    if (req.body?.resumeData) {
+      const rd = sanitizeResumeData(req.body.resumeData)
+      if (rd) set.resumeData = rd
+    }
+    if (req.body?.profile && typeof req.body.profile === 'object') {
+      const p = req.body.profile
+      const str = v => (typeof v === 'string' ? v.trim().slice(0, 200) : '')
+      set.profile = {
+        firstName: str(p.firstName), lastName: str(p.lastName), email: str(p.email),
+        location: str(p.location), phone: str(p.phone), linkedin: str(p.linkedin),
+        github: str(p.github), portfolio: str(p.portfolio),
+      }
+    }
+    if (!Object.keys(set).length) return res.status(400).json({ error: 'Nothing to update.' })
+    const r = await ResumeDraft.updateOne({ clerkUserId: req.userId }, { $set: set })
+    // matchedCount 0 = no pending draft (expired or discarded); the client treats
+    // that as harmless — the next upload starts a fresh one.
+    res.json({ updated: r.matchedCount > 0 })
+  } catch (error) {
+    console.error('Resume draft update error:', error)
+    res.status(500).json({ error: 'Could not update the draft.' })
+  }
+})
+
 // ── ME / RESUME CANCEL — discard the pending review (Phase 1) ───────────────
 // Explicit counterpart to the save: deletes the draft and the parked upload so
 // nothing of the abandoned Replace survives anywhere. The active profile and

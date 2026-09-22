@@ -302,6 +302,27 @@ export default function ProfilePage() {
     return () => window.removeEventListener('beforeunload', warn)
   }, [pendingUpload])
 
+  // Phase 1.4: while a review is pending, typed edits sync into the server-side
+  // draft, debounced to ~1.5s after the last keystroke. Fire-and-forget: a missed
+  // sync costs at most that edit on a reload, never an error in the user's face.
+  useEffect(() => {
+    if (!pendingUpload) return
+    const t = setTimeout(async () => {
+      try {
+        const token = await getToken()
+        await fetch(`${BACKEND}/me/resume/draft`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            resumeData: rd,
+            profile: Object.fromEntries(CONTACT_FIELDS.map(([k]) => [k, profile[k] || ''])),
+          }),
+        })
+      } catch { /* silent — draft sync is best-effort */ }
+    }, 1500)
+    return () => clearTimeout(t)
+  }, [pendingUpload, rd, profile, getToken])
+
   useEffect(() => {
     let cancelled = false
     async function load() {
