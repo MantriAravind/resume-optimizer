@@ -3161,6 +3161,12 @@ async function parseResumeStructured(resumeText) {
     const replyText = await askModel({
       model: MODEL_EXTRACT,
       maxTokens: 16000,
+      // 2026-09-22 experiment CLOSED: 'medium' produced the same 2 violations as
+      // 'minimal' on the reference PDF, just slower — because the copyist was never
+      // truncating. The "…Apache Kafka and AW" reports were the violation banner's
+      // own 60-char display slice, and the underlying violations were the model
+      // REPAIRING words the PDF text extraction had glued at line-wrap hyphens
+      // ("serviceperformance"). Fixed in verifyResumeData; effort stays minimal.
       reasoningEffort: 'minimal',
       messages: [{
         role: 'user',
@@ -3268,11 +3274,23 @@ function sanitizeResumeData(d) {
 function verifyResumeData(data, sourceText) {
   if (!data) return { ok: false, violations: ['no parse'] }
   const norm = t => String(t || '').toLowerCase().replace(/[\s\u00a0]+/g, ' ').replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"').trim()
+  // PDF text extraction glues words at line-wrap hyphens ("serviceperformance")
+  // and the copyist repairs them ("service-performance") — correct output that the
+  // strict substring check would flag. Before flagging, retry the comparison with
+  // hyphens and spaces stripped from both sides: a match there means the only
+  // difference is wrap damage in the SOURCE, not invention by the model.
+  // (2026-09-22: the reference PDF's two standing "violations" were exactly this.)
+  const flat = t => norm(t).replace(/[\s\u2010-\u2015-]+/g, '')
   const src = norm(sourceText)
+  const flatSrc = flat(sourceText)
   const violations = []
   const check = (text, where) => {
     const n = norm(text)
-    if (n && n.length > 3 && !src.includes(n)) violations.push(`${where}: "${String(text).slice(0, 60)}"`)
+    if (!n || n.length <= 3) return
+    if (src.includes(n)) return
+    if (flatSrc.includes(flat(text))) return
+    const shown = String(text).slice(0, 60) + (String(text).length > 60 ? '…' : '')
+    violations.push(`${where}: "${shown}"`)
   }
   check(data.name, 'name')
   // Contact items are checked too: a glued value (email fused onto a LinkedIn
