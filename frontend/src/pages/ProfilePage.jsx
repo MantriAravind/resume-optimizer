@@ -107,6 +107,8 @@ const CSS = `
   font-size:13px;font-family:inherit;color:var(--ink);background:#fff}
 .pf-fld input:focus,.pf-fld textarea:focus{outline:none;border-color:var(--blue)}
 .pf-fld input.needed{border-color:#FCA5A5;background:#FFFBFA}
+.pf-fld input.invalid{border-color:var(--red);background:#FFF8F8}
+.pf-fielderr{font-size:11px;color:var(--red);margin-top:4px;line-height:1.4}
 .pf-fgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 13px}
 .pf-req{color:var(--red);margin-left:2px}
 
@@ -225,6 +227,32 @@ function cleanSkills(rows) {
   return out
 }
 
+// Contact format checks (2026-09-21). Rule learned from the locked-Save incident:
+// validation NEVER silently disables Save — it either blocks with a message that
+// names the field and the problem, or it doesn't block at all. Empty optional
+// fields are always valid; only required-empty and wrong-format block.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
+function contactIssues(p) {
+  const issues = {}
+  const phone = String(p.phone || '').trim()
+  if (phone) {
+    const digits = phone.replace(/\D/g, '')
+    if (/[^\d\s()+.\-]/.test(phone) || digits.length < 7 || digits.length > 15)
+      issues.phone = 'Numbers, spaces and + ( ) - only, 7\u201315 digits.'
+  }
+  const email = String(p.email || '').trim()
+  if (email && !EMAIL_RE.test(email)) issues.email = "This doesn't look like an email address."
+  const urlish = v => !/\s/.test(v) && /^(https?:\/\/)?[\w.-]+\.[a-z]{2,}([/?#]\S*)?$/i.test(v)
+  const domains = { linkedin: 'linkedin.com', github: 'github.com' }
+  for (const k of ['linkedin', 'github', 'portfolio']) {
+    const v = String(p[k] || '').trim()
+    if (!v) continue
+    if (!urlish(v)) issues[k] = domains[k] ? `Enter a ${domains[k]} link.` : 'Enter a web link, e.g. yoursite.com'
+    else if (domains[k] && !v.toLowerCase().includes(domains[k])) issues[k] = `This should be a ${domains[k]} link.`
+  }
+  return issues
+}
+
 export default function ProfilePage() {
   const { getToken } = useAuth()
   const { user } = useUser()
@@ -247,7 +275,6 @@ export default function ProfilePage() {
 
   const [tab, setTab] = useState('overview')
   const [section, setSection] = useState('contact')
-  const [showRaw, setShowRaw] = useState(false)
   const [roleEditing, setRoleEditing] = useState(false)
   const [roleDraft, setRoleDraft] = useState('')
 
@@ -320,13 +347,21 @@ export default function ProfilePage() {
       const data = await res.json().catch(() => ({}))
       if (!res.ok) { setError(data.error || 'Could not read that file.'); return }
       if (data.status === 'empty' || data.status === 'short') {
-        setError(data.message + ' Paste the text into the extracted-text box instead.')
+        setError(data.message + ' Try a different file — a PDF export usually works best.')
         return
       }
       setResumeText(data.text || '')
       setFileName(data.fileName || f.name)
       setScrambled(data.status === 'not_resume')
-      if (data.profile) setProfile(p => ({ ...p, ...data.profile }))
+      // A04 (final spec): contact refreshes ENTIRELY from the new parse — a field
+      // absent from the new resume shows empty for review, never the old value.
+      // Only contact fields are touched; target role and all other profile fields
+      // stay untouched (the 2026-09-21 clobber, fixed and kept fixed).
+      if (data.profile) setProfile(p => {
+        const next = { ...p }
+        for (const [k] of CONTACT_FIELDS) next[k] = String(data.profile[k] ?? '').trim()
+        return next
+      })
       setRd(data.resumeData || null)
       setRdCheck(data.resumeDataVerification || null)
       setReplacing(false)
@@ -355,6 +390,19 @@ export default function ProfilePage() {
     if (!resumeText.trim()) { setError('Your resume text is empty — replace your resume first.'); return }
     const rdUse = rdNext !== undefined ? rdNext : rd
     const profileUse = profileNext !== undefined ? profileNext : profile
+    // Visible-block validation. Deliberate: target role does NOT gate saving —
+    // gating on it is what locked Save after an upload. Only Contact gates, loudly.
+    const missing = CONTACT_FIELDS.filter(([k, , req]) => req && !String(profileUse[k] || '').trim()).map(([, l]) => l)
+    const badKeys = Object.keys(contactIssues(profileUse))
+    if (missing.length || badKeys.length) {
+      const badLabels = badKeys.map(k => (CONTACT_FIELDS.find(f => f[0] === k) || [, k])[1])
+      const parts = []
+      if (missing.length) parts.push(`fill in ${missing.join(', ')}`)
+      if (badLabels.length) parts.push(`fix ${badLabels.join(', ')}`)
+      setError(`Can't save yet — in the Contact section, ${parts.join(' and ')}.`)
+      setTab('resume'); setSection('contact')
+      return
+    }
     setSaving(true); setError(''); setSaved(false)
     try {
       const token = await getToken()
@@ -488,13 +536,16 @@ export default function ProfilePage() {
     .filter(s => (Array.isArray(rd[s]) ? rd[s].length : rd[s])).length : 0
   const ready = contactOk && !!profile.targetRole && !!rd
 
+  const contactBad = contactIssues(profile)
   const fld = ([key, label, required]) => {
     const empty = !profile[key]
+    const bad = contactBad[key]
     return (
       <div className="pf-fld" key={key}>
         <label>{label}{required && <span className="pf-req">*</span>}</label>
-        <input className={required && empty ? 'needed' : ''} value={profile[key] || ''}
+        <input className={bad ? 'invalid' : (required && empty ? 'needed' : '')} value={profile[key] || ''}
           placeholder={required ? 'Required' : ''} onChange={e => set(key, e.target.value)} />
+        {bad && <div className="pf-fielderr">{bad}</div>}
       </div>
     )
   }
@@ -516,7 +567,7 @@ export default function ProfilePage() {
   const saveBar = (help, msg) => (
     <div className="pf-sacts">
       <span className="pf-help">{help}</span>
-      <button className="pf-btn primary" onClick={() => handleSave(msg)} disabled={saving || missingRequired.length > 0}>
+      <button className="pf-btn primary" onClick={() => handleSave(msg)} disabled={saving}>
         {saving ? <><span className="pf-spin" />Saving…</> : 'Save changes'}
       </button>
     </div>
@@ -595,7 +646,7 @@ export default function ProfilePage() {
             <div className="pf-pending">
               <AlertCircle />
               <span><b>New resume uploaded — not saved yet.</b> Optyply is still using your previous resume. Review the details below, then press Save.</span>
-              <button className="pf-btn primary" onClick={() => handleSave('Resume saved')} disabled={saving || missingRequired.length > 0}>
+              <button className="pf-btn primary" onClick={() => handleSave('Resume saved')} disabled={saving}>
                 {saving ? 'Saving…' : 'Save now'}
               </button>
             </div>
@@ -667,12 +718,7 @@ export default function ProfilePage() {
                     </>
                   )}
 
-                  <div className="pf-notice">Replacing this file starts a new extraction review. Your saved profile stays unchanged until you save the new details.</div>
-
-                  <button className="pf-rawtog" onClick={() => setShowRaw(v => !v)}>
-                    {showRaw || scrambled ? 'Hide extracted text' : `Show extracted text · ${resumeText.length.toLocaleString()} characters`}
-                  </button>
-                  {(showRaw || scrambled) && (
+                  {scrambled && (
                     <textarea className="pf-rt" value={resumeText} onChange={e => setResumeText(e.target.value)} />
                   )}
                 </div>
