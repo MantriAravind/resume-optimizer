@@ -141,6 +141,20 @@ export default function SidebarLayout({ children }) {
     try { return localStorage.getItem('sl-collapsed') !== 'false' } catch { return true }
   })
 
+  // Leave guard (2026-09-22): a page with unsaved work registers itself on
+  // window.__optyplyLeaveGuard = { dirty(): bool, ask(): Promise<bool> }. Every
+  // sidebar exit funnels through go(): if the page says it is dirty, its own
+  // Save-or-Discard dialog decides whether navigation proceeds. A window
+  // registry rather than a context, so the layout never imports page files.
+  async function go(path) {
+    const g = window.__optyplyLeaveGuard
+    if (g && typeof g.dirty === 'function' && g.dirty() && typeof g.ask === 'function') {
+      const proceed = await g.ask()
+      if (!proceed) return
+    }
+    navigate(path)
+  }
+
   function toggleCollapsed() {
     setCollapsed(prev => {
       const next = !prev
@@ -166,7 +180,7 @@ export default function SidebarLayout({ children }) {
 
       <aside className="sl-sidebar">
         <div className="sl-header">
-          <div className="sl-brand" onClick={() => navigate('/')}>
+          <div className="sl-brand" onClick={() => go('/')}>
             <div className="sl-brand-mark" />
             <span>Optyply</span>
           </div>
@@ -187,7 +201,7 @@ export default function SidebarLayout({ children }) {
               <button
                 key={item.label}
                 className={`sl-item ${isActive ? 'active' : ''} ${!item.available ? 'disabled' : ''}`}
-                onClick={() => item.available && navigate(item.path)}
+                onClick={() => item.available && go(item.path)}
                 disabled={!item.available}
                 title={item.label}
               >
@@ -203,7 +217,7 @@ export default function SidebarLayout({ children }) {
           <div className="sl-plan">
             <div className="sl-plan-label">Current plan</div>
             <div className="sl-plan-name">Free</div>
-            <button className="sl-plan-btn" onClick={() => navigate('/pricing')}>Upgrade to Pro</button>
+            <button className="sl-plan-btn" onClick={() => go('/pricing')}>Upgrade to Pro</button>
           </div>
           <div className="sl-user">
             <UserButton afterSignOutUrl="/" />

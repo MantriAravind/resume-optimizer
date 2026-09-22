@@ -110,6 +110,11 @@ const CSS = `
 .pf-fld input.invalid{border-color:var(--red);background:#FFF8F8}
 .pf-fielderr{font-size:11px;color:var(--red);margin-top:4px;line-height:1.4}
 .pf-note{background:#FFF8E6;border:1px solid #F5D77E;border-radius:8px;padding:9px 12px;font-size:12.5px;color:#7A5D00;margin-bottom:10px;line-height:1.45}
+.pf-leave-overlay{position:fixed;inset:0;background:rgba(10,10,11,.45);z-index:60;display:flex;align-items:center;justify-content:center}
+.pf-leave-box{background:#fff;border-radius:14px;padding:22px 24px;max-width:420px;width:calc(100% - 40px);box-shadow:0 18px 50px rgba(0,0,0,.25)}
+.pf-leave-box h3{margin:0 0 6px;font-size:16.5px}
+.pf-leave-box p{margin:0 0 16px;font-size:13.5px;color:var(--body);line-height:1.5}
+.pf-leave-btns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 .pf-fgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 13px}
 .pf-req{color:var(--red);margin-left:2px}
 
@@ -254,6 +259,8 @@ function contactIssues(p) {
   return issues
 }
 
+const SECTION_LABELS = { contact: 'Contact', summary: 'Summary', skills: 'Skills', experience: 'Experience', projects: 'Projects', education: 'Education', certifications: 'Certifications' }
+
 export default function ProfilePage() {
   const { getToken } = useAuth()
   const { user } = useUser()
@@ -274,6 +281,9 @@ export default function ProfilePage() {
   const [rd, setRd] = useState(null)
   const [rdCheck, setRdCheck] = useState(null)
   const [rdNotices, setRdNotices] = useState([])
+  const [dirty, setDirty] = useState(false)
+  const [dirtySections, setDirtySections] = useState([])
+  const [leaveAsk, setLeaveAsk] = useState(null)
 
   const [tab, setTab] = useState('overview')
   const [section, setSection] = useState('contact')
@@ -298,11 +308,24 @@ export default function ProfilePage() {
   const [pendingUpload, setPendingUpload] = useState(false)
 
   useEffect(() => {
-    if (!pendingUpload) return
+    if (!pendingUpload && !dirty) return
     const warn = e => { e.preventDefault(); e.returnValue = '' }
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
-  }, [pendingUpload])
+  }, [pendingUpload, dirty])
+
+  // Leave guard registration (2026-09-22, his spec item 1): while this page holds
+  // unsaved work — typed edits or a pending upload — every sidebar exit goes
+  // through the Save-or-Discard dialog below instead of silently dropping it.
+  // Window registry, not a context import, so the layout stays uncoupled from
+  // page file paths.
+  useEffect(() => {
+    window.__optyplyLeaveGuard = {
+      dirty: () => dirty || pendingUpload,
+      ask: () => new Promise(resolve => setLeaveAsk({ resolve })),
+    }
+    return () => { window.__optyplyLeaveGuard = null }
+  }, [dirty, pendingUpload])
 
   // Phase 1.4: while a review is pending, typed edits sync into the server-side
   // draft, debounced to ~1.5s after the last keystroke. Fire-and-forget: a missed
@@ -422,6 +445,44 @@ export default function ProfilePage() {
     }
   }
 
+  // In-page exits (the header's job-board button) use the same Save-or-Discard
+  // dialog as the sidebar guard — found 2026-09-22: it bypassed the guard.
+  async function guardedSection(next) {
+    if (dirty && !pendingUpload && next !== section) {
+      const ok = await new Promise(resolve => setLeaveAsk({ resolve }))
+      if (!ok) return
+    }
+    setSection(next)
+  }
+
+  async function guardedNav(path) {
+    if (dirty || pendingUpload) {
+      const ok = await new Promise(resolve => setLeaveAsk({ resolve }))
+      if (!ok) return
+    }
+    navigate(path)
+  }
+
+  async function leaveSave() {
+    const ok = await handleSave()
+    const ask = leaveAsk; setLeaveAsk(null)
+    ask?.resolve(!!ok)
+  }
+  async function leaveDiscard() {
+    if (pendingUpload) {
+      try {
+        const token = await getToken()
+        await fetch(`${BACKEND}/me/resume/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+      } catch { /* draft TTL cleans up; leaving proceeds regardless */ }
+    }
+    // Discard must actually restore the saved data, not just clear the flag —
+    // a section-switch discard STAYS on this page, so the edited state would
+    // otherwise still be on screen pretending to be saved.
+    await restoreSaved()
+    const ask = leaveAsk; setLeaveAsk(null)
+    ask?.resolve(true)
+  }
+
   function ping(msg) {
     setToast(msg)
     setTimeout(() => setToast(''), 1800)
@@ -430,16 +491,13 @@ export default function ProfilePage() {
   // Phase 1: explicit discard. Deletes the server-side draft + parked file, then
   // restores the page from the saved profile — the Save-or-Discard pair, so a
   // review can always be exited without saving and without trapping anyone.
-  async function cancelUpload() {
-    if (!window.confirm('Discard this uploaded resume? Your saved profile stays exactly as it is.')) return
-    try {
-      const token = await getToken()
-      await fetch(`${BACKEND}/me/resume/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
-    } catch { /* the draft's 24h TTL cleans up if this misses; local reset still proceeds */ }
+  async function restoreSaved() {
     setPendingUpload(false)
     setScrambled(false)
     setRdCheck(null)
     setRdNotices([])
+    setDirty(false)
+    setDirtySections([])
     setLoading(true)
     try {
       const token = await getToken()
@@ -457,6 +515,15 @@ export default function ProfilePage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function cancelUpload() {
+    if (!window.confirm('Discard this uploaded resume? Your saved profile stays exactly as it is.')) return
+    try {
+      const token = await getToken()
+      await fetch(`${BACKEND}/me/resume/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+    } catch { /* the draft's 24h TTL cleans up if this misses; local reset still proceeds */ }
+    await restoreSaved()
   }
 
   // rdNext/profileNext exist because React state updates are asynchronous: a save
@@ -498,9 +565,12 @@ export default function ProfilePage() {
       setSaved(true)
       setPendingUpload(false)
       setRdNotices([])
+      setDirty(false)
+      setDirtySections([])
       setUpdatedAt(data.updatedAt)
       ping(msg || 'Changes saved')
       setTimeout(() => setSaved(false), 3000)
+      return true
     } catch {
       setError('Could not reach the server. Please try again.')
     } finally {
@@ -533,8 +603,14 @@ export default function ProfilePage() {
     }
   }
 
-  const set = (k, v) => setProfile(p => ({ ...p, [k]: v }))
-  const upd = fn => { setSaved(false); setRd(r => fn(structuredClone(r || {}))) }
+  const markDirty = sec => {
+    setDirty(true)
+    if (sec) setDirtySections(list => (list.includes(sec) ? list : [...list, sec]))
+  }
+  const set = (k, v) => { markDirty('Contact'); setProfile(p => ({ ...p, [k]: v })) }
+  // upd is always called from the ACTIVE section's editor, so the current section
+  // name is the right label for what was touched.
+  const upd = fn => { markDirty(SECTION_LABELS[section] || null); setSaved(false); setRd(r => fn(structuredClone(r || {}))) }
 
   // ── expand-to-edit plumbing ──
   function openExp(i) {
@@ -693,6 +769,23 @@ export default function ProfilePage() {
         <style>{CSS}</style>
         <div className={`pf-toast ${toast ? 'show' : ''}`}>{toast}</div>
 
+        {leaveAsk && (
+          <div className="pf-leave-overlay">
+            <div className="pf-leave-box">
+              <h3>Unsaved changes</h3>
+              <p>
+                Your profile has unsaved changes{dirtySections.length ? <> in <b>{dirtySections.join(', ')}</b></> : (pendingUpload ? ' from your new resume upload' : '')}.
+                {' '}Save them before moving on, or discard them?
+              </p>
+              <div className="pf-leave-btns">
+                <button className="pf-btn" onClick={() => { const a = leaveAsk; setLeaveAsk(null); a.resolve(false) }}>Stay</button>
+                <button className="pf-btn" onClick={leaveDiscard}>Discard changes</button>
+                <button className="pf-btn primary" onClick={leaveSave}>Save and leave</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {broken && (
           <div className="pf-banner">
             <AlertCircle />
@@ -705,10 +798,7 @@ export default function ProfilePage() {
             <h1>Your profile</h1>
             <p>Review what Optyply uses to personalize jobs and build your resume.</p>
           </div>
-          <button className="pf-goboard" onClick={() => {
-            if (pendingUpload && !window.confirm("Your new resume isn't saved yet — job matches will keep using your PREVIOUS resume. Leave anyway?")) return
-            navigate('/jobs')
-          }}>
+          <button className="pf-goboard" onClick={() => guardedNav('/jobs')}>
             Go to job board <ArrowRight />
           </button>
         </div>
@@ -863,7 +953,7 @@ export default function ProfilePage() {
               <div className="pf-rlayout">
                 <nav className="pf-snav" aria-label="Resume sections">
                   {SECTIONS.map(([id, label]) => (
-                    <button key={id} className={section === id ? 'on' : ''} onClick={() => setSection(id)}>
+                    <button key={id} className={section === id ? 'on' : ''} onClick={() => guardedSection(id)}>
                       {label} {has[id] && <em>✓</em>}
                     </button>
                   ))}
