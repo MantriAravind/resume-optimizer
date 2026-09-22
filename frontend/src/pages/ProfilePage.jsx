@@ -320,6 +320,26 @@ export default function ProfilePage() {
         }
         setProfile(p)
         setRd(data.resumeData || null)
+        // Phase 1: an unconfirmed upload survives a reload — the server returns it
+        // as a draft and the page reopens straight into review. The draft holds the
+        // PARSED values; edits made in the review before the reload were client
+        // state only and are not restored (draft-edit sync is the next increment,
+        // which is why the leave-warning stays on).
+        if (data.draft && (data.draft.resumeData || data.draft.text)) {
+          const d = data.draft
+          setResumeText(d.text || '')
+          setFileName(d.fileName || '')
+          if (d.profile) setProfile(prev => {
+            const next = { ...prev }
+            for (const [k] of CONTACT_FIELDS) next[k] = String(d.profile[k] ?? '').trim()
+            return next
+          })
+          setRd(d.resumeData || null)
+          setRdCheck(d.verification || null)
+          setSaved(false)
+          setPendingUpload(true)
+          setTab('resume'); setSection('contact')
+        }
       } catch {
         if (!cancelled) setError('Could not load your profile. Please refresh.')
       } finally {
@@ -380,6 +400,37 @@ export default function ProfilePage() {
   function ping(msg) {
     setToast(msg)
     setTimeout(() => setToast(''), 1800)
+  }
+
+  // Phase 1: explicit discard. Deletes the server-side draft + parked file, then
+  // restores the page from the saved profile — the Save-or-Discard pair, so a
+  // review can always be exited without saving and without trapping anyone.
+  async function cancelUpload() {
+    if (!window.confirm('Discard this uploaded resume? Your saved profile stays exactly as it is.')) return
+    try {
+      const token = await getToken()
+      await fetch(`${BACKEND}/me/resume/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+    } catch { /* the draft's 24h TTL cleans up if this misses; local reset still proceeds */ }
+    setPendingUpload(false)
+    setScrambled(false)
+    setRdCheck(null)
+    setLoading(true)
+    try {
+      const token = await getToken()
+      const res = await fetch(`${BACKEND}/me/resume`, { headers: { Authorization: `Bearer ${token}` } })
+      const data = await res.json()
+      setResumeText(data.resumeText || '')
+      setFileName(data.resumeFileName || '')
+      const p = data.profile || {}
+      if (!p.email && user?.primaryEmailAddress?.emailAddress) p.email = user.primaryEmailAddress.emailAddress
+      setProfile(p)
+      setRd(data.resumeData || null)
+      setSaved(true)
+    } catch {
+      setError('Could not restore your saved profile. Please refresh the page.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   // rdNext/profileNext exist because React state updates are asynchronous: a save
@@ -646,6 +697,7 @@ export default function ProfilePage() {
             <div className="pf-pending">
               <AlertCircle />
               <span><b>New resume uploaded — not saved yet.</b> Optyply is still using your previous resume. Review the details below, then press Save.</span>
+              <button className="pf-btn" onClick={cancelUpload} disabled={saving}>Discard</button>
               <button className="pf-btn primary" onClick={() => handleSave('Resume saved')} disabled={saving}>
                 {saving ? 'Saving…' : 'Save now'}
               </button>

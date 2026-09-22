@@ -674,6 +674,10 @@ app.get('/me/resume', requireUser, async (req, res) => {
       // below can still see that extraction happened
       .select('-resumeFile.data -pendingResumeFile.data -resumeBlocks.blocks -pendingResumeBlocks.blocks')
       .lean()
+    // Phase 1: the pending draft rides the same call. When present, the profile
+    // page opens straight into review with these values instead of losing them
+    // to the reload.
+    const draft = await ResumeDraft.findOne({ clerkUserId: userId }).lean()
     res.json({
       hasResume:      Boolean(user?.resumeText),
       resumeText:     user?.resumeText     || '',
@@ -693,6 +697,11 @@ app.get('/me/resume', requireUser, async (req, res) => {
       // edits these; every optimize reads them. A page or two of strings — small
       // enough to ride the same call.
       resumeData:     user?.resumeData     || null,
+      draft: draft ? {
+        fileName: draft.fileName || '', text: draft.text || '',
+        profile: draft.profile || null, resumeData: draft.resumeData || null,
+        verification: draft.verification || null, createdAt: draft.createdAt || null,
+      } : null,
     })
   } catch (error) {
     console.error('Get resume error:', error)
@@ -3056,6 +3065,23 @@ const upload = multer({
 
 // Asks Haiku for the profile fields in one call. Returns nulls rather than guesses:
 // a wrong graduation date shown as fact is worse than an empty box the student fills.
+// ── RESUME DRAFT (Phase 1, 2026-09-22) ──────────────────────────────────────
+// One pending review per user, held server-side so an accidental reload during
+// review restores it instead of losing it. Replaced wholesale on every upload,
+// consumed by the save, discarded by cancel. `expires` is a Mongo TTL index:
+// abandoned drafts self-delete ~24h after createdAt.
+const resumeDraftSchema = new mongoose.Schema({
+  clerkUserId:  { type: String, required: true, unique: true, index: true },
+  fileName:     String,
+  text:         String,
+  pages:        Number,
+  profile:      mongoose.Schema.Types.Mixed,   // flat parsed contact/profile fields
+  resumeData:   mongoose.Schema.Types.Mixed,   // structured sections as parsed
+  verification: mongoose.Schema.Types.Mixed,
+  createdAt:    { type: Date, default: Date.now, expires: 60 * 60 * 24 },
+})
+const ResumeDraft = mongoose.model('ResumeDraft', resumeDraftSchema)
+
 async function readProfileFromResume(resumeText) {
   const allowed = CATEGORIES.join(', ')
   // The model has no idea what day it is, so "Jan 2022 - Present" is unresolvable
@@ -3370,6 +3396,22 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
       // that happens to contain an email address.
       const suspect = assessment.status === 'not_resume' || profile?.isResume === false
 
+      // Phase 1: park the parse server-side as the user's single pending draft.
+      // Only clean parses become drafts — a not-a-resume upload never persists.
+      // A draft write failing must never block the upload; the response still
+      // carries everything and the client works exactly as before.
+      if (!suspect) {
+        try {
+          await ResumeDraft.findOneAndUpdate(
+            { clerkUserId: req.userId },
+            { clerkUserId: req.userId, fileName: req.file.originalname, text, pages: pages || 0,
+              profile: profile || null, resumeData: structured.data || null,
+              verification: structured.verification || null, createdAt: new Date() },
+            { upsert: true },
+          )
+        } catch (e) { console.warn('resume draft save failed:', e.message) }
+      }
+
       res.json({
         status: suspect ? 'not_resume' : 'ok',
         message: suspect
@@ -3390,7 +3432,7 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
       })
     } catch (error) {
       console.error('Resume upload error:', error)
-      res.status(500).json({ error: 'Could not read that file. Please try another, or paste the text instead.' })
+      res.status(500).json({ error: 'Could not read that file. Please try another — a PDF export usually works best.' })
     }
   })
 })
@@ -3438,6 +3480,19 @@ app.post('/me/resume/analyze', requireUser, async (req, res) => {
     ])
     const suspect = assessment.status === 'not_resume' || profile?.isResume === false
 
+    // Phase 1: pasted text gets the same draft treatment as an upload (no file).
+    if (!suspect) {
+      try {
+        await ResumeDraft.findOneAndUpdate(
+          { clerkUserId: req.userId },
+          { clerkUserId: req.userId, fileName: '', text, pages: 0,
+            profile: profile || null, resumeData: structured.data || null,
+            verification: structured.verification || null, createdAt: new Date() },
+          { upsert: true },
+        )
+      } catch (e) { console.warn('resume draft save failed:', e.message) }
+    }
+
     res.json({
       status: suspect ? 'not_resume' : 'ok',
       message: suspect
@@ -3452,6 +3507,24 @@ app.post('/me/resume/analyze', requireUser, async (req, res) => {
   } catch (error) {
     console.error('Resume analyse error:', error)
     res.status(500).json({ error: 'Could not read that. Please try again.' })
+  }
+})
+
+// ── ME / RESUME CANCEL — discard the pending review (Phase 1) ───────────────
+// Explicit counterpart to the save: deletes the draft and the parked upload so
+// nothing of the abandoned Replace survives anywhere. The active profile and
+// stored file are untouched.
+app.post('/me/resume/cancel', requireUser, async (req, res) => {
+  try {
+    await ResumeDraft.deleteOne({ clerkUserId: req.userId })
+    await User.updateOne(
+      { clerkUserId: req.userId },
+      { $unset: { pendingResumeFile: 1, pendingResumeLayout: 1, pendingResumeCompat: 1, pendingResumeBlocks: 1 } },
+    )
+    res.json({ cancelled: true })
+  } catch (error) {
+    console.error('Resume cancel error:', error)
+    res.status(500).json({ error: 'Could not discard the upload. Please try again.' })
   }
 })
 
@@ -3530,57 +3603,42 @@ app.post('/me/profile', requireUser, async (req, res) => {
       },
     }
 
-    const user = await User.findOneAndUpdate(
-      { clerkUserId: req.userId },
-      update,
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    ).select('-resumeFile.data -pendingResumeFile.data').lean()
-
-    // Promote the parked file if the text being saved came from it. The client sends
-    // resumeFileName from the upload response, so a match means "this text is what we
-    // extracted from that file". No match — they pasted text, or uploaded twice and
-    // approved the first — and the stored file would not correspond to the stored
-    // text, so it is cleared rather than kept wrong. A file we cannot trust to match
-    // the words is worse than no file: the formatting path would rebuild their
-    // resume from the wrong layout.
+    // Phase 1 (A30/A31): the promote/clear decision is computed FIRST and folded
+    // into the SAME findOneAndUpdate as the profile + resumeData save. One document,
+    // one update — the reviewed data and its file can no longer land separately.
+    // Decision rules unchanged from before the fold:
+    //  - no fileName on the save → parked stays parked (2026-09-12 rule)
+    //  - parked file matches the saved text's file → promote it (+ layout/compat/blocks)
+    //  - genuine mismatch → clear stored + parked rather than keep a wrong file
+    //    (2026-09-21 rule: a re-save of the already-promoted file matches by name
+    //     and leaves the stored original alone)
     const fileName = str(resumeFileName)
-    const pending = await User.findOne({ clerkUserId: req.userId })
-      .select('pendingResumeFile')
+    const pend = await User.findOne({ clerkUserId: req.userId })
+      .select('pendingResumeFile pendingResumeLayout pendingResumeCompat pendingResumeBlocks resumeFile.name')
       .lean()
-    const parked = pending?.pendingResumeFile
-    // A save that does not mention a file at all (profile-page Save, as opposed to
-    // the onboarding confirm) must not judge the parked upload either way: leave it
-    // parked. Found 2026-09-12: the profile page's Save sent no resumeFileName, hit
-    // the clear branch below, and silently destroyed the upload it followed.
+    const parked = pend?.pendingResumeFile
+    const fileSet = {}
+    const fileUnset = {}
     if (!fileName) {
       // no promotion, no clearing — parked data stays parked
     } else if (parked?.data && parked.name === fileName) {
-      const pl = await User.findOne({ clerkUserId: req.userId }).select('pendingResumeLayout pendingResumeCompat pendingResumeBlocks').lean()
-      const setDoc = { resumeFile: parked }
-      if (pl?.pendingResumeLayout) setDoc.resumeLayout = pl.pendingResumeLayout
-      if (pl?.pendingResumeCompat) setDoc.resumeCompat = pl.pendingResumeCompat
-      if (pl?.pendingResumeBlocks) setDoc.resumeBlocks = pl.pendingResumeBlocks
-      await User.updateOne(
-        { clerkUserId: req.userId },
-        { $set: setDoc, $unset: {
-          pendingResumeFile: 1, pendingResumeLayout: 1, pendingResumeCompat: 1, pendingResumeBlocks: 1,
-          ...(pl?.pendingResumeLayout ? {} : { resumeLayout: 1 }),
-          ...(pl?.pendingResumeCompat ? {} : { resumeCompat: 1 }),
-          ...(pl?.pendingResumeBlocks ? {} : { resumeBlocks: 1 }),
-        } },
-      )
-    } else if (parked?.data || (user?.resumeFile?.name && user.resumeFile.name !== fileName)) {
-      // Clear only on a genuine mismatch: a parked upload from a DIFFERENT file than
-      // the text being saved, or a stored original whose name no longer matches the
-      // saved text's file. An ordinary re-save of the already-promoted file (every
-      // profile-page Save after the first) matches by name and must leave the stored
-      // original alone. Found 2026-09-21: the old unconditional clear meant any save
-      // after promotion silently destroyed the original file — "View original" 404'd.
-      await User.updateOne(
-        { clerkUserId: req.userId },
-        { $unset: { resumeFile: 1, pendingResumeFile: 1, resumeLayout: 1, pendingResumeLayout: 1, resumeCompat: 1, pendingResumeCompat: 1, resumeBlocks: 1, pendingResumeBlocks: 1 } },
-      )
+      fileSet.resumeFile = parked
+      if (pend?.pendingResumeLayout) fileSet.resumeLayout = pend.pendingResumeLayout; else fileUnset.resumeLayout = 1
+      if (pend?.pendingResumeCompat) fileSet.resumeCompat = pend.pendingResumeCompat; else fileUnset.resumeCompat = 1
+      if (pend?.pendingResumeBlocks) fileSet.resumeBlocks = pend.pendingResumeBlocks; else fileUnset.resumeBlocks = 1
+      Object.assign(fileUnset, { pendingResumeFile: 1, pendingResumeLayout: 1, pendingResumeCompat: 1, pendingResumeBlocks: 1 })
+    } else if (parked?.data || (pend?.resumeFile?.name && pend.resumeFile.name !== fileName)) {
+      Object.assign(fileUnset, { resumeFile: 1, pendingResumeFile: 1, resumeLayout: 1, pendingResumeLayout: 1, resumeCompat: 1, pendingResumeCompat: 1, resumeBlocks: 1, pendingResumeBlocks: 1 })
     }
+
+    const user = await User.findOneAndUpdate(
+      { clerkUserId: req.userId },
+      { $set: { ...update, ...fileSet }, ...(Object.keys(fileUnset).length ? { $unset: fileUnset } : {}) },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    ).select('-resumeFile.data -pendingResumeFile.data').lean()
+
+    // Phase 1: the save consumes the draft — confirmed or superseded either way.
+    try { await ResumeDraft.deleteOne({ clerkUserId: req.userId }) } catch {}
 
     // Drives the board banner. These are things a resume DOES normally state, so an
     // empty one means extraction went wrong — a scrambled two-column PDF, say — not
