@@ -3453,20 +3453,27 @@ function assessCompleteness(text, data, baseline) {
 // the exact character range of rawText it came from, so every later repair is
 // auditable and reversible, and verification can always reach raw evidence.
 // No user-visible behavior change in this chunk; nothing reads these fields yet.
+// OFFSET SEMANTICS (recruiter closure item 2, 2026-09-23): rawStart/rawEnd are
+// UTF-16 CODE-UNIT offsets — the native indexing of JavaScript strings, i.e.
+// exactly what String.prototype.slice consumes. Declared and versioned here so
+// the representation is fixed, not implied. Line boundaries sit only at '\n'
+// (U+000A), which can never fall inside a surrogate pair or split a combining
+// sequence, so slicing at these offsets is always well-formed; a preceding
+// '\r' from CRLF input stays inside its line's range and reconstructs exactly.
 function buildLineMap(text) {
-  const map = []
+  const lines = []
   let offset = 0
   for (const line of String(text || '').split('\n')) {
-    map.push({ line: map.length, rawStart: offset, rawEnd: offset + line.length, joined: false })
+    lines.push({ line: lines.length, rawStart: offset, rawEnd: offset + line.length, joined: false })
     offset += line.length + 1 // the '\n' consumed by split
   }
-  return map
+  return { v: 1, units: 'utf16-code-units', lines }
 }
 
 function draftEvidenceFields(text) {
   const lineMap = buildLineMap(text)
   // Evidence line per recruiter rules: byte and line counts only, never content.
-  console.log(`chunk1 evidence: rawText=${Buffer.byteLength(String(text || ''))}B lines=${lineMap.length} joined=0 (identity map)`)
+  console.log(`chunk1 evidence: rawText=${Buffer.byteLength(String(text || ''))}B lines=${lineMap.lines.length} joined=0 (identity map, ${lineMap.units} v${lineMap.v})`)
   return { rawText: String(text || ''), lineMap }
 }
 
@@ -3801,22 +3808,34 @@ app.post('/me/resume/analyze', requireUser, async (req, res) => {
 // a reload restores what the person TYPED, not just the parse. Only the draft
 // changes — the active profile is untouched until the save. Contact fields are
 // whitelisted; resumeData passes the same sanitize gate as the parser's output.
+// Draft-sync whitelist (recruiter closure item 1): the ONLY fields a client
+// can ever write into a draft are the sanitized parsed data and the profile
+// fields below. rawText, lineMap, text, verification, draftId, baseVersion and
+// everything else are structurally unreachable — an attempted override is
+// silently dropped here, before any database operation. Extracted as a named
+// function so the immutability self-test exercises the REAL production
+// whitelist, not a copy.
+function buildDraftSyncSet(body) {
+  const set = {}
+  if (body?.resumeData) {
+    const rd = sanitizeResumeData(body.resumeData)
+    if (rd) set.resumeData = rd
+  }
+  if (body?.profile && typeof body.profile === 'object') {
+    const p = body.profile
+    const str = v => (typeof v === 'string' ? v.trim().slice(0, 200) : '')
+    set.profile = {
+      firstName: str(p.firstName), lastName: str(p.lastName), email: str(p.email),
+      location: str(p.location), phone: str(p.phone), linkedin: str(p.linkedin),
+      github: str(p.github), portfolio: str(p.portfolio),
+    }
+  }
+  return set
+}
+
 app.post('/me/resume/draft', requireUser, async (req, res) => {
   try {
-    const set = {}
-    if (req.body?.resumeData) {
-      const rd = sanitizeResumeData(req.body.resumeData)
-      if (rd) set.resumeData = rd
-    }
-    if (req.body?.profile && typeof req.body.profile === 'object') {
-      const p = req.body.profile
-      const str = v => (typeof v === 'string' ? v.trim().slice(0, 200) : '')
-      set.profile = {
-        firstName: str(p.firstName), lastName: str(p.lastName), email: str(p.email),
-        location: str(p.location), phone: str(p.phone), linkedin: str(p.linkedin),
-        github: str(p.github), portfolio: str(p.portfolio),
-      }
-    }
+    const set = buildDraftSyncSet(req.body)
     if (!Object.keys(set).length) return res.status(400).json({ error: 'Nothing to update.' })
     const r = await ResumeDraft.updateOne({ clerkUserId: req.userId }, { $set: set })
     // matchedCount 0 = no pending draft (expired or discarded); the client treats
