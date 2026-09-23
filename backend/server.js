@@ -3539,12 +3539,31 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
       // error BEFORE anything is written. The active resume is untouched either way.
       const [cur] = await User.aggregate([
         { $match: { clerkUserId: req.userId } },
-        { $project: { s: { $bsonSize: '$$ROOT' }, v: { $ifNull: ['$resumeVersion', 0] } } },
+        { $project: {
+          s: { $bsonSize: '$$ROOT' },
+          // The existing parked payload, measured exactly. A new upload
+          // atomically REPLACES the parked slot, so its current occupant must
+          // not count against the projection (2026-09-23, recruiter catch: the
+          // old math double-counted active + old parked + new file and could
+          // falsely reject valid replacement uploads).
+          p: { $bsonSize: {
+            f: { $ifNull: ['$pendingResumeFile', null] },
+            l: { $ifNull: ['$pendingResumeLayout', null] },
+            c: { $ifNull: ['$pendingResumeCompat', null] },
+            b: { $ifNull: ['$pendingResumeBlocks', null] },
+          } },
+          v: { $ifNull: ['$resumeVersion', 0] },
+        } },
       ])
       const currentBytes = cur?.s || 0
+      const pendingBytes = cur?.p || 0
       const baseVersion = cur?.v || 0
-      const projected = currentBytes + req.file.size + Math.min(req.file.size * 2, 2 * 1024 * 1024) + 512 * 1024
-      if (projected > 13.5 * 1024 * 1024) {
+      const baseBytes = Math.max(0, currentBytes - pendingBytes)
+      const ceilingBytes = 13.5 * 1024 * 1024
+      const projected = baseBytes + req.file.size + Math.min(req.file.size * 2, 2 * 1024 * 1024) + 512 * 1024
+      // Sizes only — no content, no PII (recruiter-requested evidence line).
+      console.log(`size guard: current=${(currentBytes / 1048576).toFixed(2)}MiB pendingReplaced=${(pendingBytes / 1048576).toFixed(2)}MiB projected=${(projected / 1048576).toFixed(2)}MiB limit=${(ceilingBytes / 1048576).toFixed(2)}MiB -> ${projected > ceilingBytes ? 'reject' : 'ok'}`)
+      if (projected > ceilingBytes) {
         return res.status(413).json({ error: 'This file would put your profile over its storage limit. Please upload a smaller resume — under 2MB always fits.' })
       }
       const draftId = randomUUID()
