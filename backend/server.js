@@ -3389,7 +3389,14 @@ function completenessKey(line) {
   if (/certification/.test(h)) return 'certifications'
   return null
 }
-function assessCompleteness(text, data) {
+// baseline (2026-09-23, recruiter gate correction): the ORIGINAL parse from the
+// draft. With it, the effective capture per section is max(submitted, baseline),
+// which separates the two removers of content: extraction loss (text shows more
+// than the parse ever had) gates down to ONE missing bullet and stays gated
+// until the user restores the content or explicitly acknowledges; a user
+// deletion in review (submitted < parse) is intentional and never gates at
+// bullet level. Whole-entry deletions are handled by entryDeletionNotices.
+function assessCompleteness(text, data, baseline) {
   if (!text || !data) return []
   const spans = {}
   let cur = null
@@ -3402,11 +3409,16 @@ function assessCompleteness(text, data) {
     spans[cur].lines++
     if (/^[\u2022\u25aa\u25cf\u00b7*o\-\u2013\u2014]\s+/.test(line)) spans[cur].bullets++
   }
-  const parsedBullets = {
-    summary: (data.summaryBullets || []).length,
-    experience: (data.experience || []).reduce((n, j) => n + (j.bullets || []).length, 0),
-    projects: (data.projects || []).reduce((n, p) => n + (p.bullets || []).length, 0),
-  }
+  const countBullets = d => ({
+    summary: ((d || {}).summaryBullets || []).length,
+    experience: ((d || {}).experience || []).reduce((n, j) => n + (j.bullets || []).length, 0),
+    projects: ((d || {}).projects || []).reduce((n, p) => n + (p.bullets || []).length, 0),
+  })
+  const own = countBullets(data)
+  const base = baseline ? countBullets(baseline) : null
+  const parsedBullets = base
+    ? { summary: Math.max(own.summary, base.summary), experience: Math.max(own.experience, base.experience), projects: Math.max(own.projects, base.projects) }
+    : own
   const parsedHas = {
     summary: !!(data.summary || (data.summaryBullets || []).length),
     skills: !!(data.skills || []).length,
@@ -3423,8 +3435,32 @@ function assessCompleteness(text, data) {
       continue
     }
     const want = span.bullets, got = parsedBullets[key]
-    if (got !== undefined && want >= 2 && want - got >= 2) {
-      notices.push({ section: key, message: `Your resume shows about ${want} bullet points under ${key} — ${got} were captured. Please check for missing lines.` })
+    // Strict threshold (recruiter correction): ONE unexplained missing bullet
+    // gates. The max() above already excuses intentional review deletions.
+    if (got !== undefined && want >= 1 && want - got >= 1) {
+      notices.push({ section: key, message: `Your resume shows about ${want} bullet point${want === 1 ? '' : 's'} under ${key} — ${got} ${got === 1 ? 'was' : 'were'} captured. Please check for missing lines.` })
+    }
+  }
+  return notices
+}
+
+// Entry-level deletions (2026-09-23, recruiter rule): a whole job, project,
+// education entry or certification removed in review ALWAYS needs the explicit
+// "stay out" acknowledgment, regardless of bullet counts — silent disappearance
+// of an entry is never assumed intentional.
+function entryDeletionNotices(baseline, submitted) {
+  if (!baseline) return []
+  const count = (d, k) => (((d || {})[k]) || []).length
+  const labels = { experience: 'experience entr', projects: 'project', education: 'education entr', certifications: 'certification' }
+  const notices = []
+  for (const key of Object.keys(labels)) {
+    const before = count(baseline, key), after = count(submitted, key)
+    if (after < before) {
+      const n = before - after
+      const noun = key === 'experience' || key === 'education'
+        ? labels[key] + (n === 1 ? 'y' : 'ies')
+        : labels[key] + (n === 1 ? '' : 's')
+      notices.push({ section: key, message: `${n} ${noun} from your uploaded resume ${n === 1 ? 'is' : 'are'} no longer in this profile — restore ${n === 1 ? 'it' : 'them'}, or confirm ${n === 1 ? 'it' : 'they'} should stay out.` })
     }
   }
   return notices
@@ -3873,8 +3909,12 @@ app.post('/me/profile', requireUser, async (req, res) => {
     // which is recorded on the save. Server-side so a raw API call can't skip it.
     let ackSections = null
     if (draftDoc) {
-      const draftText = (await ResumeDraft.findOne({ clerkUserId: req.userId }).select('text').lean())?.text || ''
-      const remaining = draftText ? assessCompleteness(draftText, sanitizeResumeData(resumeData) || {}) : []
+      const draftFull = await ResumeDraft.findOne({ clerkUserId: req.userId }).select('text resumeData').lean()
+      const draftText = draftFull?.text || ''
+      const submittedClean = sanitizeResumeData(resumeData) || {}
+      const entryNotices = entryDeletionNotices(draftFull?.resumeData, submittedClean)
+      const bulletNotices = draftText ? assessCompleteness(draftText, submittedClean, draftFull?.resumeData) : []
+      const remaining = [...entryNotices, ...bulletNotices.filter(b => !entryNotices.some(e => e.section === b.section))]
       if (remaining.length && req.body?.completenessAck !== true) {
         return res.status(422).json({
           error: 'Some sections look under-captured. Fix them, or confirm the missing content should stay out.',
