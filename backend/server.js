@@ -3126,6 +3126,8 @@ const resumeDraftSchema = new mongoose.Schema({
   resumeData:   mongoose.Schema.Types.Mixed,   // structured sections as parsed
   verification: mongoose.Schema.Types.Mixed,
   completeness: mongoose.Schema.Types.Mixed,   // section-level capture warnings
+  rawText:      { type: String, default: '' }, // Phase 2 chunk 1: immutable extractor output
+  lineMap:      mongoose.Schema.Types.Mixed,   // per parsing-input line -> raw character range
   draftId:      { type: String, default: '' }, // shared with the parked file (orphan sweep)
   baseVersion:  { type: Number, default: 0 },  // user's resumeVersion when this draft was made
   createdAt:    { type: Date, default: Date.now, expires: 60 * 60 * 24 },
@@ -3444,6 +3446,30 @@ function assessCompleteness(text, data, baseline) {
   return notices
 }
 
+// ── PHASE 2 CHUNK 1: EVIDENCE PRESERVATION (2026-09-23) ─────────────────────
+// rawText is the immutable extractor output. The draft's `text` field remains
+// the parsing input — today byte-identical to rawText; the future line-repair
+// chunk makes it the normalized form. lineMap records, per parsing-input line,
+// the exact character range of rawText it came from, so every later repair is
+// auditable and reversible, and verification can always reach raw evidence.
+// No user-visible behavior change in this chunk; nothing reads these fields yet.
+function buildLineMap(text) {
+  const map = []
+  let offset = 0
+  for (const line of String(text || '').split('\n')) {
+    map.push({ line: map.length, rawStart: offset, rawEnd: offset + line.length, joined: false })
+    offset += line.length + 1 // the '\n' consumed by split
+  }
+  return map
+}
+
+function draftEvidenceFields(text) {
+  const lineMap = buildLineMap(text)
+  // Evidence line per recruiter rules: byte and line counts only, never content.
+  console.log(`chunk1 evidence: rawText=${Buffer.byteLength(String(text || ''))}B lines=${lineMap.length} joined=0 (identity map)`)
+  return { rawText: String(text || ''), lineMap }
+}
+
 // Entry-level deletions (2026-09-23, recruiter rule): a whole job, project,
 // education entry or certification removed in review ALWAYS needs the explicit
 // "stay out" acknowledgment, regardless of bullet counts — silent disappearance
@@ -3658,6 +3684,7 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
             { clerkUserId: req.userId, fileName: req.file.originalname, text, pages: pages || 0,
               profile: profile || null, resumeData: structured.data || null,
               verification: structured.verification || null, completeness,
+              ...draftEvidenceFields(text),
               draftId, baseVersion, createdAt: new Date() },
             { upsert: true },
           )
@@ -3744,6 +3771,7 @@ app.post('/me/resume/analyze', requireUser, async (req, res) => {
           { clerkUserId: req.userId, fileName: '', text, pages: 0,
             profile: profile || null, resumeData: structured.data || null,
             verification: structured.verification || null, completeness,
+            ...draftEvidenceFields(text),
             draftId: randomUUID(), baseVersion: uv?.resumeVersion || 0, createdAt: new Date() },
           { upsert: true },
         )
