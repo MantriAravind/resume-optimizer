@@ -115,6 +115,9 @@ const CSS = `
 .pf-leave-box h3{margin:0 0 6px;font-size:16.5px}
 .pf-leave-box p{margin:0 0 16px;font-size:13.5px;color:var(--body);line-height:1.5}
 .pf-leave-btns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.pf-ack-list{margin:0 0 16px;padding-left:18px;font-size:13px;color:#7A5D00;line-height:1.5}
+.pf-ack-list li{margin-bottom:6px}
+.pf-snav .pf-needs{color:#B45309;font-style:normal;font-weight:800}
 .pf-fgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 13px}
 .pf-req{color:var(--red);margin-left:2px}
 
@@ -285,6 +288,7 @@ export default function ProfilePage() {
   const [draftId, setDraftId] = useState('')
   const [dirtySections, setDirtySections] = useState([])
   const [leaveAsk, setLeaveAsk] = useState(null)
+  const [ackAsk, setAckAsk] = useState(null)
 
   const [tab, setTab] = useState('overview')
   const [section, setSection] = useState('contact')
@@ -534,7 +538,7 @@ export default function ProfilePage() {
   // fired right after setRd would otherwise post the PRE-edit state (found 2026-09-21:
   // a deleted bullet reappeared on refresh). Callers that just changed state pass the
   // exact object they set.
-  async function handleSave(msg, rdNext, profileNext) {
+  async function handleSave(msg, rdNext, profileNext, ack) {
     if (!resumeText.trim()) { setError('Your resume text is empty — replace your resume first.'); return }
     const rdUse = rdNext !== undefined ? rdNext : rd
     const profileUse = profileNext !== undefined ? profileNext : profile
@@ -559,6 +563,7 @@ export default function ProfilePage() {
         // Confirmation saves name their draft; the server 409s if that draft was
         // consumed or replaced by another tab (the stale-tab hole, 2026-09-22).
         draftId: pendingUpload ? draftId : undefined,
+        completenessAck: ack === true ? true : undefined,
         resumeData: rdUse ? { ...rdUse, skills: cleanSkills(rdUse.skills) } : null,
       }
       const res = await fetch(`${BACKEND}/me/profile`, {
@@ -567,6 +572,14 @@ export default function ProfilePage() {
         body: JSON.stringify(body),
       })
       const data = await res.json().catch(() => ({}))
+      if (res.status === 422 && data.needsAck) {
+        // Confirm-gate: the server re-checked the submitted data against the
+        // resume text and sections still look under-captured. Show the explicit
+        // fix-or-acknowledge choice instead of a bare error.
+        if (Array.isArray(data.completeness)) setRdNotices(data.completeness)
+        setAckAsk({ msg })
+        return
+      }
       if (!res.ok) { setError(data.error || 'Could not save. Please try again.'); return }
       if (rdUse) setRd({ ...rdUse, skills: cleanSkills(rdUse.skills) })
       setSaved(true)
@@ -777,6 +790,22 @@ export default function ProfilePage() {
         <style>{CSS}</style>
         <div className={`pf-toast ${toast ? 'show' : ''}`}>{toast}</div>
 
+        {ackAsk && (
+          <div className="pf-leave-overlay">
+            <div className="pf-leave-box">
+              <h3>Some sections may be incomplete</h3>
+              <p>Before this resume counts, these need a look:</p>
+              <ul className="pf-ack-list">
+                {rdNotices.map((n, i) => <li key={i}>{n.message}</li>)}
+              </ul>
+              <div className="pf-leave-btns">
+                <button className="pf-btn primary" onClick={() => setAckAsk(null)}>Go back and fix</button>
+                <button className="pf-btn" onClick={() => { const a = ackAsk; setAckAsk(null); handleSave(a.msg, undefined, undefined, true) }}>The missing content should stay out — save</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {leaveAsk && (
           <div className="pf-leave-overlay">
             <div className="pf-leave-box">
@@ -962,7 +991,7 @@ export default function ProfilePage() {
                 <nav className="pf-snav" aria-label="Resume sections">
                   {SECTIONS.map(([id, label]) => (
                     <button key={id} className={section === id ? 'on' : ''} onClick={() => guardedSection(id)}>
-                      {label} {has[id] && <em>✓</em>}
+                      {label} {rdNotices.some(n => n.section === id) ? <em className="pf-needs">!</em> : (has[id] && <em>✓</em>)}
                     </button>
                   ))}
                 </nav>

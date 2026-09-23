@@ -315,6 +315,9 @@ const userSchema = new mongoose.Schema({
   // they were created from; a confirmation whose base version no longer matches
   // is stale and is rejected with 409 instead of overwriting newer data.
   resumeVersion: { type: Number, default: 0 },
+  // Recruiter point 5: when a user confirms a save despite under-captured
+  // sections, the explicit acknowledgment is recorded here (when + which).
+  completenessAck: mongoose.Schema.Types.Mixed,
   // A7: the resume's own layout, read from the PDF at upload (pdfLayout.mjs). Lines
   // with alignment, indents, font, bold/italic, size, links. Follows the file:
   // pending until the profile is confirmed, then promoted.
@@ -3856,6 +3859,24 @@ app.post('/me/profile', requireUser, async (req, res) => {
     if (claimedDraftId && (!draftDoc || draftDoc.draftId !== claimedDraftId)) {
       return res.status(409).json({ error: 'This review is out of date — a newer resume was saved since it was opened. Refresh the page to see the current one.' })
     }
+
+    // Completeness confirm-gate (2026-09-22, recruiter point 5): an under-captured
+    // section cannot be confirmed silently. The check runs against the SUBMITTED
+    // data, not the original parse — a user who fixed the section passes with no
+    // ceremony; remaining gaps need the explicit "leave it out" acknowledgment,
+    // which is recorded on the save. Server-side so a raw API call can't skip it.
+    let ackSections = null
+    if (draftDoc) {
+      const draftText = (await ResumeDraft.findOne({ clerkUserId: req.userId }).select('text').lean())?.text || ''
+      const remaining = draftText ? assessCompleteness(draftText, sanitizeResumeData(resumeData) || {}) : []
+      if (remaining.length && req.body?.completenessAck !== true) {
+        return res.status(422).json({
+          error: 'Some sections look under-captured. Fix them, or confirm the missing content should stay out.',
+          completeness: remaining, needsAck: true,
+        })
+      }
+      if (remaining.length) ackSections = remaining.map(n => n.section)
+    }
     const pend = await User.findOne({ clerkUserId: req.userId })
       .select('pendingResumeFile pendingResumeLayout pendingResumeCompat pendingResumeBlocks resumeFile.name resumeVersion')
       .lean()
@@ -3882,7 +3903,7 @@ app.post('/me/profile', requireUser, async (req, res) => {
     }
     const user = await User.findOneAndUpdate(
       filter,
-      { $set: { ...update, ...fileSet }, ...(Object.keys(fileUnset).length ? { $unset: fileUnset } : {}), $inc: { resumeVersion: 1 } },
+      { $set: { ...update, ...fileSet, ...(ackSections ? { completenessAck: { at: new Date(), sections: ackSections } } : {}) }, ...(Object.keys(fileUnset).length ? { $unset: fileUnset } : {}), $inc: { resumeVersion: 1 } },
       // upsert only when no draft guards the save: a guarded filter that matches
       // nothing must FAIL, never create a document.
       { upsert: !guardActive, new: true, setDefaultsOnInsert: true },
