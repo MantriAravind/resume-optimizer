@@ -94,6 +94,12 @@ app.use(clerkMiddleware())
 // ── MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('✅ Connected to MongoDB'))
+  // TTL lives in a DATABASE INDEX, created once — editing the schema's `expires`
+  // does nothing to an existing collection (found 2026-09-23: a test draft kept
+  // its 24h clock despite a 120s schema). syncIndexes reconciles the index with
+  // the schema on every boot, so the deployed value always wins.
+  .then(() => ResumeDraft.syncIndexes())
+  .then(() => console.log('draft TTL index synced to schema'))
   .catch(err => console.error('❌ MongoDB connection error:', err))
 
 // ── Job Schema
