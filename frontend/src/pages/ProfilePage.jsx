@@ -282,6 +282,7 @@ export default function ProfilePage() {
   const [rdCheck, setRdCheck] = useState(null)
   const [rdNotices, setRdNotices] = useState([])
   const [dirty, setDirty] = useState(false)
+  const [draftId, setDraftId] = useState('')
   const [dirtySections, setDirtySections] = useState([])
   const [leaveAsk, setLeaveAsk] = useState(null)
 
@@ -383,6 +384,7 @@ export default function ProfilePage() {
           setRd(d.resumeData || null)
           setRdCheck(d.verification || null)
           setRdNotices(Array.isArray(d.completeness) ? d.completeness : [])
+          setDraftId(d.draftId || '')
           setSaved(false)
           setPendingUpload(true)
           setTab('resume'); setSection('contact')
@@ -432,6 +434,7 @@ export default function ProfilePage() {
       setRd(data.resumeData || null)
       setRdCheck(data.resumeDataVerification || null)
       setRdNotices(Array.isArray(data.completeness) ? data.completeness : [])
+      setDraftId(data.draftId || '')
       setReplacing(false)
       setSaved(false)
       setEditingExp(null); setEditingProj(null)
@@ -498,6 +501,7 @@ export default function ProfilePage() {
     setRdNotices([])
     setDirty(false)
     setDirtySections([])
+    setDraftId('')
     setLoading(true)
     try {
       const token = await getToken()
@@ -552,6 +556,9 @@ export default function ProfilePage() {
       const token = await getToken()
       const body = {
         resumeText, resumeFileName: fileName, profile: profileUse,
+        // Confirmation saves name their draft; the server 409s if that draft was
+        // consumed or replaced by another tab (the stale-tab hole, 2026-09-22).
+        draftId: pendingUpload ? draftId : undefined,
         resumeData: rdUse ? { ...rdUse, skills: cleanSkills(rdUse.skills) } : null,
       }
       const res = await fetch(`${BACKEND}/me/profile`, {
@@ -567,6 +574,7 @@ export default function ProfilePage() {
       setRdNotices([])
       setDirty(false)
       setDirtySections([])
+      setDraftId('')
       setUpdatedAt(data.updatedAt)
       ping(msg || 'Changes saved')
       setTimeout(() => setSaved(false), 3000)
@@ -880,7 +888,7 @@ export default function ProfilePage() {
                         onDrop={e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files?.[0]) }}>
                         <div className="ic">📄</div>
                         <div className="t">{uploading ? 'Reading…' : 'Drop a new resume, or click to choose'}</div>
-                        <div className="h">PDF or Word · up to 10MB</div>
+                        <div className="h">PDF or Word · up to 5MB</div>
                       </div>
                       <input ref={inputRef} type="file" accept=".pdf,.doc,.docx" style={{ display: 'none' }}
                         onChange={e => handleFile(e.target.files?.[0])} />

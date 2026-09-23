@@ -5,6 +5,7 @@ import dotenv from 'dotenv'
 import OpenAI from 'openai'
 import { CATEGORIES, categorizeJob } from './jobCategory.mjs'
 import multer from 'multer'
+import { randomUUID } from 'crypto'
 import { extractText, assessExtraction } from './resumeExtract.mjs'
 import { readPdfLayout } from './pdfLayout.mjs'
 import { checkPdfCompat } from './pdfCompat.mjs'
@@ -308,7 +309,12 @@ const userSchema = new mongoose.Schema({
     mime:       { type: String, default: '' },
     size:       { type: Number, default: 0 },
     uploadedAt: { type: Date },
+    draftId:    { type: String, default: '' },   // ties the parked file to its draft (orphan sweep)
   },
+  // Incremented atomically on every confirmed save. Drafts record the version
+  // they were created from; a confirmation whose base version no longer matches
+  // is stale and is rejected with 409 instead of overwriting newer data.
+  resumeVersion: { type: Number, default: 0 },
   // A7: the resume's own layout, read from the PDF at upload (pdfLayout.mjs). Lines
   // with alignment, indents, font, bold/italic, size, links. Follows the file:
   // pending until the profile is confirmed, then promoted.
@@ -678,6 +684,32 @@ app.get('/me/resume', requireUser, async (req, res) => {
     // page opens straight into review with these values instead of losing them
     // to the reload.
     const draft = await ResumeDraft.findOne({ clerkUserId: userId }).lean()
+
+    // Orphan sweep (2026-09-22, recruiter point 2): the draft TTL-expires in its
+    // own collection, but the parked file lives here in the user document where
+    // TTL cannot reach it. Lazy sweep with the agreed race protection: remove a
+    // parked file only when its draftId has NO matching draft, it is older than
+    // a 10-minute grace period (so the sweep can never run between parking and
+    // draft creation), and the guarded unset matches that same draftId — a newer
+    // upload's file can never be removed on stale information. Legacy parked
+    // files without a draftId sweep on a 24h grace instead.
+    const parkedInfo = user?.pendingResumeFile
+    if (parkedInfo?.uploadedAt) {
+      const ageMs = Date.now() - new Date(parkedInfo.uploadedAt).getTime()
+      const pid = parkedInfo.draftId || ''
+      const orphan = pid ? (!draft || draft.draftId !== pid) && ageMs > 10 * 60 * 1000
+                         : !draft && ageMs > 24 * 60 * 60 * 1000
+      if (orphan) {
+        try {
+          await User.updateOne(
+            pid ? { clerkUserId: userId, 'pendingResumeFile.draftId': pid }
+                : { clerkUserId: userId, 'pendingResumeFile.uploadedAt': parkedInfo.uploadedAt },
+            { $unset: { pendingResumeFile: 1, pendingResumeLayout: 1, pendingResumeCompat: 1, pendingResumeBlocks: 1 } },
+          )
+          console.log('orphan sweep: removed expired parked file (draft gone)')
+        } catch (e) { console.warn('orphan sweep failed:', e.message) }
+      }
+    }
     res.json({
       hasResume:      Boolean(user?.resumeText),
       resumeText:     user?.resumeText     || '',
@@ -701,7 +733,7 @@ app.get('/me/resume', requireUser, async (req, res) => {
         fileName: draft.fileName || '', text: draft.text || '',
         profile: draft.profile || null, resumeData: draft.resumeData || null,
         verification: draft.verification || null, completeness: draft.completeness || [],
-        createdAt: draft.createdAt || null,
+        draftId: draft.draftId || '', createdAt: draft.createdAt || null,
       } : null,
     })
   } catch (error) {
@@ -861,7 +893,7 @@ async function roleMatch(resumeTitle, jobTitle) {
     const fb = String(parsed.b || '').toLowerCase().trim()
     if (!fa || !fb) throw new Error('empty family in reply: ' + cleaned)
     const verdict = fa === fb
-    console.log(`roleMatch: "${resumeTitle}" [${fa}] vs "${jobTitle}" [${fb}] -> ${verdict ? 'same family' : 'different'}`)
+    console.log(`roleMatch: [titles omitted] ${fa} vs ${fb} -> ${verdict ? 'same family' : 'different'}`)
     return verdict
   } catch (e) {
     // Loud on purpose. Unknown awards the full 20, so a silent failure here inflates
@@ -1066,7 +1098,7 @@ Respond in this exact JSON format with no extra text:
     }
     if (dropped.length) console.log('extract: dropped ' + dropped.length + ' non-skill(s): ' + dropped.join(' | '))
     if (notInPosting.length) console.log('extract: model listed ' + notInPosting.length + ' term(s) NOT in the posting (resume-anchored), dropped: ' + notInPosting.join(' | '))
-    if (overclaimed.length) console.log('extract: model said present, not in resume, moved to missing: ' + overclaimed.join(' | '))
+    if (overclaimed.length) console.log('extract: model said present, not in resume, moved to missing: ' + overclaimed.length + ' keyword(s)')
     // nano lists 15 on a long posting despite "6-10". The model orders by importance,
     // so the tail is the least important; 12 is enough for a tap list and keeps one
     // skill worth more than 2 points.
@@ -2162,7 +2194,7 @@ Return ONLY JSON: {"summary": string, "jobs": [[string,...],...], "projectBullet
   } else {
     degraded = true
     optimized = structuredClone(rd)
-    console.error('optimize-structured: gate never passed, shipping profile + code-placed skills. Last violations: ' + gateLog.slice(0, 6).join(' | '))
+    console.error('optimize-structured: gate never passed, shipping profile + code-placed skills. ' + gateLog.length + ' violation(s) across attempts')
     feedback = 'We kept your resume wording as it is and added your confirmed skills to the skills section.'
     changes = []
   }
@@ -2180,7 +2212,7 @@ Return ONLY JSON: {"summary": string, "jobs": [[string,...],...], "projectBullet
       let extra = optimized.skills.find(s => s.label === 'Additional Skills')
       if (!extra) { extra = { label: 'Additional Skills', items: [] }; optimized.skills.push(extra) }
       for (const a of novel) if (!extra.items.some(x => normTok(x) === normTok(a))) extra.items.push(a)
-      console.log('optimize-structured: code-placed confirmed skill atom(s): ' + novel.join(', '))
+      console.log('optimize-structured: code-placed confirmed skill atom(s): ' + novel.length)
     }
   }
   return { optimized, feedback, changes, degraded }
@@ -3062,7 +3094,7 @@ Respond in this exact JSON format with no extra text:
 // a wrong file through costs them ten seconds — they see the wrong jobs and know.
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 },
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = /\.(pdf|docx|doc)$/i.test(file.originalname)
     cb(ok ? null : new Error('Please upload a PDF or Word file.'), ok)
@@ -3085,6 +3117,8 @@ const resumeDraftSchema = new mongoose.Schema({
   resumeData:   mongoose.Schema.Types.Mixed,   // structured sections as parsed
   verification: mongoose.Schema.Types.Mixed,
   completeness: mongoose.Schema.Types.Mixed,   // section-level capture warnings
+  draftId:      { type: String, default: '' }, // shared with the parked file (orphan sweep)
+  baseVersion:  { type: Number, default: 0 },  // user's resumeVersion when this draft was made
   createdAt:    { type: Date, default: Date.now, expires: 60 * 60 * 24 },
 })
 const ResumeDraft = mongoose.model('ResumeDraft', resumeDraftSchema)
@@ -3436,7 +3470,9 @@ async function parseAndVerifyResume(resumeText) {
       if (rv.violations.length < verification.violations.length) { data = retry; verification = rv }
     }
   }
-  if (!verification.ok) console.warn('resume parse verification final:', verification.violations.join(' | '))
+  // Logs carry field paths only — never resume text (recruiter logging rule).
+  // The full violation text still reaches the USER in the review banner.
+  if (!verification.ok) console.warn('resume parse verification final:', verification.violations.map(v => String(v).split(':')[0].trim()).join(', '))
   return { data, verification }
 }
 
@@ -3444,13 +3480,30 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
   upload.single('resume')(req, res, async err => {
     if (err) {
       const msg = err.code === 'LIMIT_FILE_SIZE'
-        ? 'That file is over 10MB. Please upload a smaller one.'
+        ? 'That file is over 5MB. Please upload a smaller one — resumes rarely need more than 1MB.'
         : err.message || 'Could not read that file.'
       return res.status(400).json({ error: msg })
     }
     if (!req.file) return res.status(400).json({ error: 'No file received.' })
 
     try {
+      // BSON size guard (2026-09-22): files embed in the user document, whose hard
+      // limit is 16 MiB. Before parking, project the final size — the document as
+      // it stands plus the new file plus generous room for extracted text and the
+      // parsed sections — against a 13.5 MiB ceiling, and reject with a clear
+      // error BEFORE anything is written. The active resume is untouched either way.
+      const [cur] = await User.aggregate([
+        { $match: { clerkUserId: req.userId } },
+        { $project: { s: { $bsonSize: '$$ROOT' }, v: { $ifNull: ['$resumeVersion', 0] } } },
+      ])
+      const currentBytes = cur?.s || 0
+      const baseVersion = cur?.v || 0
+      const projected = currentBytes + req.file.size + Math.min(req.file.size * 2, 2 * 1024 * 1024) + 512 * 1024
+      if (projected > 13.5 * 1024 * 1024) {
+        return res.status(413).json({ error: 'This file would put your profile over its storage limit. Please upload a smaller resume — under 2MB always fits.' })
+      }
+      const draftId = randomUUID()
+
       // Park the file before reading it. If extraction fails the student may retry with
       // a different file, and this is simply overwritten. It is promoted to resumeFile
       // only when /me/profile receives approved text carrying this same file name.
@@ -3462,6 +3515,7 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
           mime:       req.file.mimetype || '',
           size:       req.file.size,
           uploadedAt: new Date(),
+          draftId,
         } } },
         { upsert: true },
       )
@@ -3539,7 +3593,8 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
             { clerkUserId: req.userId },
             { clerkUserId: req.userId, fileName: req.file.originalname, text, pages: pages || 0,
               profile: profile || null, resumeData: structured.data || null,
-              verification: structured.verification || null, completeness, createdAt: new Date() },
+              verification: structured.verification || null, completeness,
+              draftId, baseVersion, createdAt: new Date() },
             { upsert: true },
           )
         } catch (e) { console.warn('resume draft save failed:', e.message) }
@@ -3561,6 +3616,7 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
         resumeData: structured.data,
         resumeDataVerification: structured.verification,
         completeness,
+        draftId,
         // A7-S2: the fallback sentence, if any, so the client can show it at upload
         compat: compat ? { mode: compat.mode, reason: compat.reason, message: compat.message } : null,
       })
@@ -3618,11 +3674,13 @@ app.post('/me/resume/analyze', requireUser, async (req, res) => {
     const completeness = suspect ? [] : assessCompleteness(text, structured.data)
     if (!suspect) {
       try {
+        const uv = await User.findOne({ clerkUserId: req.userId }).select('resumeVersion').lean()
         await ResumeDraft.findOneAndUpdate(
           { clerkUserId: req.userId },
           { clerkUserId: req.userId, fileName: '', text, pages: 0,
             profile: profile || null, resumeData: structured.data || null,
-            verification: structured.verification || null, completeness, createdAt: new Date() },
+            verification: structured.verification || null, completeness,
+            draftId: randomUUID(), baseVersion: uv?.resumeVersion || 0, createdAt: new Date() },
           { upsert: true },
         )
       } catch (e) { console.warn('resume draft save failed:', e.message) }
@@ -3781,8 +3839,25 @@ app.post('/me/profile', requireUser, async (req, res) => {
     //    (2026-09-21 rule: a re-save of the already-promoted file matches by name
     //     and leaves the stored original alone)
     const fileName = str(resumeFileName)
+    // Version guard (2026-09-22, recruiter point 3): while a draft exists, the save
+    // is a confirmation and must be pinned to the resume version the draft was made
+    // from. The guarded update below checks the version and increments it in the
+    // SAME operation; a stale draft (another tab confirmed first) matches nothing,
+    // writes nothing, and returns 409.
+    const draftDoc = await ResumeDraft.findOne({ clerkUserId: req.userId })
+      .select('draftId baseVersion fileName').lean()
+    // A save carrying draftId is a confirmation of THAT draft. If the draft no
+    // longer exists (another tab confirmed it — consumed) or a different draft
+    // replaced it (another tab uploaded again), this confirmation is stale even
+    // though no draft guards the version filter below. Found 2026-09-22: after
+    // consumption the guard went inactive and a stale tab could save as an
+    // ordinary write. The id check closes that gap.
+    const claimedDraftId = str(req.body?.draftId || '')
+    if (claimedDraftId && (!draftDoc || draftDoc.draftId !== claimedDraftId)) {
+      return res.status(409).json({ error: 'This review is out of date — a newer resume was saved since it was opened. Refresh the page to see the current one.' })
+    }
     const pend = await User.findOne({ clerkUserId: req.userId })
-      .select('pendingResumeFile pendingResumeLayout pendingResumeCompat pendingResumeBlocks resumeFile.name')
+      .select('pendingResumeFile pendingResumeLayout pendingResumeCompat pendingResumeBlocks resumeFile.name resumeVersion')
       .lean()
     const parked = pend?.pendingResumeFile
     const fileSet = {}
@@ -3799,11 +3874,27 @@ app.post('/me/profile', requireUser, async (req, res) => {
       Object.assign(fileUnset, { resumeFile: 1, pendingResumeFile: 1, resumeLayout: 1, pendingResumeLayout: 1, resumeCompat: 1, pendingResumeCompat: 1, resumeBlocks: 1, pendingResumeBlocks: 1 })
     }
 
+    const guardActive = !!draftDoc
+    const filter = { clerkUserId: req.userId }
+    if (guardActive) {
+      const bv = draftDoc.baseVersion || 0
+      filter.$or = [{ resumeVersion: bv }, ...(bv === 0 ? [{ resumeVersion: { $exists: false } }] : [])]
+    }
     const user = await User.findOneAndUpdate(
-      { clerkUserId: req.userId },
-      { $set: { ...update, ...fileSet }, ...(Object.keys(fileUnset).length ? { $unset: fileUnset } : {}) },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+      filter,
+      { $set: { ...update, ...fileSet }, ...(Object.keys(fileUnset).length ? { $unset: fileUnset } : {}), $inc: { resumeVersion: 1 } },
+      // upsert only when no draft guards the save: a guarded filter that matches
+      // nothing must FAIL, never create a document.
+      { upsert: !guardActive, new: true, setDefaultsOnInsert: true },
     ).select('-resumeFile.data -pendingResumeFile.data').lean()
+
+    if (!user && guardActive) {
+      // Stale confirmation: a newer resume was saved after this draft was made.
+      // The stale draft is consumed (deleted) so a refresh shows the current
+      // resume instead of restoring the outdated review.
+      try { await ResumeDraft.deleteOne({ clerkUserId: req.userId, draftId: draftDoc.draftId }) } catch {}
+      return res.status(409).json({ error: 'This review is out of date — a newer resume was saved since it was opened. Refresh the page to see the current one.' })
+    }
 
     // Phase 1: the save consumes the draft — confirmed or superseded either way.
     try { await ResumeDraft.deleteOne({ clerkUserId: req.userId }) } catch {}
