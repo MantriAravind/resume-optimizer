@@ -309,6 +309,31 @@ async function runRegressionSuite() {
     const mapped = v.violations.map(x => String(x).split(':')[0].trim()).join(', ')
     ok('R11 violation log mapping emits field paths only', !v.ok && mapped === 'name' && !/ZZZ-INVENTED/.test(mapped))
 
+    // R12 — draft schema-version compatibility (chunk 2 step 1)
+    // (a) a legacy draft with NO version field (inserted raw, bypassing schema
+    // defaults — also no rawText/lineMap, i.e. a genuine pre-chunk-1 draft)
+    // remains fully reviewable and confirmable through the current path.
+    await ResumeDraft.deleteOne({ clerkUserId: uidA })
+    const ftext = fixtureLines().join('\n')
+    const uvNow = (await User.findOne({ clerkUserId: uidA }).select('resumeVersion').lean())?.resumeVersion || 0
+    const legacyId = 'legacy-' + randomUUID().slice(0, 8)
+    await ResumeDraft.collection.insertOne({ clerkUserId: uidA, fileName: 'sentinel.pdf', text: ftext, resumeData: stubStructuredFromText(ftext), draftId: legacyId, baseVersion: uvNow, createdAt: new Date() })
+    const legacyConfirm = await jpost('/me/profile', uidA, confirmBody(ftext, stubStructuredFromText(ftext), legacyId))
+    ok('R12 legacy pre-versioning draft (no version field, no chunk-1 fields) confirms normally', legacyConfirm.status === 200)
+    // (b) a FUTURE-version draft: confirmation and edit-sync both 409, draft
+    // left intact for the newer path, active resume and version untouched.
+    const uvSnap = await User.findOne({ clerkUserId: uidA }).select('resumeVersion resumeText').lean()
+    const futId = 'future-' + randomUUID().slice(0, 8)
+    await ResumeDraft.collection.insertOne({ clerkUserId: uidA, fileName: 'sentinel.pdf', text: ftext, resumeData: stubStructuredFromText(ftext), draftId: futId, baseVersion: uvSnap?.resumeVersion || 0, draftSchemaVersion: 99, createdAt: new Date() })
+    const futConfirm = await jpost('/me/profile', uidA, confirmBody(ftext, stubStructuredFromText(ftext), futId))
+    const futDraftStill = await ResumeDraft.findOne({ clerkUserId: uidA, draftId: futId }).lean()
+    const uvAfter = await User.findOne({ clerkUserId: uidA }).select('resumeVersion resumeText').lean()
+    ok('R12 future-version draft: confirmation 409, draft intact, active resume + version untouched', futConfirm.status === 409 && !!futDraftStill && uvAfter.resumeVersion === uvSnap.resumeVersion && uvAfter.resumeText === uvSnap.resumeText)
+    const futSync = await jpost('/me/resume/draft', uidA, { resumeData: { summary: 'sync should not land' } })
+    const futUntouched = await ResumeDraft.findOne({ clerkUserId: uidA, draftId: futId }).lean()
+    ok('R12 future-version draft: edit-sync 409, draft unmodified', futSync.status === 409 && futUntouched?.resumeData?.summary !== 'sync should not land')
+    await ResumeDraft.deleteOne({ clerkUserId: uidA })
+
     const pass = results.filter(Boolean).length
     console.log('\u2500\u2500 regression suite: ' + pass + '/' + results.length + ' PASS ' + (pass === results.length ? '\u2014 ALL GREEN' : '\u2014 FAILURES ABOVE') + ' \u2500\u2500')
     process.exitCode = pass === results.length ? 0 : 1

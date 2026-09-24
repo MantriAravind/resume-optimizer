@@ -3146,6 +3146,7 @@ const resumeDraftSchema = new mongoose.Schema({
   completeness: mongoose.Schema.Types.Mixed,   // section-level capture warnings
   rawText:      { type: String, default: '' }, // Phase 2 chunk 1: immutable extractor output
   lineMap:      mongoose.Schema.Types.Mixed,   // per parsing-input line -> raw character range
+  draftSchemaVersion: { type: Number, default: 1 }, // Phase 2 chunk 2: draft shape version; write + confirm paths gate on it
   draftId:      { type: String, default: '' }, // shared with the parked file (orphan sweep)
   baseVersion:  { type: Number, default: 0 },  // user's resumeVersion when this draft was made
   createdAt:    { type: Date, default: Date.now, expires: 60 * 60 * 24 },
@@ -3492,7 +3493,9 @@ function draftEvidenceFields(text) {
   const lineMap = buildLineMap(text)
   // Evidence line per recruiter rules: byte and line counts only, never content.
   console.log(`chunk1 evidence: rawText=${Buffer.byteLength(String(text || ''))}B lines=${lineMap.lines.length} joined=0 (identity map, ${lineMap.units} v${lineMap.v})`)
-  return { rawText: String(text || ''), lineMap }
+  // draftSchemaVersion 1 = the current draft shape. The schema-v2 chunk bumps
+  // this to 2 ONLY when it writes the new envelope shape; readers gate on it.
+  return { rawText: String(text || ''), lineMap, draftSchemaVersion: 1 }
 }
 
 // Entry-level deletions (2026-09-23, recruiter rule): a whole job, project,
@@ -3855,7 +3858,16 @@ app.post('/me/resume/draft', requireUser, async (req, res) => {
   try {
     const set = buildDraftSyncSet(req.body)
     if (!Object.keys(set).length) return res.status(400).json({ error: 'Nothing to update.' })
-    const r = await ResumeDraft.updateOne({ clerkUserId: req.userId }, { $set: set })
+    // Schema-version gate (chunk 2): v1-shaped edits must never land inside a
+    // newer draft. Read gives the clear error; the $or filter guarantees it
+    // even against a racing newer write.
+    const gate = await ResumeDraft.findOne({ clerkUserId: req.userId }).select('draftSchemaVersion').lean()
+    if (gate && (gate.draftSchemaVersion ?? 1) > 1) {
+      return res.status(409).json({ error: 'This review was created by a newer version of Optyply than this server can edit. Please refresh the page.' })
+    }
+    const r = await ResumeDraft.updateOne(
+      { clerkUserId: req.userId, $or: [{ draftSchemaVersion: null }, { draftSchemaVersion: { $lte: 1 } }] },
+      { $set: set })
     // matchedCount 0 = no pending draft (expired or discarded); the client treats
     // that as harmless — the next upload starts a fresh one.
     res.json({ updated: r.matchedCount > 0 })
@@ -3974,7 +3986,7 @@ app.post('/me/profile', requireUser, async (req, res) => {
     // SAME operation; a stale draft (another tab confirmed first) matches nothing,
     // writes nothing, and returns 409.
     const draftDoc = await ResumeDraft.findOne({ clerkUserId: req.userId })
-      .select('draftId baseVersion fileName').lean()
+      .select('draftId baseVersion fileName draftSchemaVersion').lean()
     // A save carrying draftId is a confirmation of THAT draft. If the draft no
     // longer exists (another tab confirmed it — consumed) or a different draft
     // replaced it (another tab uploaded again), this confirmation is stale even
@@ -3984,6 +3996,18 @@ app.post('/me/profile', requireUser, async (req, res) => {
     const claimedDraftId = str(req.body?.draftId || '')
     if (claimedDraftId && (!draftDoc || draftDoc.draftId !== claimedDraftId)) {
       return res.status(409).json({ error: 'This review is out of date — a newer resume was saved since it was opened. Refresh the page to see the current one.' })
+    }
+
+    // Draft schema-version gate (Phase 2 chunk 2, recruiter compat case b):
+    // this confirmation path understands draft shapes up to version 1. A draft
+    // written by a NEWER deployment is never interpreted here — explicit
+    // restart state, draft left in place for the newer path, active resume
+    // untouched. A missing version means a legacy pre-versioning draft, which
+    // this path fully supports (compat case a).
+    const SUPPORTED_DRAFT_SCHEMA = 1
+    if (draftDoc && (draftDoc.draftSchemaVersion ?? 1) > SUPPORTED_DRAFT_SCHEMA) {
+      console.log(`draft schema gate: version=${draftDoc.draftSchemaVersion} supported<=${SUPPORTED_DRAFT_SCHEMA} -> 409`)
+      return res.status(409).json({ error: 'This review was created by a newer version of Optyply than this server can save. Please refresh the page and upload your resume again — your saved resume is unaffected.' })
     }
 
     // Completeness confirm-gate (2026-09-22, recruiter point 5): an under-captured
