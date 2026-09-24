@@ -91,6 +91,19 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }))
 app.use(clerkMiddleware())
 
+// Production fail-closed guard (recruiter chunk-1 condition 1, 2026-09-24):
+// this file is the production entry point and contains no test bypass of any
+// kind; as defense in depth it also REFUSES TO START if any test-only
+// environment variable is present, so a test configuration can never reach a
+// production process even by accident. The regression harness runs only via
+// the committed generator in test/, which produces a separate, gitignored
+// entry point.
+const TEST_ONLY_ENV = ['TEST_AUTH_BYPASS_SECRET', 'TEST_STUB_PARSE', 'REGRESSION_SUITE', 'SIZE_CEILING_TEST_MIB', 'SWEEP_CONCURRENCY_TEST', 'DRAFT_IMMUTABILITY_TEST'].filter(k => process.env[k] !== undefined)
+if (TEST_ONLY_ENV.length) {
+  console.error('FATAL: test-only environment variables set on the production entry point: ' + TEST_ONLY_ENV.join(', ') + ' — refusing to start.')
+  process.exit(1)
+}
+
 // ── MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('✅ Connected to MongoDB'))
