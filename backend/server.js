@@ -3342,6 +3342,139 @@ function sanitizeResumeData(d) {
   return out
 }
 
+// ── PHASE 2 CHUNK 2 STEP 2: SCHEMA V2 VALIDATOR (2026-09-24) ───────────────
+// Pure gatekeeper for model payloads under the v2 rules. NOT WIRED YET — the
+// v1 path and sanitizeResumeData are untouched; this function is exercised by
+// unit fixtures and the harness until step 4 wires it behind the chunk-2 flag.
+//
+// Philosophy vs the v1 sanitizer (recruiter corrections 4 + 5):
+//   • NOTHING is ever truncated. Declared limits exist, but exceeding them
+//     records an `oversize` issue for the Needs Review / preservation path —
+//     the content itself is kept whole. slice() appears nowhere here.
+//   • Unknown fields and invalid types REJECT the payload (ok:false) so the
+//     parse can be retried once and then fail explicitly — never a partial
+//     draft pretending to be a success.
+//   • Scalar absence is explicit: null means not_found. Empty strings and the
+//     literal string "null" normalize to null, never silently to ''.
+//   • Skill ATOMS dedupe case-insensitively within their category (recorded
+//     as `duplicate_atom` issues). RECORDS never dedupe — two similar-looking
+//     jobs or certifications both survive, per correction 5.
+//   • Whitespace normalization (collapse internal runs, trim) is retained: a
+//     single-line field carrying a raw newline is a render defect, and the
+//     collapse is reversible-in-principle via provenance, unlike deletion.
+const SCHEMA_V2 = {
+  limits: {
+    string: 600, contact: 8, summaryBullets: 8, skills: 12, skillItems: 40,
+    experience: 12, expBullets: 15, projects: 10, projBullets: 12, tech: 12,
+    education: 6, certifications: 12, extraSections: 6, extraEntries: 8, extraBullets: 10,
+    payloadBytes: 400000,
+  },
+}
+
+function validateResumeDataV2(raw) {
+  const issues = []
+  const push = (path, code) => issues.push({ path, code })
+  const L = SCHEMA_V2.limits
+  const isStr = v => typeof v === 'string'
+  const clean = v => {
+    if (v === null || v === undefined) return null
+    if (!isStr(v)) return undefined // type error, caller records
+    const t = v.replace(/[\s\u00a0]+/g, ' ').trim()
+    return (!t || t.toLowerCase() === 'null') ? null : t
+  }
+  const scalar = (v, path) => {
+    const c = clean(v)
+    if (c === undefined) { push(path, 'invalid_type'); return null }
+    if (c !== null && c.length > L.string) push(path, 'oversize')
+    return c
+  }
+  const strArray = (v, path, cap) => {
+    if (v === null || v === undefined) return []
+    if (!Array.isArray(v)) { push(path, 'invalid_type'); return [] }
+    if (v.length > cap) push(path, 'oversize')
+    const out = []
+    v.forEach((x, i) => {
+      const c = clean(x)
+      if (c === undefined) push(path + '[' + i + ']', 'invalid_type')
+      else if (c !== null) { if (c.length > L.string) push(path + '[' + i + ']', 'oversize'); out.push(c) }
+    })
+    return out
+  }
+  const objArray = (v, path, cap, allowed, build) => {
+    if (v === null || v === undefined) return []
+    if (!Array.isArray(v)) { push(path, 'invalid_type'); return [] }
+    if (v.length > cap) push(path, 'oversize')
+    const out = []
+    v.forEach((x, i) => {
+      const p = path + '[' + i + ']'
+      if (!x || typeof x !== 'object' || Array.isArray(x)) { push(p, 'invalid_type'); return }
+      for (const k of Object.keys(x)) if (!allowed.includes(k)) push(p + '.' + k, 'unknown_field')
+      out.push(build(x, p))
+    })
+    return out
+  }
+  const dedupeAtoms = (items, path) => {
+    const seen = new Map()
+    const out = []
+    for (const it of items) {
+      const key = it.toLowerCase()
+      if (seen.has(key)) push(path, 'duplicate_atom')
+      else { seen.set(key, true); out.push(it) }
+    }
+    return out
+  }
+
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ok: false, data: null, issues: [{ path: '$', code: 'invalid_type' }] }
+  }
+  try {
+    if (JSON.stringify(raw).length > L.payloadBytes) {
+      return { ok: false, data: null, issues: [{ path: '$', code: 'oversize' }] }
+    }
+  } catch { return { ok: false, data: null, issues: [{ path: '$', code: 'invalid_type' }] } }
+
+  const TOP = ['name', 'contact', 'summary', 'summaryBullets', 'skills', 'experience', 'projects', 'education', 'certifications', 'extraSections']
+  for (const k of Object.keys(raw)) if (!TOP.includes(k)) push('$.' + k, 'unknown_field')
+
+  const data = {
+    name: scalar(raw.name, '$.name'),
+    contact: strArray(raw.contact, '$.contact', L.contact),
+    summary: scalar(raw.summary, '$.summary'),
+    summaryBullets: strArray(raw.summaryBullets, '$.summaryBullets', L.summaryBullets),
+    skills: objArray(raw.skills, '$.skills', L.skills, ['label', 'items'], (x, p) => ({
+      label: scalar(x.label, p + '.label'),
+      items: dedupeAtoms(strArray(x.items, p + '.items', L.skillItems), p + '.items'),
+    })),
+    experience: objArray(raw.experience, '$.experience', L.experience, ['title', 'company', 'city', 'dates', 'bullets'], (x, p) => ({
+      title: scalar(x.title, p + '.title'), company: scalar(x.company, p + '.company'),
+      city: scalar(x.city, p + '.city'), dates: scalar(x.dates, p + '.dates'),
+      bullets: strArray(x.bullets, p + '.bullets', L.expBullets),
+    })),
+    projects: objArray(raw.projects, '$.projects', L.projects, ['name', 'tech', 'dates', 'github', 'bullets'], (x, p) => ({
+      name: scalar(x.name, p + '.name'), tech: strArray(x.tech, p + '.tech', L.tech),
+      dates: scalar(x.dates, p + '.dates'), github: scalar(x.github, p + '.github'),
+      bullets: strArray(x.bullets, p + '.bullets', L.projBullets),
+    })),
+    education: objArray(raw.education, '$.education', L.education, ['degree', 'school', 'city', 'dates', 'gpa'], (x, p) => ({
+      degree: scalar(x.degree, p + '.degree'), school: scalar(x.school, p + '.school'),
+      city: scalar(x.city, p + '.city'), dates: scalar(x.dates, p + '.dates'), gpa: scalar(x.gpa, p + '.gpa'),
+    })),
+    certifications: objArray(raw.certifications, '$.certifications', L.certifications, ['name', 'org', 'date'], (x, p) => ({
+      name: scalar(x.name, p + '.name'), org: scalar(x.org, p + '.org'), date: scalar(x.date, p + '.date'),
+    })),
+    extraSections: objArray(raw.extraSections, '$.extraSections', L.extraSections, ['heading', 'entries'], (x, p) => ({
+      heading: scalar(x.heading, p + '.heading'),
+      entries: objArray(x.entries, p + '.entries', L.extraEntries, ['title', 'details', 'bullets'], (e, q) => ({
+        title: scalar(e.title, q + '.title'), details: scalar(e.details, q + '.details'),
+        bullets: strArray(e.bullets, q + '.bullets', L.extraBullets),
+      })),
+    })),
+  }
+  // Records are NEVER deduplicated — by design, no code exists for it here.
+  const rejected = issues.some(i => i.code === 'unknown_field' || i.code === 'invalid_type')
+  return { ok: !rejected, data: rejected ? null : data, issues }
+}
+
 // The copy-never-write rule, enforced: every substantive parsed string must exist in
 // the source text (whitespace/case-normalized). Violations are reported per field so
 // the review screen can flag exactly what needs the user's eyes — parsed content is
