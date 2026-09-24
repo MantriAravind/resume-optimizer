@@ -679,6 +679,27 @@ app.get('/', (req, res) => {
 })
 
 // ── ME / RESUME — the logged-in user's saved resume
+// Extracted 2026-09-23 so the regression harness exercises the REAL sweep
+// (conditions + guarded delete), not a copy. Logic unchanged. Returns
+// 'removed' | 'kept' | 'none' for the harness; the route ignores the value.
+async function sweepOrphanParkedFile(userId, parkedInfo, draft) {
+  if (!parkedInfo?.uploadedAt) return 'none'
+  const ageMs = Date.now() - new Date(parkedInfo.uploadedAt).getTime()
+  const pid = parkedInfo.draftId || ''
+  const orphan = pid ? (!draft || draft.draftId !== pid) && ageMs > 10 * 60 * 1000
+                     : !draft && ageMs > 24 * 60 * 60 * 1000
+  if (!orphan) return 'kept'
+  try {
+    await User.updateOne(
+      pid ? { clerkUserId: userId, 'pendingResumeFile.draftId': pid }
+          : { clerkUserId: userId, 'pendingResumeFile.uploadedAt': parkedInfo.uploadedAt },
+      { $unset: { pendingResumeFile: 1, pendingResumeLayout: 1, pendingResumeCompat: 1, pendingResumeBlocks: 1 } },
+    )
+    console.log('orphan sweep: removed expired parked file (draft gone)')
+    return 'removed'
+  } catch (e) { console.warn('orphan sweep failed:', e.message); return 'kept' }
+}
+
 app.get('/me/resume', requireUser, async (req, res) => {
   try {
     const userId = req.userId
@@ -702,23 +723,7 @@ app.get('/me/resume', requireUser, async (req, res) => {
     // draft creation), and the guarded unset matches that same draftId — a newer
     // upload's file can never be removed on stale information. Legacy parked
     // files without a draftId sweep on a 24h grace instead.
-    const parkedInfo = user?.pendingResumeFile
-    if (parkedInfo?.uploadedAt) {
-      const ageMs = Date.now() - new Date(parkedInfo.uploadedAt).getTime()
-      const pid = parkedInfo.draftId || ''
-      const orphan = pid ? (!draft || draft.draftId !== pid) && ageMs > 10 * 60 * 1000
-                         : !draft && ageMs > 24 * 60 * 60 * 1000
-      if (orphan) {
-        try {
-          await User.updateOne(
-            pid ? { clerkUserId: userId, 'pendingResumeFile.draftId': pid }
-                : { clerkUserId: userId, 'pendingResumeFile.uploadedAt': parkedInfo.uploadedAt },
-            { $unset: { pendingResumeFile: 1, pendingResumeLayout: 1, pendingResumeCompat: 1, pendingResumeBlocks: 1 } },
-          )
-          console.log('orphan sweep: removed expired parked file (draft gone)')
-        } catch (e) { console.warn('orphan sweep failed:', e.message) }
-      }
-    }
+    await sweepOrphanParkedFile(userId, user?.pendingResumeFile, draft)
     res.json({
       hasResume:      Boolean(user?.resumeText),
       resumeText:     user?.resumeText     || '',
