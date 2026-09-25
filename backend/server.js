@@ -5,7 +5,7 @@ import dotenv from 'dotenv'
 import OpenAI from 'openai'
 import { CATEGORIES, categorizeJob } from './jobCategory.mjs'
 import multer from 'multer'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash } from 'crypto'
 import { extractText, assessExtraction } from './resumeExtract.mjs'
 import { readPdfLayout } from './pdfLayout.mjs'
 import { checkPdfCompat } from './pdfCompat.mjs'
@@ -3473,6 +3473,184 @@ function validateResumeDataV2(raw) {
   // Records are NEVER deduplicated — by design, no code exists for it here.
   const rejected = issues.some(i => i.code === 'unknown_field' || i.code === 'invalid_type')
   return { ok: !rejected, data: rejected ? null : data, issues }
+}
+
+// ── PHASE 2 CHUNK 2 STEP 3: FIELD ENVELOPES / PROVENANCE (2026-09-25) ───────
+// buildFieldMetaV2 computes, for every field of a v2-validated parse, the
+// envelope the approved plan defines (§1 + correction 6):
+//   extractionMethod   model | deterministic | annotation | user  ("ocr" reserved)
+//   verificationStatus verified | needs_review | not_found   ("conflict" is
+//                      produced by the link chunk; never emitted here)
+//   reasonCode         source_mismatch | null
+//   sourceRef          { draftId, page, startLine, endLine, rawStart, rawEnd,
+//                        section, scoped } | null   — offsets are UTF-16 code
+//                      units into the IMMUTABLE rawText (lineMap v1 semantics)
+//   valueSha           12-hex sha256 of the value; the value itself is NOT
+//                      duplicated here. A consumer whose current value hashes
+//                      differently knows the envelope is stale (user edit).
+// NOT WIRED YET — pure function, proven by fixtures; step 4 wires it.
+//
+// Design rules:
+//   • Provenance IS the check. A value is `verified` only when it is located
+//     in rawText INSIDE the section its path belongs to (contact/name → the
+//     header before the first recognized heading; experience.* → the
+//     experience section; …). Found only in another section → needs_review
+//     with sourceRef pointing where it was actually found (the AWS-1 case:
+//     a job's city pulled into contact). Found nowhere → needs_review, null ref.
+//   • Deliberately independent of verifyResumeData's violation list, which is
+//     capped at 30 entries: deriving status from it would silently mark
+//     field #31+ verified.
+//   • Covers every field, including the v1 verifier's blind spots (skills,
+//     dates, cities, certifications, project names/tech).
+//   • Matching: case/whitespace/quote-normalized first, with word boundaries
+//     (so "Go" never matches inside "Google"); then, for values ≥ 8 chars, a
+//     hyphen/dash/whitespace-insensitive pass that tolerates wrap damage and
+//     en-dash/hyphen variance — the resulting range can span several lines.
+//   • Explicit absence: every null scalar and every empty declared array gets
+//     a not_found envelope. Nothing is carried forward from any prior parse.
+//   • If the expected section's heading is not detected, the search falls back
+//     to the whole document and the ref is marked scoped:false (a known
+//     limitation until heading aliases land).
+const FIELD_META_VERSION = 1
+
+function locateSectionSpans(rawText) {
+  const spans = { header: [] }
+  const text = String(rawText || '')
+  let off = 0, cur = 'header', curStart = 0, sawHeading = false
+  const close = end => { if (end > curStart) (spans[cur] = spans[cur] || []).push({ s: curStart, e: end }) }
+  for (const line of text.split('\n')) {
+    const key = completenessKey(line.replace(/\r$/, ''))
+    if (key) { close(off); cur = key; curStart = off + line.length + 1; sawHeading = true }
+    off += line.length + 1
+  }
+  close(text.length)
+  return { spans, sawHeading }
+}
+
+function buildNormIndex(raw, flat) {
+  // Returns the normalized string plus a map from each normalized char index
+  // to its raw UTF-16 index, so matches translate back to exact raw offsets.
+  let str = '', map = [], prevSpace = true
+  for (let i = 0; i < raw.length; i++) {
+    let c = raw[i]
+    if (/[\s ]/.test(c)) {
+      if (flat) continue
+      if (prevSpace) continue
+      str += ' '; map.push(i); prevSpace = true; continue
+    }
+    if (flat && /[‐-―-]/.test(c)) continue
+    if (c === '‘' || c === '’') c = "'"
+    else if (c === '“' || c === '”') c = '"'
+    const lc = c.toLowerCase()
+    for (let k = 0; k < lc.length; k++) { str += lc[k]; map.push(i) }
+    prevSpace = false
+  }
+  return { str, map }
+}
+
+function normValue(v, flat) { return buildNormIndex(String(v), flat).str.trim() }
+
+function buildFieldMetaV2(data, rawText, lineMap, opts = {}) {
+  const raw = String(rawText || '')
+  const lines = (lineMap && Array.isArray(lineMap.lines)) ? lineMap.lines : buildLineMap(raw).lines
+  const { spans, sawHeading } = locateSectionSpans(raw)
+  const N = buildNormIndex(raw, false), F = buildNormIndex(raw, true)
+  const methods = opts.methods || {}
+  const sha = v => createHash('sha256').update(String(v), 'utf8').digest('hex').slice(0, 12)
+  const alnum = ch => !!ch && /[\p{L}\p{N}]/u.test(ch)
+  const lineAt = pos => {
+    let lo = 0, hi = lines.length - 1
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (lines[mid].rawStart <= pos) lo = mid; else hi = mid - 1 }
+    return lines[lo] ? lines[lo].line : 0
+  }
+  const sectionAt = pos => {
+    for (const [k, list] of Object.entries(spans)) if (list.some(x => pos >= x.s && pos < x.e)) return k
+    return null
+  }
+  const inSpans = (pos, list) => list.some(x => pos >= x.s && pos < x.e)
+  const search = (idx, needle, list, boundary) => {
+    if (!needle) return null
+    let from = 0
+    while (true) {
+      const at = idx.str.indexOf(needle, from)
+      if (at === -1) return null
+      const rs = idx.map[at], re = idx.map[at + needle.length - 1] + 1
+      const okB = !boundary || ((!alnum(needle[0]) || !alnum(idx.str[at - 1])) && (!alnum(needle[needle.length - 1]) || !alnum(idx.str[at + needle.length])))
+      if (okB && (!list || inSpans(rs, list))) return { rawStart: rs, rawEnd: re }
+      from = at + 1
+    }
+  }
+  const find = (value, list) => {
+    const n = normValue(value, false)
+    let hit = search(N, n, list, true)
+    if (!hit) { const f = normValue(value, true); if (f.length >= 8) hit = search(F, f, list, false) }
+    return hit
+  }
+  const ref = (hit, scoped) => ({
+    draftId: opts.draftId || null, page: null,
+    startLine: lineAt(hit.rawStart), endLine: lineAt(hit.rawEnd - 1),
+    rawStart: hit.rawStart, rawEnd: hit.rawEnd, section: sectionAt(hit.rawStart), scoped,
+  })
+  const methodFor = path => {
+    let best = null
+    for (const k of Object.keys(methods)) if ((path === k || path.startsWith(k + '[') || path.startsWith(k + '.')) && (!best || k.length > best.length)) best = k
+    return best ? methods[best] : 'model'
+  }
+
+  const meta = []
+  const emit = (path, value, section) => {
+    const extractionMethod = methodFor(path)
+    if (value === null || value === undefined || value === '') {
+      meta.push({ path, extractionMethod, verificationStatus: 'not_found', reasonCode: null, sourceRef: null, valueSha: null })
+      return
+    }
+    const expected = section ? (spans[section] || []) : []
+    const canScope = !!section && sawHeading && expected.length > 0
+    let hit = canScope ? find(value, expected) : null
+    if (hit) { meta.push({ path, extractionMethod, verificationStatus: 'verified', reasonCode: null, sourceRef: ref(hit, true), valueSha: sha(value) }); return }
+    const anywhere = find(value, null)
+    if (anywhere && !canScope) { meta.push({ path, extractionMethod, verificationStatus: 'verified', reasonCode: null, sourceRef: ref(anywhere, false), valueSha: sha(value) }); return }
+    meta.push({ path, extractionMethod, verificationStatus: 'needs_review', reasonCode: 'source_mismatch', sourceRef: anywhere ? ref(anywhere, true) : null, valueSha: sha(value) })
+  }
+  const arr = (path, list, section, each) => {
+    if (!Array.isArray(list) || !list.length) { emit(path, null, section); return }
+    list.forEach((x, i) => each(x, `${path}[${i}]`))
+  }
+  const d = data || {}
+  emit('$.name', d.name, 'header')
+  arr('$.contact', d.contact, 'header', (x, p) => emit(p, x, 'header'))
+  emit('$.summary', d.summary, 'summary')
+  arr('$.summaryBullets', d.summaryBullets, 'summary', (x, p) => emit(p, x, 'summary'))
+  arr('$.skills', d.skills, 'skills', (x, p) => {
+    emit(p + '.label', x.label, 'skills')
+    arr(p + '.items', x.items, 'skills', (y, q) => emit(q, y, 'skills'))
+  })
+  arr('$.experience', d.experience, 'experience', (x, p) => {
+    for (const k of ['title', 'company', 'city', 'dates']) emit(`${p}.${k}`, x[k], 'experience')
+    arr(p + '.bullets', x.bullets, 'experience', (y, q) => emit(q, y, 'experience'))
+  })
+  arr('$.projects', d.projects, 'projects', (x, p) => {
+    for (const k of ['name', 'dates', 'github']) emit(`${p}.${k}`, x[k], 'projects')
+    arr(p + '.tech', x.tech, 'projects', (y, q) => emit(q, y, 'projects'))
+    arr(p + '.bullets', x.bullets, 'projects', (y, q) => emit(q, y, 'projects'))
+  })
+  arr('$.education', d.education, 'education', (x, p) => {
+    for (const k of ['degree', 'school', 'city', 'dates', 'gpa']) emit(`${p}.${k}`, x[k], 'education')
+  })
+  arr('$.certifications', d.certifications, 'certifications', (x, p) => {
+    for (const k of ['name', 'org', 'date']) emit(`${p}.${k}`, x[k], 'certifications')
+  })
+  arr('$.extraSections', d.extraSections, null, (x, p) => {
+    emit(p + '.heading', x.heading, null)
+    arr(p + '.entries', x.entries, null, (e, q) => {
+      emit(q + '.title', e.title, null); emit(q + '.details', e.details, null)
+      arr(q + '.bullets', e.bullets, null, (b, r) => emit(r, b, null))
+    })
+  })
+
+  const counts = { fields: meta.length, verified: 0, needs_review: 0, not_found: 0, conflict: 0 }
+  for (const m of meta) counts[m.verificationStatus]++
+  return { v: FIELD_META_VERSION, entries: meta, counts }
 }
 
 // The copy-never-write rule, enforced: every substantive parsed string must exist in

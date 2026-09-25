@@ -18,6 +18,21 @@ echo $LASTEXITCODE                              # 0 = ALL GREEN, 1 = failures
 Remove-Item Env:REGRESSION_SUITE
 ```
 
+## Unit fixtures (Phase 2 chunk 2)
+
+```powershell
+cd backend
+node test\unit-chunk2.mjs       # no server, no database, no env vars
+echo $LASTEXITCODE               # 0 = all pass, 1 = failures, 2 = server.js drifted
+```
+
+Extracts the real `validateResumeDataV2`, `buildFieldMetaV2` and `buildLineMap`
+from the canonical `server.js` (never copies), then runs the G-series (schema
+v2: unknown fields, invalid types, zero truncation, atom-only dedupe, null
+semantics) and P-series (field envelopes: source ranges, section scoping,
+method/status separation, Unicode/CRLF offsets, no content in envelopes).
+Prints the `server.js` sha256 it tested. All fixture data is synthetic.
+
 ## Test-only environment variables
 
 | Variable | Purpose |

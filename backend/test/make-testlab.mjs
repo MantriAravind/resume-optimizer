@@ -42,9 +42,13 @@ patch('banner', 'Backend server running on',
 patch('fail-closed guard', "].filter(k => process.env[k] !== undefined)\nif (TEST_ONLY_ENV.length) {",
   "].filter(k => process.env[k] !== undefined)\nif (false) { // TESTLAB: production fail-closed guard disabled in the generated test entry point")
 
-// 3. createHash for hash-only evidence
-patch('crypto import', "import { randomUUID } from 'crypto'",
-  "import { randomUUID, createHash } from 'crypto'")
+// 3. createHash — production imports it itself since chunk 2 step 3 (field
+//    envelopes hash values); assert it is present rather than patching it in.
+if (!src.includes("import { randomUUID, createHash } from 'crypto'")) {
+  console.error('GENERATION FAILED at check "crypto import": server.js no longer imports createHash.')
+  process.exit(2)
+}
+applied++
 
 // 4. Auth bypass — exists ONLY in this generated file, secret self-generated per run
 patch('auth bypass', `function requireUser(req, res, next) {
