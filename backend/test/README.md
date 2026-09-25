@@ -33,11 +33,49 @@ semantics) and P-series (field envelopes: source ranges, section scoping,
 method/status separation, Unicode/CRLF offsets, no content in envelopes).
 Prints the `server.js` sha256 it tested. All fixture data is synthetic.
 
+## Production feature switch: `PARSE_V2` (chunk 2)
+
+Not a test variable — a real deployment switch, read on every upload.
+
+| Value | Behavior |
+| --- | --- |
+| unset / `off` / anything unrecognized | pre-chunk-2 pipeline, unchanged |
+| `shadow` | users see exactly the `off` result; schema v2 + field envelopes are computed from the same raw model payload (no extra model calls), stored on the draft under `v2` (never returned to the client), one counts-only log line per upload (`chunk2 shadow: …`) |
+| `on` | v2 decides: rejected or unverified payload → one retry; both rejected → explicit 422 `parse_failed`, no draft, parked file removed. Accepted drafts are stamped `draftSchemaVersion: 2`, which the current confirmation path refuses until the v2-aware confirmation ships. **Local testing only until the reviewer approves activation.** |
+
+Boot prints `parse v2 mode: <mode>`. Rollback = set `PARSE_V2=off` (or remove it) and restart — no data migration.
+
+## Containment: no silent truncation on the v1 path (2026-09-25)
+
+Until the v2-aware confirmation ships, anything the legacy sanitizer would cut is
+**refused, never truncated**: Save and draft autosave return 422
+`content_exceeds_limits` (no write; draft and upload kept; active resume
+unchanged); a parse the legacy caps would shorten records `capLoss` on the draft
+(paths/counts only), shows containment notices in review, and its confirmation is
+blocked even with the completeness acknowledgment. Pre-containment drafts at a
+legacy cap are blocked conservatively. Covered: 600-char fields, every array cap,
+whole-record drops, contact-line 120, autosave profile 200, rescue caps, and the
+24,000-char model input window. Unit C-01..C-10 (C-10: 3,000 seeded random
+payloads, detector ≡ actual v1 loss); harness R14a–i.
+
+## One-time truncation assessment (read-only)
+
+```powershell
+cd backend
+node scripts\audit-truncation.mjs --selftest   # synthetic checks, no database
+node scripts\audit-truncation.mjs --db=prod    # reads MONGODB_URI_PROD; no writes
+```
+
+Prints internal `_id`, field path, stored vs expected count/length, status
+(`affected` / `not_affected` / `undetermined`) and whether re-import is required.
+Never names, emails or résumé text. A value at a cap is only `affected` when the
+profile's own confirmed source text shows it continued.
+
 ## Test-only environment variables
 
 | Variable | Purpose |
 | --- | --- |
-| `REGRESSION_SUITE=1` | run the full R1–R11 suite, then exit with 0/1 |
+| `REGRESSION_SUITE=1` | run the full R1–R14 suite, then exit with 0/1 |
 | `DRAFT_IMMUTABILITY_TEST=1` | rawText lifecycle hash self-test only |
 | `SWEEP_CONCURRENCY_TEST=1` | parallel-cleanup self-test only |
 | `SIZE_CEILING_TEST_MIB=<n>` | compress the BSON ceiling for boundary tests |

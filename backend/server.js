@@ -113,6 +113,11 @@ mongoose.connect(process.env.MONGODB_URI)
   // the schema on every boot, so the deployed value always wins.
   .then(() => ResumeDraft.syncIndexes())
   .then(() => console.log('draft TTL index synced to schema'))
+  .then(() => {
+    const raw = process.env.PARSE_V2
+    const mode = parseV2Mode()
+    console.log(`parse v2 mode: ${mode}` + (raw && String(raw).toLowerCase() !== mode ? ` (unrecognized PARSE_V2="${raw}" treated as off)` : ''))
+  })
   .catch(err => console.error('❌ MongoDB connection error:', err))
 
 // ── Job Schema
@@ -3147,6 +3152,9 @@ const resumeDraftSchema = new mongoose.Schema({
   rawText:      { type: String, default: '' }, // Phase 2 chunk 1: immutable extractor output
   lineMap:      mongoose.Schema.Types.Mixed,   // per parsing-input line -> raw character range
   draftSchemaVersion: { type: Number, default: 1 }, // Phase 2 chunk 2: draft shape version; write + confirm paths gate on it
+  v2:           mongoose.Schema.Types.Mixed,   // chunk 2 step 4: schema-v2 evaluation (shadow or on); never sent to the client
+  capCheck:     { type: Number, default: 0 },  // containment 2026-09-25: 1 = capLoss computed at parse time
+  capLoss:      mongoose.Schema.Types.Mixed,   // [{path, limit, actual}] content the v1 caps would drop — paths/counts only
   draftId:      { type: String, default: '' }, // shared with the parked file (orphan sweep)
   baseVersion:  { type: Number, default: 0 },  // user's resumeVersion when this draft was made
   createdAt:    { type: Date, default: Date.now, expires: 60 * 60 * 24 },
@@ -3227,7 +3235,7 @@ ${resumeText.slice(0, 12000)}`,
 // bullet, title, and date lands in the schema word-for-word as the resume states it.
 // Rewriting happens only at optimize time, in front of the user. The verifier below
 // enforces the rule mechanically; parsing failures never block an upload.
-async function parseResumeStructured(resumeText) {
+async function parseResumeStructured(resumeText, sink) {
   try {
     const replyText = await askModel({
       model: MODEL_EXTRACT,
@@ -3287,6 +3295,9 @@ ${resumeText.slice(0, 24000)}`,
     })
     const raw = replyText.replace(/```json|```/g, '').trim()
     const parsed = JSON.parse(raw)
+    // chunk 2 step 4: the schema-v2 path must see the model's payload BEFORE the
+    // v1 sanitizer caps it; an independent re-parse guarantees no aliasing.
+    if (sink) sink.raw = JSON.parse(raw)
     return sanitizeResumeData(parsed)
   } catch (err) {
     console.error('structured resume parse failed:', err.message)
@@ -3648,9 +3659,158 @@ function buildFieldMetaV2(data, rawText, lineMap, opts = {}) {
     })
   })
 
+  // F10b (2026-09-25): the contact-form fields come from a SEPARATE model read
+  // (readProfileFromResume) and they build the contact line on every generated
+  // resume, so they get the same header-scoped check. Inferred job-board fields
+  // (targetRole, degree, major, yearsExperience, graduationDate, field) are
+  // matching preferences, not resume copy, and are excluded by design.
+  if (opts.profile && typeof opts.profile === 'object') {
+    for (const k of ['firstName', 'lastName', 'email', 'location', 'phone', 'linkedin', 'github']) {
+      emit('$profile.' + k, opts.profile[k] || null, 'header')
+    }
+  }
   const counts = { fields: meta.length, verified: 0, needs_review: 0, not_found: 0, conflict: 0 }
   for (const m of meta) counts[m.verificationStatus]++
   return { v: FIELD_META_VERSION, entries: meta, counts }
+}
+
+// ── CONTAINMENT: NO SILENT TRUNCATION ON THE v1 PATH (2026-09-25) ─────────
+// Reviewer ruling: until the v2-aware confirmation (step 5) ships, the current
+// pipeline must never silently cut resume content. These pure helpers report
+// exactly what sanitizeResumeData / the rescue / the input cap WOULD drop, so
+// the callers can refuse (save, autosave) or block confirmation (parse) instead.
+// Paths and counts only; values are never returned or logged.
+const LEGACY_CAPS = {
+  string: 600, summaryBullets: 8, skills: 12, skillItems: 40, experience: 12, expBullets: 15,
+  projects: 10, projBullets: 12, tech: 12, education: 6, certifications: 12,
+  extraSections: 6, extraEntries: 8, extraBullets: 10,
+  contactLine: 120,   // derived contact-line items at save
+  draftProfile: 200,  // profile fields in the draft autosave
+  rescueSummary: 1200, rescueBullets: 8, modelInput: 24000,
+}
+const STRING_FIELDS = {
+  skills: ['label'], experience: ['title', 'company', 'city', 'dates'], projects: ['name', 'dates', 'github'],
+  education: ['degree', 'school', 'city', 'dates', 'gpa'], certifications: ['name', 'org', 'date'],
+}
+function legacyCapExceed(d) {
+  // Mirrors sanitizeResumeData exactly: arrays are sliced BEFORE empty items are
+  // filtered, so loss = any non-empty item at an index >= cap; strings are
+  // whitespace-collapsed then cut at 600. `contact` is excluded on purpose: the
+  // saved contact line is re-derived from the profile fields at every save.
+  const out = []
+  if (!d || typeof d !== 'object') return out
+  const L = LEGACY_CAPS
+  const collapsed = v => (typeof v === 'string' ? v.replace(/[\s ]+/g, ' ').trim() : '')
+  const nonEmpty = v => (typeof v === 'string' ? !!collapsed(v) && collapsed(v).toLowerCase() !== 'null' : !!v)
+  const str = (v, path) => { const c = collapsed(v); if (c.length > L.string) out.push({ path, limit: L.string, actual: c.length }) }
+  const arr = (v, path, cap, each) => {
+    if (!Array.isArray(v)) return
+    if (v.slice(cap).some(nonEmpty)) out.push({ path, limit: cap, actual: v.filter(nonEmpty).length })
+    v.slice(0, cap).forEach((x, i) => each && each(x, `${path}[${i}]`))
+  }
+  // sanitizeResumeData also DROPS whole records missing their key field(s);
+  // when such a record carries any other content, that is silent loss too.
+  const has = v => Array.isArray(v) ? v.some(nonEmpty) : nonEmpty(v)
+  const dropped = (x, keys, others, p) => {
+    if (x && typeof x === 'object' && !keys.some(k => nonEmpty(x[k])) && others.some(k => has(x[k]))) {
+      out.push({ path: p, limit: 0, actual: 1, reason: 'record_dropped' }); return true
+    }
+    return false
+  }
+  str(d.name, '$.name'); str(d.summary, '$.summary')
+  arr(d.summaryBullets, '$.summaryBullets', L.summaryBullets, (x, p) => str(x, p))
+  arr(d.skills, '$.skills', L.skills, (x, p) => { if (!x || dropped(x, ['label'], ['items'], p)) return; str(x.label, p + '.label'); arr(x.items, p + '.items', L.skillItems, (y, q) => str(y, q)) })
+  arr(d.experience, '$.experience', L.experience, (x, p) => {
+    if (!x || dropped(x, ['title', 'company'], ['city', 'dates', 'bullets'], p)) return; STRING_FIELDS.experience.forEach(k => str(x[k], `${p}.${k}`))
+    arr(x.bullets, p + '.bullets', L.expBullets, (y, q) => str(y, q))
+  })
+  arr(d.projects, '$.projects', L.projects, (x, p) => {
+    if (!x || dropped(x, ['name'], ['tech', 'dates', 'github', 'bullets'], p)) return; STRING_FIELDS.projects.forEach(k => str(x[k], `${p}.${k}`))
+    arr(x.tech, p + '.tech', L.tech, (y, q) => str(y, q)); arr(x.bullets, p + '.bullets', L.projBullets, (y, q) => str(y, q))
+  })
+  arr(d.education, '$.education', L.education, (x, p) => { if (!x || dropped(x, ['degree', 'school'], ['city', 'dates', 'gpa'], p)) return; STRING_FIELDS.education.forEach(k => str(x[k], `${p}.${k}`)) })
+  arr(d.certifications, '$.certifications', L.certifications, (x, p) => { if (!x || dropped(x, ['name'], ['org', 'date'], p)) return; STRING_FIELDS.certifications.forEach(k => str(x[k], `${p}.${k}`)) })
+  arr(d.extraSections, '$.extraSections', L.extraSections, (x, p) => {
+    if (!x || dropped(x, ['heading'], ['entries'], p)) return; str(x.heading, p + '.heading')
+    arr(x.entries, p + '.entries', L.extraEntries, (e, q) => {
+      if (!e) return; str(e.title, q + '.title'); str(e.details, q + '.details')
+      arr(e.bullets, q + '.bullets', L.extraBullets, (b, r) => str(b, r))
+    })
+  })
+  return out
+}
+function profileCapExceed(p, limit, keys) {
+  const out = []
+  if (!p || typeof p !== 'object') return out
+  for (const k of keys) {
+    const v = typeof p[k] === 'string' ? p[k].trim() : ''
+    if (v.length > limit) out.push({ path: '$profile.' + k, limit, actual: v.length })
+  }
+  return out
+}
+// Pre-containment drafts carry no capLoss record, so exact loss is unknowable.
+// Conservative rule for THEM ONLY: anything sitting exactly at a legacy cap is
+// treated as possibly cut (a false positive only asks for a re-upload).
+function legacyAtCap(d) {
+  const out = []
+  if (!d || typeof d !== 'object') return out
+  const L = LEGACY_CAPS
+  const at = (v, cap, path) => { if (Array.isArray(v) && v.length === cap) out.push({ path, limit: cap, actual: cap }) }
+  const s = (v, path) => { if (typeof v === 'string' && (v.length === L.string || v.length === L.rescueSummary)) out.push({ path, limit: v.length, actual: v.length }) }
+  s(d.name, '$.name'); s(d.summary, '$.summary')
+  at(d.summaryBullets, L.summaryBullets, '$.summaryBullets'); (d.summaryBullets || []).forEach((x, i) => s(x, `$.summaryBullets[${i}]`))
+  at(d.skills, L.skills, '$.skills'); (d.skills || []).forEach((x, i) => { if (!x) return; s(x.label, `$.skills[${i}].label`); at(x.items, L.skillItems, `$.skills[${i}].items`); (x.items || []).forEach((y, j) => s(y, `$.skills[${i}].items[${j}]`)) })
+  at(d.experience, L.experience, '$.experience'); (d.experience || []).forEach((x, i) => { if (!x) return; STRING_FIELDS.experience.forEach(k => s(x[k], `$.experience[${i}].${k}`)); at(x.bullets, L.expBullets, `$.experience[${i}].bullets`); (x.bullets || []).forEach((y, j) => s(y, `$.experience[${i}].bullets[${j}]`)) })
+  at(d.projects, L.projects, '$.projects'); (d.projects || []).forEach((x, i) => { if (!x) return; STRING_FIELDS.projects.forEach(k => s(x[k], `$.projects[${i}].${k}`)); at(x.tech, L.tech, `$.projects[${i}].tech`); at(x.bullets, L.projBullets, `$.projects[${i}].bullets`); (x.bullets || []).forEach((y, j) => s(y, `$.projects[${i}].bullets[${j}]`)) })
+  at(d.education, L.education, '$.education'); at(d.certifications, L.certifications, '$.certifications'); at(d.extraSections, L.extraSections, '$.extraSections')
+  ;(d.education || []).forEach((x, i) => { if (x) STRING_FIELDS.education.forEach(k => s(x[k], `$.education[${i}].${k}`)) })
+  ;(d.certifications || []).forEach((x, i) => { if (x) STRING_FIELDS.certifications.forEach(k => s(x[k], `$.certifications[${i}].${k}`)) })
+  return out
+}
+function dedupeByPath(list) {
+  const seen = new Set(); const out = []
+  for (const x of list) if (!seen.has(x.path)) { seen.add(x.path); out.push(x) }
+  return out
+}
+const CONTAIN_SECTION_NAMES = { summary: 'Summary', summaryBullets: 'Summary', skills: 'Skills', experience: 'Experience', projects: 'Projects', education: 'Education', certifications: 'Certifications', extraSections: 'Additional sections', name: 'Name', profile: 'Contact', input: 'Whole resume' }
+function containSections(list) {
+  const names = []
+  for (const x of list) {
+    const key = x.path.startsWith('$profile.') ? 'profile' : x.path === '$input' ? 'input' : (x.path.match(/^\$\.([a-zA-Z]+)/) || [])[1]
+    const nm = CONTAIN_SECTION_NAMES[key] || 'Resume'
+    if (!names.includes(nm)) names.push(nm)
+  }
+  return names
+}
+// Review-screen notices (existing amber mechanism; display only — the save
+// block is enforced server-side and cannot be acknowledged away).
+function containNotices(list) {
+  const bySection = {}
+  for (const x of list) {
+    const key = x.path.startsWith('$profile.') ? 'contact' : x.path === '$input' ? 'summary' : ((x.path.match(/^\$\.([a-zA-Z]+)/) || [])[1] === 'summaryBullets' ? 'summary' : (x.path.match(/^\$\.([a-zA-Z]+)/) || [])[1])
+    if (key && !bySection[key]) bySection[key] = true
+  }
+  return Object.keys(bySection).map(section => ({ section, containment: true,
+    message: 'Part of this section is longer than Optyply can save right now without cutting it, so this resume can’t be saved yet. Nothing has changed in your saved resume. An update that keeps everything is on the way — please upload this resume again after it.' }))
+}
+const CONTAIN_SAVE_MESSAGE = sections => `Some of this resume is longer than Optyply can currently save without cutting it (${sections.join(', ')}), so nothing was saved and your current resume is unchanged. An update that keeps everything is on the way — please try again after it.`
+
+// Projects v2 data into the shape the current review screen reads: null
+// scalars become '' and nothing else changes — no caps, no reordering, no
+// dropped records. Used only when PARSE_V2=on.
+function projectV2ToV1Shape(d) {
+  const s = v => (v === null || v === undefined) ? '' : v
+  const obj = (x, keys) => Object.fromEntries(keys.map(k => [k, Array.isArray(x[k]) ? x[k].slice() : s(x[k])]))
+  if (!d) return null
+  return {
+    name: s(d.name), contact: d.contact.slice(), summary: s(d.summary), summaryBullets: d.summaryBullets.slice(),
+    skills: d.skills.map(x => ({ label: s(x.label), items: x.items.slice() })),
+    experience: d.experience.map(x => obj(x, ['title', 'company', 'city', 'dates', 'bullets'])),
+    projects: d.projects.map(x => obj(x, ['name', 'tech', 'dates', 'github', 'bullets'])),
+    education: d.education.map(x => obj(x, ['degree', 'school', 'city', 'dates', 'gpa'])),
+    certifications: d.certifications.map(x => obj(x, ['name', 'org', 'date'])),
+    extraSections: d.extraSections.map(x => ({ heading: s(x.heading), entries: x.entries.map(e => obj(e, ['title', 'details', 'bullets'])) })),
+  }
 }
 
 // The copy-never-write rule, enforced: every substantive parsed string must exist in
@@ -3838,7 +3998,7 @@ function entryDeletionNotices(baseline, submitted) {
 // without one, the server lifts the span's lines itself: verbatim from the
 // text (so the verifier passes them by construction), no model involved.
 // Model flake stops mattering for summaries.
-function rescueSummaryFromText(resumeText) {
+function rescueSummaryFromText(resumeText, opts = {}) {
   const lines = String(resumeText || '').split(/\r?\n/)
   const bullets = []
   const paras = []
@@ -3855,13 +4015,17 @@ function rescueSummaryFromText(resumeText) {
     else if (bullets.length) bullets[bullets.length - 1] += ' ' + line   // wrapped continuation
     else paras.push(line)
   }
-  if (bullets.length) return { summary: null, summaryBullets: bullets.slice(0, 8) }
-  if (paras.length) return { summary: paras.join(' ').slice(0, 1200), summaryBullets: [] }
+  // v1 keeps its historical caps; the schema-v2 path passes {uncapped:true}
+  // because correction 4 forbids silent truncation (found 2026-09-25).
+  if (bullets.length) return { summary: null, summaryBullets: opts.uncapped ? bullets : bullets.slice(0, 8) }
+  if (paras.length) return { summary: opts.uncapped ? paras.join(' ') : paras.join(' ').slice(0, 1200), summaryBullets: [] }
   return null
 }
 
-async function parseAndVerifyResume(resumeText) {
-  let data = await parseResumeStructured(resumeText)
+async function parseAndVerifyResume(resumeText, sink) {
+  const s1 = {}
+  let data = await parseResumeStructured(resumeText, s1)
+  if (sink) { sink.raw = s1.raw ?? null; sink.attempts = 1 }
   if (!data) return { data: null, verification: { ok: false, violations: ['parse failed'] } }
   if (!data.summary && !(data.summaryBullets || []).length) {
     const rescued = rescueSummaryFromText(resumeText)
@@ -3870,14 +4034,16 @@ async function parseAndVerifyResume(resumeText) {
   let verification = verifyResumeData(data, resumeText)
   if (!verification.ok) {
     console.warn('resume parse verification:', verification.violations.length, 'violation(s) — retrying once')
-    const retry = await parseResumeStructured(resumeText)
+    const s2 = {}
+    const retry = await parseResumeStructured(resumeText, s2)
+    if (sink) sink.attempts = 2
     if (retry) {
       if (!retry.summary && !(retry.summaryBullets || []).length) {
         const rescued = rescueSummaryFromText(resumeText)
         if (rescued) Object.assign(retry, rescued)
       }
       const rv = verifyResumeData(retry, resumeText)
-      if (rv.violations.length < verification.violations.length) { data = retry; verification = rv }
+      if (rv.violations.length < verification.violations.length) { data = retry; verification = rv; if (sink) sink.raw = s2.raw ?? null }
     }
   }
   // Logs carry field paths only — never resume text (recruiter logging rule).
@@ -3885,6 +4051,175 @@ async function parseAndVerifyResume(resumeText) {
   if (!verification.ok) console.warn('resume parse verification final:', verification.violations.map(v => String(v).split(':')[0].trim()).join(', '))
   return { data, verification }
 }
+
+// ── PHASE 2 CHUNK 2 STEP 4: SCHEMA-V2 WIRING (2026-09-25) ───────────────────
+// PARSE_V2 = off | shadow | on (unset or unrecognized = off).
+//   off     exactly the pre-chunk-2 pipeline.
+//   shadow  the v1 pipeline runs and serves the user UNCHANGED; the v2 gate and
+//           field envelopes are computed from the same raw model payload (no
+//           extra model calls) and stored on the draft under `v2` — never
+//           returned to the client. Counts-only evidence line per upload.
+//   on      v2 decides: raw payload validated; rejected or unverified → ONE
+//           retry; both rejected → explicit failure (422, no draft, parked
+//           file removed). Accepted drafts are stamped draftSchemaVersion 2, so
+//           the v1 confirmation path REFUSES them (step-1 gate) until the
+//           v2-aware confirmation lands in step 5. Local testing only until the
+//           reviewer approves activation.
+function parseV2Mode() {
+  const m = String(process.env.PARSE_V2 || 'off').toLowerCase()
+  return ['off', 'shadow', 'on'].includes(m) ? m : 'off'
+}
+
+function v2FromRaw(rawPayload, text) {
+  const val = validateResumeDataV2(rawPayload)
+  if (!val.ok) return { ok: false, issues: val.issues }
+  const data = val.data
+  const methods = {}
+  if (!data.summary && !data.summaryBullets.length) {
+    const r = rescueSummaryFromText(text, { uncapped: true })
+    if (r) {
+      data.summary = r.summary; data.summaryBullets = r.summaryBullets
+      methods['$.summary'] = 'deterministic'; methods['$.summaryBullets'] = 'deterministic'
+      // Rescued content bypassed the validator's limit checks (it arrives after
+      // validation), so apply the same oversize rule here: kept whole, flagged.
+      const L = SCHEMA_V2.limits
+      if (data.summary && data.summary.length > L.string) val.issues.push({ path: '$.summary', code: 'oversize' })
+      if (data.summaryBullets.length > L.summaryBullets) val.issues.push({ path: '$.summaryBullets', code: 'oversize' })
+      data.summaryBullets.forEach((b, i) => { if (b.length > L.string) val.issues.push({ path: `$.summaryBullets[${i}]`, code: 'oversize' }) })
+    }
+  }
+  return { ok: true, issues: val.issues, data, methods }
+}
+
+// Items the v1 sanitizer dropped relative to the uncapped v2 data (counts only).
+function countV1Loss(v1, v2) {
+  if (!v1 || !v2) return 0
+  const d = (a, b) => Math.max(0, (b?.length || 0) - (a?.length || 0))
+  let n = d(v1.contact, v2.contact) + d(v1.summaryBullets, v2.summaryBullets) + d(v1.skills, v2.skills)
+  v2.skills.forEach((x, i) => { n += d(v1.skills?.[i]?.items, x.items) })
+  n += d(v1.experience, v2.experience); v2.experience.forEach((x, i) => { n += d(v1.experience?.[i]?.bullets, x.bullets) })
+  n += d(v1.projects, v2.projects); v2.projects.forEach((x, i) => { n += d(v1.projects?.[i]?.bullets, x.bullets); n += d(v1.projects?.[i]?.tech, x.tech) })
+  n += d(v1.education, v2.education) + d(v1.certifications, v2.certifications) + d(v1.extraSections, v2.extraSections)
+  return n
+}
+
+const V2_ISSUE_SUMMARY = issues => {
+  const c = {}
+  for (const i of issues || []) c[i.code] = (c[i.code] || 0) + 1
+  return Object.entries(c).map(([k, v]) => k + '=' + v).join(' ') || 'none'
+}
+
+// Field PATHS only (never values) for the evidence lines — the same class of
+// data the v1 verifier already logs ("contact[0]"). Display is capped at 10 with
+// an explicit "+N more"; nothing is dropped from the stored issues/envelopes.
+function v2PathList(paths) {
+  if (!paths.length) return 'none'
+  return paths.slice(0, 10).join(',') + (paths.length > 10 ? `,+${paths.length - 10} more` : '')
+}
+function v2EvidenceSuffix(issues, fieldMeta) {
+  const lossy = (issues || []).filter(i => i.code !== 'duplicate_atom').map(i => i.path)
+  const review = fieldMeta ? fieldMeta.entries.filter(e => e.verificationStatus === 'needs_review').map(e => e.path) : []
+  return ` issue_at[${v2PathList(lossy)}] review_at[${v2PathList(review)}]`
+}
+
+async function runParsePipeline(text) {
+  const mode = parseV2Mode()
+  if (mode === 'off') {
+    const sink = {}
+    const [profile, structured] = await Promise.all([readProfileFromResume(text), parseAndVerifyResume(text, sink)])
+    return { profile, structured, v2: null, capLoss: computeCapLoss(sink.raw, structured?.data, text) }
+  }
+  const lineMap = buildLineMap(text)
+
+  if (mode === 'shadow') {
+    const sink = {}
+    const [profile, structured] = await Promise.all([readProfileFromResume(text), parseAndVerifyResume(text, sink)])
+    let v2
+    try {
+      const ev = sink.raw ? v2FromRaw(sink.raw, text) : { ok: false, issues: [{ path: '$', code: 'parse_failed' }] }
+      if (ev.ok) {
+        const fieldMeta = buildFieldMetaV2(ev.data, text, lineMap, { methods: ev.methods, profile })
+        const lost = countV1Loss(structured.data, ev.data)
+        const prof = fieldMeta.entries.filter(e => e.path.startsWith('$profile.') && e.verificationStatus === 'needs_review').length
+        v2 = { mode, outcome: 'accepted', attempts: sink.attempts || 1, issues: ev.issues, data: ev.data, fieldMeta, v1ItemsDropped: lost }
+        console.log(`chunk2 shadow: v2=accepted issues[${V2_ISSUE_SUMMARY(ev.issues)}] fields=${fieldMeta.counts.fields} verified=${fieldMeta.counts.verified} needs_review=${fieldMeta.counts.needs_review} not_found=${fieldMeta.counts.not_found} profile_needs_review=${prof} v1_items_dropped=${lost}` + v2EvidenceSuffix(ev.issues, fieldMeta))
+      } else {
+        v2 = { mode, outcome: 'would_fail', attempts: sink.attempts || 1, issues: ev.issues }
+        console.log(`chunk2 shadow: v2=would_reject issues[${V2_ISSUE_SUMMARY(ev.issues)}]` + v2EvidenceSuffix(ev.issues, null))
+      }
+    } catch (e) {
+      // Shadow must never affect the user: any failure here is recorded, not thrown.
+      v2 = { mode, outcome: 'shadow_error' }
+      console.warn('chunk2 shadow: evaluation error (user unaffected):', e.message)
+    }
+    return { profile, structured, v2, capLoss: computeCapLoss(sink.raw, structured?.data, text) }
+  }
+
+  // mode === 'on'
+  const [profile, attempt] = await Promise.all([readProfileFromResume(text), (async () => {
+    const tries = []
+    for (let i = 0; i < 2; i++) {
+      const sink = {}
+      await parseResumeStructured(text, sink)
+      const ev = sink.raw ? v2FromRaw(sink.raw, text) : { ok: false, issues: [{ path: '$', code: 'parse_failed' }] }
+      if (ev.ok) {
+        const projected = projectV2ToV1Shape(ev.data)
+        ev.projected = projected
+        ev.verification = verifyResumeData(projected, text)
+      }
+      tries.push(ev)
+      if (ev.ok && ev.verification.ok) break   // clean first attempt: no retry
+    }
+    const valid = tries.filter(t => t.ok)
+    if (!valid.length) return { failed: true, attempts: tries.length, issues: tries[tries.length - 1].issues }
+    const best = valid.reduce((a, b) => (b.verification.violations.length < a.verification.violations.length ? b : a))
+    return { failed: false, attempts: tries.length, best }
+  })()])
+
+  if (attempt.failed) {
+    console.log(`chunk2 on: v2 rejected after ${attempt.attempts} attempts issues[${V2_ISSUE_SUMMARY(attempt.issues)}] -> parse_failed` + v2EvidenceSuffix(attempt.issues, null))
+    return { profile, structured: null, v2: { mode, outcome: 'failed', attempts: attempt.attempts, issues: attempt.issues }, capLoss: [] }
+  }
+  const b = attempt.best
+  const fieldMeta = buildFieldMetaV2(b.data, text, lineMap, { methods: b.methods, profile })
+  console.log(`chunk2 on: v2=accepted attempts=${attempt.attempts} issues[${V2_ISSUE_SUMMARY(b.issues)}] fields=${fieldMeta.counts.fields} verified=${fieldMeta.counts.verified} needs_review=${fieldMeta.counts.needs_review} not_found=${fieldMeta.counts.not_found}` + v2EvidenceSuffix(b.issues, fieldMeta))
+  return {
+    profile,
+    structured: { data: b.projected, verification: b.verification },
+    v2: { mode, outcome: 'accepted', attempts: attempt.attempts, issues: b.issues, data: b.data, fieldMeta },
+    capLoss: computeCapLoss(b.data, b.projected, text),
+  }
+}
+
+// What the v1 path loses (or cannot save) for this parse: caps applied to the
+// raw payload, anything the delivered data already exceeds (a rescued summary
+// over 600 is delivered whole but would be cut at save), the rescue's own caps,
+// and text beyond the model's input window.
+function computeCapLoss(raw, delivered, text) {
+  const list = [...legacyCapExceed(raw), ...legacyCapExceed(delivered)]
+  const r = rescueSummaryFromText(text, { uncapped: true })
+  if (r && !(raw && (raw.summary || (Array.isArray(raw.summaryBullets) && raw.summaryBullets.length)))) {
+    if (r.summaryBullets.length > LEGACY_CAPS.rescueBullets) list.push({ path: '$.summaryBullets', limit: LEGACY_CAPS.rescueBullets, actual: r.summaryBullets.length })
+    if ((r.summary || '').length > LEGACY_CAPS.rescueSummary) list.push({ path: '$.summary', limit: LEGACY_CAPS.rescueSummary, actual: r.summary.length })
+  }
+  const len = String(text || '').length
+  if (len > LEGACY_CAPS.modelInput) list.push({ path: '$input', limit: LEGACY_CAPS.modelInput, actual: len })
+  return dedupeByPath(list)
+}
+
+function draftCapFields(capLoss) {
+  return { capCheck: 1, capLoss: capLoss || [] }
+}
+
+// Draft fields contributed by the v2 pipeline. Only mode 'on' changes the draft
+// SHAPE (uncapped data + envelopes the confirmation must honor), so only 'on'
+// stamps version 2; shadow drafts stay version 1 and confirm normally.
+function draftV2Fields(v2) {
+  if (!v2) return {}
+  return v2.mode === 'on' ? { v2, draftSchemaVersion: 2 } : { v2 }
+}
+
+const V2_PARSE_FAILED_MESSAGE = "We couldn't read this resume reliably, even after a second attempt. Nothing was changed — your saved resume is untouched. Please try uploading it again, or try a different file format (PDF or Word)."
 
 app.post('/me/resume/upload', requireUser, (req, res) => {
   upload.single('resume')(req, res, async err => {
@@ -4000,10 +4335,17 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
 
       // Flat board profile and full structured details, in parallel — independent
       // reads of the same text, and neither may block the other or the upload.
-      const [profile, structured] = await Promise.all([
-        readProfileFromResume(text),
-        parseAndVerifyResume(text),
-      ])
+      const { profile, structured, v2, capLoss } = await runParsePipeline(text)
+      if (capLoss?.length) console.log(`containment: parse would drop content -> confirmation blocked count=${capLoss.length} paths[${v2PathList(capLoss.map(x => x.path))}]`)
+      if (v2?.outcome === 'failed') {
+        // Explicit failure (chunk 2): no draft, parked upload removed (guarded by
+        // THIS upload's draftId), active resume untouched.
+        try {
+          await User.updateOne({ clerkUserId: req.userId, 'pendingResumeFile.draftId': draftId },
+            { $unset: { pendingResumeFile: 1, pendingResumeLayout: 1, pendingResumeCompat: 1, pendingResumeBlocks: 1 } })
+        } catch (e) { console.warn('parked cleanup after parse failure failed:', e.message) }
+        return res.status(422).json({ status: 'parse_failed', error: V2_PARSE_FAILED_MESSAGE })
+      }
 
       // Two independent opinions on whether this is a resume: the regex checks and
       // the model. Either objecting is enough to warn, because they fail on different
@@ -4015,7 +4357,7 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
       // Only clean parses become drafts — a not-a-resume upload never persists.
       // A draft write failing must never block the upload; the response still
       // carries everything and the client works exactly as before.
-      const completeness = suspect ? [] : assessCompleteness(text, structured.data)
+      const completeness = suspect ? [] : [...assessCompleteness(text, structured.data), ...containNotices(capLoss || [])]
       if (!suspect) {
         try {
           await ResumeDraft.findOneAndUpdate(
@@ -4023,7 +4365,7 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
             { clerkUserId: req.userId, fileName: req.file.originalname, text, pages: pages || 0,
               profile: profile || null, resumeData: structured.data || null,
               verification: structured.verification || null, completeness,
-              ...draftEvidenceFields(text),
+              ...draftEvidenceFields(text), ...draftV2Fields(v2), ...draftCapFields(capLoss),
               draftId, baseVersion, createdAt: new Date() },
             { upsert: true },
           )
@@ -4094,14 +4436,13 @@ app.post('/me/resume/analyze', requireUser, async (req, res) => {
       return res.json({ status: assessment.status, message: assessment.message, text })
     }
 
-    const [profile, structured] = await Promise.all([
-      readProfileFromResume(text),
-      parseAndVerifyResume(text),
-    ])
+    const { profile, structured, v2, capLoss } = await runParsePipeline(text)
+    if (capLoss?.length) console.log(`containment: parse would drop content -> confirmation blocked count=${capLoss.length} paths[${v2PathList(capLoss.map(x => x.path))}]`)
+    if (v2?.outcome === 'failed') return res.status(422).json({ status: 'parse_failed', error: V2_PARSE_FAILED_MESSAGE })
     const suspect = assessment.status === 'not_resume' || profile?.isResume === false
 
     // Phase 1: pasted text gets the same draft treatment as an upload (no file).
-    const completeness = suspect ? [] : assessCompleteness(text, structured.data)
+    const completeness = suspect ? [] : [...assessCompleteness(text, structured.data), ...containNotices(capLoss || [])]
     if (!suspect) {
       try {
         const uv = await User.findOne({ clerkUserId: req.userId }).select('resumeVersion').lean()
@@ -4110,7 +4451,7 @@ app.post('/me/resume/analyze', requireUser, async (req, res) => {
           { clerkUserId: req.userId, fileName: '', text, pages: 0,
             profile: profile || null, resumeData: structured.data || null,
             verification: structured.verification || null, completeness,
-            ...draftEvidenceFields(text),
+            ...draftEvidenceFields(text), ...draftV2Fields(v2), ...draftCapFields(capLoss),
             draftId: randomUUID(), baseVersion: uv?.resumeVersion || 0, createdAt: new Date() },
           { upsert: true },
         )
@@ -4167,6 +4508,14 @@ function buildDraftSyncSet(body) {
 
 app.post('/me/resume/draft', requireUser, async (req, res) => {
   try {
+    // Containment: an edit the v1 caps would cut is refused, never truncated.
+    // The draft keeps its last complete version; Save explains the block.
+    const over = [...legacyCapExceed(req.body?.resumeData),
+      ...profileCapExceed(req.body?.profile, LEGACY_CAPS.draftProfile, ['firstName', 'lastName', 'email', 'location', 'phone', 'linkedin', 'github', 'portfolio'])]
+    if (over.length) {
+      console.log(`containment: draft autosave refused count=${over.length} paths[${v2PathList(over.map(x => x.path))}]`)
+      return res.status(422).json({ status: 'content_exceeds_limits', error: CONTAIN_SAVE_MESSAGE(containSections(over)) })
+    }
     const set = buildDraftSyncSet(req.body)
     if (!Object.keys(set).length) return res.status(400).json({ error: 'Nothing to update.' })
     // Schema-version gate (chunk 2): v1-shaped edits must never land inside a
@@ -4194,11 +4543,13 @@ app.post('/me/resume/draft', requireUser, async (req, res) => {
 // stored file are untouched.
 app.post('/me/resume/cancel', requireUser, async (req, res) => {
   try {
-    await ResumeDraft.deleteOne({ clerkUserId: req.userId })
-    await User.updateOne(
+    const del = await ResumeDraft.deleteOne({ clerkUserId: req.userId })
+    const unp = await User.updateOne(
       { clerkUserId: req.userId },
       { $unset: { pendingResumeFile: 1, pendingResumeLayout: 1, pendingResumeCompat: 1, pendingResumeBlocks: 1 } },
     )
+    // Counts only (2026-09-25): makes every Discard visible in the logs.
+    console.log(`draft discarded: drafts_deleted=${del.deletedCount} parked_cleared=${unp.modifiedCount}`)
     res.json({ cancelled: true })
   } catch (error) {
     console.error('Resume cancel error:', error)
@@ -4319,6 +4670,26 @@ app.post('/me/profile', requireUser, async (req, res) => {
     if (draftDoc && (draftDoc.draftSchemaVersion ?? 1) > SUPPORTED_DRAFT_SCHEMA) {
       console.log(`draft schema gate: version=${draftDoc.draftSchemaVersion} supported<=${SUPPORTED_DRAFT_SCHEMA} -> 409`)
       return res.status(409).json({ error: 'This review was created by a newer version of Optyply than this server can save. Please refresh the page and upload your resume again — your saved resume is unaffected.' })
+    }
+
+    // CONTAINMENT (2026-09-25, reviewer ruling): nothing is saved that the v1
+    // sanitizer would cut, and no draft whose parse already lost content can be
+    // confirmed. Checked BEFORE the completeness gate so no acknowledgment can
+    // bypass it. No write happens, the draft is kept, the active resume stays.
+    {
+      const submittedOver = [...legacyCapExceed(resumeData),
+        ...profileCapExceed(req.body?.profile, LEGACY_CAPS.contactLine, ['location', 'phone', 'email', 'linkedin', 'github', 'portfolio'])]
+      if (resumeData && sanitizeResumeData(resumeData) === null) submittedOver.push({ path: '$payload', limit: 400000, actual: -1 })
+      let draftLoss = []
+      if (draftDoc) {
+        const dc = await ResumeDraft.findOne({ clerkUserId: req.userId }).select('capCheck capLoss resumeData').lean()
+        draftLoss = dc?.capCheck ? (dc.capLoss || []) : legacyAtCap(dc?.resumeData)
+      }
+      if (submittedOver.length || draftLoss.length) {
+        const all = dedupeByPath([...submittedOver, ...draftLoss])
+        console.log(`containment: save blocked submitted_over=${submittedOver.length} draft_loss=${draftLoss.length} paths[${v2PathList(all.map(x => x.path))}]`)
+        return res.status(422).json({ status: 'content_exceeds_limits', error: CONTAIN_SAVE_MESSAGE(containSections(all)) })
+      }
     }
 
     // Completeness confirm-gate (2026-09-22, recruiter point 5): an under-captured

@@ -109,7 +109,9 @@ function stubStructuredFromText(text) {
   return {
     name: L[0] || '', contact: (L[1] || '').split('|').map(s => s.trim()).filter(Boolean),
     summary: null, summaryBullets: bullets.slice(0, 1), skills: [],
-    experience: expLine ? [{ title: parts[0] || '', company: parts[1] || '', location: '', dates: parts[2] || '', bullets: bullets.slice(1, 3) }] : [],
+    // key is `city` — the real prompt's schema (was `location` until 2026-09-25, a stub bug the
+    // v1 sanitizer silently discarded and schema v2 correctly rejected)
+    experience: expLine ? [{ title: parts[0] || '', company: parts[1] || '', city: '', dates: parts[2] || '', bullets: bullets.slice(1, 3) }] : [],
     projects: [], education: eduLine ? [{ degree: edu[0] || '', school: edu[1] || '', dates: '' }] : [], certifications: [],
   }
 }
@@ -148,7 +150,7 @@ async function runRegressionSuite() {
   try {
     await new Promise(r => setTimeout(r, 600))
     for (const uid of [uidA, uidB, uidS]) { await User.deleteOne({ clerkUserId: uid }); await ResumeDraft.deleteOne({ clerkUserId: uid }) }
-    console.log('\u2500\u2500 regression suite start (sentinels reset) \u00b7 fixture sha256=' + FIXTURE_SHA + ' \u2500\u2500')
+    console.log('\u2500\u2500 regression suite start (sentinels reset) \u00b7 fixture sha256=' + FIXTURE_SHA + ' \u00b7 PARSE_V2 at start: ' + parseV2Mode() + ' \u2500\u2500')
 
     // R1 — authentication on every protected endpoint
     const protectedEps = [
@@ -333,6 +335,129 @@ async function runRegressionSuite() {
     const futUntouched = await ResumeDraft.findOne({ clerkUserId: uidA, draftId: futId }).lean()
     ok('R12 future-version draft: edit-sync 409, draft unmodified', futSync.status === 409 && futUntouched?.resumeData?.summary !== 'sync should not land')
     await ResumeDraft.deleteOne({ clerkUserId: uidA })
+
+    // R13 — chunk 2 step 4: PARSE_V2 wiring over real HTTP (off / shadow / on / on+invalid)
+    const savedV2 = process.env.PARSE_V2
+    const realParse = parseResumeStructured
+    let parseCalls = 0
+    parseResumeStructured = async (...a) => { parseCalls++; return realParse(...a) }
+    try {
+      await jpost('/me/resume/cancel', uidA, {})
+      delete process.env.PARSE_V2
+      const u0 = await uploadAs(uidA, fixture)
+      const d0 = await ResumeDraft.findOne({ clerkUserId: uidA }).lean()
+      ok('R13a PARSE_V2 unset (off): upload unchanged, draft has no v2 payload, schema version 1', u0.status === 200 && !d0?.v2 && d0?.draftSchemaVersion === 1)
+
+      process.env.PARSE_V2 = 'shadow'
+      const u1 = await uploadAs(uidA, fixture)
+      const d1 = await ResumeDraft.findOne({ clerkUserId: uidA }).lean()
+      ok('R13b shadow: user-facing response identical to off; v2 accepted + envelopes (incl. contact-form fields) stored; version 1',
+        u1.status === 200 && JSON.stringify(u1.body.resumeData) === JSON.stringify(u0.body.resumeData) &&
+        JSON.stringify(u1.body.resumeDataVerification) === JSON.stringify(u0.body.resumeDataVerification) &&
+        d1?.v2?.mode === 'shadow' && d1.v2.outcome === 'accepted' && d1.v2.fieldMeta?.entries?.some(e => e.path.startsWith('$profile.')) && d1.draftSchemaVersion === 1,
+        'fields=' + d1?.v2?.fieldMeta?.counts?.fields)
+      const gj = await (await fetch(BASE + '/me/resume', { headers: as(uidA) })).json()
+      ok('R13c shadow is invisible to the client: GET /me/resume draft carries no v2 / fieldMeta', !!gj.draft && !('v2' in gj.draft) && !JSON.stringify(gj).includes('fieldMeta'))
+      const c1 = await jpost('/me/profile', uidA, confirmBody(u1.body.text, stubStructuredFromText(u1.body.text), u1.body.draftId))
+      ok('R13d shadow draft confirms normally through the current path', c1.status === 200)
+
+      process.env.PARSE_V2 = 'on'
+      parseCalls = 0
+      const u2 = await uploadAs(uidA, fixture)
+      const d2x = await ResumeDraft.findOne({ clerkUserId: uidA }).lean()
+      ok('R13e on + valid payload: exactly 1 model call (clean, no retry); draft stamped version 2 with envelopes',
+        u2.status === 200 && parseCalls === 1 && d2x?.draftSchemaVersion === 2 && d2x.v2?.mode === 'on' && d2x.v2.fieldMeta?.counts?.fields > 0, 'calls=' + parseCalls)
+      const snapOn = await User.findOne({ clerkUserId: uidA }).select('resumeVersion resumeText').lean()
+      const c2 = await jpost('/me/profile', uidA, confirmBody(u2.body.text, stubStructuredFromText(u2.body.text), u2.body.draftId))
+      const afterOn = await User.findOne({ clerkUserId: uidA }).select('resumeVersion resumeText').lean()
+      const d2still = await ResumeDraft.findOne({ clerkUserId: uidA, draftId: u2.body.draftId }).lean()
+      ok('R13f a REAL v2 draft is refused by the v1 confirmation path (409); draft intact; active resume + version untouched',
+        c2.status === 409 && !!d2still && afterOn.resumeVersion === snapOn.resumeVersion && afterOn.resumeText === snapOn.resumeText)
+      await jpost('/me/resume/cancel', uidA, {})
+
+      process.env.TEST_STUB_PARSE = 'invalid'
+      parseCalls = 0
+      const snapF = await User.findOne({ clerkUserId: uidA }).select('resumeVersion resumeText').lean()
+      const u3 = await uploadAs(uidA, fixture)
+      process.env.TEST_STUB_PARSE = '1'
+      const d3 = await ResumeDraft.findOne({ clerkUserId: uidA }).lean()
+      const uF = await User.findOne({ clerkUserId: uidA }).select('resumeVersion resumeText pendingResumeFile.name').lean()
+      ok('R13g on + payload v2 rejects: exactly ONE retry (2 model calls), then explicit 422 parse_failed with a clear message',
+        u3.status === 422 && u3.body.status === 'parse_failed' && /untouched/.test(u3.body.error || '') && parseCalls === 2, 'status=' + u3.status + ' calls=' + parseCalls)
+      ok('R13h explicit failure leaves NO draft and NO parked file; active resume + version untouched',
+        !d3 && !uF?.pendingResumeFile?.name && uF.resumeVersion === snapF.resumeVersion && uF.resumeText === snapF.resumeText)
+
+      process.env.PARSE_V2 = 'shadow'
+      const pa = await jpost('/me/resume/analyze', uidA, { text: fixtureLines().join('\n') })
+      const dp = await ResumeDraft.findOne({ clerkUserId: uidA }).lean()
+      ok('R13i pasted-text path runs the same pipeline (shadow v2 stored, version 1)', pa.status === 200 && dp?.v2?.mode === 'shadow' && dp.v2.outcome === 'accepted' && dp.draftSchemaVersion === 1)
+      await jpost('/me/resume/cancel', uidA, {})
+    } finally {
+      parseResumeStructured = realParse
+      process.env.TEST_STUB_PARSE = '1'
+      if (savedV2 === undefined) delete process.env.PARSE_V2; else process.env.PARSE_V2 = savedV2
+    }
+
+    // R14 — CONTAINMENT: the v1 path refuses, never cuts (reviewer ruling 2026-09-25)
+    // Runs with the switch off, then RESTORES it (the end-of-run mode line must
+    // reflect the mode the suite was started with).
+    const savedV2r14 = process.env.PARSE_V2
+    delete process.env.PARSE_V2
+    await jpost('/me/resume/cancel', uidA, {})
+    const ftxt = fixtureLines().join('\n')
+    const base14 = stubStructuredFromText(ftxt)
+    const snapA = async () => User.findOne({ clerkUserId: uidA }).select('resumeVersion resumeText resumeData').lean()
+    const k14s0 = await snapA()
+    const r14a = await jpost('/me/profile', uidA, confirmBody(ftxt, { ...base14, summary: 'L'.repeat(758), summaryBullets: [] }, ''))
+    const j14a = await r14a.json(), k14s1 = await snapA()
+    ok('R14a save with a 758-char summary → 422 content_exceeds_limits naming Summary; nothing written (version + data unchanged)',
+      r14a.status === 422 && j14a.status === 'content_exceeds_limits' && /Summary/.test(j14a.error) && !/L{20}/.test(j14a.error) &&
+      k14s1.resumeVersion === k14s0.resumeVersion && JSON.stringify(k14s1.resumeData) === JSON.stringify(k14s0.resumeData))
+    const r14b = await jpost('/me/profile', uidA, confirmBody(ftxt, { ...base14, experience: [{ ...base14.experience[0], bullets: Array.from({ length: 16 }, (_, i) => 'B' + i) }] }, ''))
+    const j14b = await r14b.json()
+    ok('R14b save with 16 bullets in one job → 422 naming Experience; nothing written', r14b.status === 422 && /Experience/.test(j14b.error) && (await snapA()).resumeVersion === k14s0.resumeVersion)
+    const r14c = await jpost('/me/profile', uidA, { ...confirmBody(ftxt, { ...base14 }, ''), profile: { ...confirmBody(ftxt, base14, '').profile, portfolio: 'https://example.com/' + 'p'.repeat(110) } })
+    ok('R14c save with a 130-char contact field (contact-line cap 120) → 422 naming Contact', r14c.status === 422 && /Contact/.test((await r14c.json()).error))
+    const r14d = await jpost('/me/profile', uidA, confirmBody(ftxt, { ...base14, summary: 'E'.repeat(600), summaryBullets: [], experience: [{ ...base14.experience[0], bullets: Array.from({ length: 15 }, (_, i) => 'Edge ' + i) }] }, ''))
+    const k14s2 = await snapA()
+    ok('R14d boundary: exactly 600 chars + exactly 15 bullets → saves normally (no false positive), stored whole',
+      r14d.status === 200 && k14s2.resumeData.summary.length === 600 && k14s2.resumeData.experience[0].bullets.length === 15)
+
+    process.env.TEST_STUB_PARSE = 'long'
+    const u14 = await uploadAs(uidA, fixture)
+    process.env.TEST_STUB_PARSE = '1'
+    const d14 = await ResumeDraft.findOne({ clerkUserId: uidA }).lean()
+    const lossPaths = (d14?.capLoss || []).map(x => x.path)
+    ok('R14e upload whose parse v1 truncates: review opens with containment notices (Summary, Experience); draft records the loss (paths/counts only)',
+      u14.status === 200 && (u14.body.completeness || []).filter(n => n.containment).map(n => n.section).sort().join(',') === 'experience,summary' &&
+      d14?.capCheck === 1 && lossPaths.includes('$.summary') && lossPaths.includes('$.experience[0].bullets') &&
+      d14.capLoss.every(x => Object.keys(x).every(k => ['path', 'limit', 'actual', 'reason'].includes(k))), 'loss=' + lossPaths.join(','))
+    const k14s3 = await snapA()
+    const r14f = await jpost('/me/profile', uidA, confirmBody(u14.body.text, u14.body.resumeData, u14.body.draftId, { completenessAck: true }))
+    const d14b = await ResumeDraft.findOne({ clerkUserId: uidA, draftId: u14.body.draftId }).lean()
+    const k14s4 = await snapA()
+    ok('R14f confirming that draft → 422 even WITH the completeness acknowledgment; draft and uploaded file kept; active resume untouched',
+      r14f.status === 422 && !!d14b && k14s4.resumeVersion === k14s3.resumeVersion && JSON.stringify(k14s4.resumeData) === JSON.stringify(k14s3.resumeData))
+    const r14g = await jpost('/me/resume/draft', uidA, { resumeData: { ...u14.body.resumeData, summary: 'A'.repeat(758) } })
+    const d14c = await ResumeDraft.findOne({ clerkUserId: uidA }).lean()
+    ok('R14g autosave of an over-limit edit → 422 and NO write (draft keeps its last complete version)',
+      r14g.status === 422 && d14c.resumeData.summary === d14b.resumeData.summary)
+    await jpost('/me/resume/cancel', uidA, {})
+
+    const uv14 = (await snapA()).resumeVersion || 0
+    const legacyAt = 'legacy-at-' + randomUUID().slice(0, 8)
+    await ResumeDraft.collection.insertOne({ clerkUserId: uidA, fileName: 'sentinel.pdf', text: ftxt, draftId: legacyAt, baseVersion: uv14, createdAt: new Date(),
+      resumeData: { ...base14, experience: [{ ...base14.experience[0], bullets: Array.from({ length: 15 }, (_, i) => 'Legacy ' + i) }] } })
+    const r14h = await jpost('/me/profile', uidA, confirmBody(ftxt, base14, legacyAt))
+    const keptH = await ResumeDraft.findOne({ clerkUserId: uidA, draftId: legacyAt }).lean()
+    ok('R14h pre-containment draft sitting exactly at a legacy cap → blocked (conservative), draft kept', r14h.status === 422 && !!keptH)
+    await ResumeDraft.deleteOne({ clerkUserId: uidA })
+    const legacyOk = 'legacy-ok-' + randomUUID().slice(0, 8)
+    await ResumeDraft.collection.insertOne({ clerkUserId: uidA, fileName: 'sentinel.pdf', text: ftxt, draftId: legacyOk, baseVersion: uv14, createdAt: new Date(),
+      resumeData: { ...base14 } })
+    const r14i = await jpost('/me/profile', uidA, confirmBody(ftxt, base14, legacyOk))
+    ok('R14i pre-containment draft below every cap → confirms normally', r14i.status === 200)
+    if (savedV2r14 === undefined) delete process.env.PARSE_V2; else process.env.PARSE_V2 = savedV2r14
 
     const pass = results.filter(Boolean).length
     console.log('\u2500\u2500 regression suite: ' + pass + '/' + results.length + ' PASS ' + (pass === results.length ? '\u2014 ALL GREEN' : '\u2014 FAILURES ABOVE') + ' \u2500\u2500')

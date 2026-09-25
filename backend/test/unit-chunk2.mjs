@@ -22,15 +22,19 @@ const code = [
   grab('const COMPLETENESS_HEADING = ', '// baseline (2026-09-23'),
   grab('function buildLineMap(text) {', 'function draftEvidenceFields(text) {'),
   grab('const SCHEMA_V2 = {', '// The copy-never-write rule'),
-  'export { validateResumeDataV2, buildFieldMetaV2, buildLineMap }',
+  grab('function sanitizeResumeData(d) {', '// ── PHASE 2 CHUNK 2 STEP 2'),
+  grab('function rescueSummaryFromText(resumeText, opts = {}) {', 'async function parseAndVerifyResume('),
+  grab('function parseV2Mode() {', 'async function runParsePipeline('),
+  grab('function computeCapLoss(raw, delivered, text) {', 'function draftCapFields(capLoss) {'),
+  'export { validateResumeDataV2, buildFieldMetaV2, buildLineMap, projectV2ToV1Shape, sanitizeResumeData, rescueSummaryFromText, v2FromRaw, countV1Loss, parseV2Mode, v2EvidenceSuffix, legacyCapExceed, profileCapExceed, legacyAtCap, computeCapLoss, containSections, containNotices, CONTAIN_SAVE_MESSAGE }',
 ].join('\n')
 const tmp = join(mkdtempSync(join(tmpdir(), 'optyply-unit-')), 'extracted.mjs')
 writeFileSync(tmp, code)
 let mod
 try { mod = await import(pathToFileURL(tmp).href) }
 catch (e) { console.error('EXTRACTION FAILED: extracted functions did not load (' + e.message + ') — server.js has drifted; update this runner.'); process.exit(2) }
-const { validateResumeDataV2, buildFieldMetaV2, buildLineMap } = mod
-if (![validateResumeDataV2, buildFieldMetaV2, buildLineMap].every(f => typeof f === 'function')) { console.error('EXTRACTION FAILED: a required function is missing.'); process.exit(2) }
+const { validateResumeDataV2, buildFieldMetaV2, buildLineMap, projectV2ToV1Shape, sanitizeResumeData, rescueSummaryFromText, v2FromRaw, countV1Loss, parseV2Mode, v2EvidenceSuffix, legacyCapExceed, profileCapExceed, legacyAtCap, computeCapLoss, containSections, containNotices, CONTAIN_SAVE_MESSAGE } = mod
+if (![validateResumeDataV2, buildFieldMetaV2, buildLineMap, projectV2ToV1Shape, sanitizeResumeData, rescueSummaryFromText, v2FromRaw, countV1Loss, parseV2Mode, v2EvidenceSuffix, legacyCapExceed, profileCapExceed, legacyAtCap, computeCapLoss, containSections, containNotices, CONTAIN_SAVE_MESSAGE].every(f => typeof f === 'function')) { console.error('EXTRACTION FAILED: a required function is missing.'); process.exit(2) }
 
 const results = []
 const ok = (name, cond, detail = '') => { console.log('[' + (cond ? 'PASS' : 'FAIL') + '] ' + name + (detail ? ' — ' + detail : '')); results.push(!!cond) }
@@ -187,6 +191,131 @@ const fm5 = buildFieldMetaV2(validateResumeDataV2(many).data, RAW, LM)
 const b = fm5.entries.filter(e => e.path.includes('.bullets['))
 ok('P-14 35 invented bullets → all 35 needs_review (no 30-cap leakage)', b.length === 35 && b.every(e => e.verificationStatus === 'needs_review'))
 
+
+// ── Step 4 pure pieces ──
+// P-15 contact-form fields (separate model read) enveloped with header scoping (F10b)
+const prof = { firstName: 'Jordan', lastName: 'Sample', location: 'Springfield, IL', phone: '555-010-0199', email: 'jordan.sample@example.com', linkedin: '', targetRole: 'Invented Role' }
+const fm15 = buildFieldMetaV2(d2.data, RAW2, buildLineMap(RAW2), { profile: prof })
+const pl = get(fm15, '$profile.location'), pp = get(fm15, '$profile.phone'), pf = get(fm15, '$profile.firstName'), pli = get(fm15, '$profile.linkedin'), pg = get(fm15, '$profile.github')
+ok('P-15 contact form: location copied from a job line → needs_review (ref experience); phone/name verified in header; empty links not_found; inferred targetRole not enveloped',
+  pl?.verificationStatus === 'needs_review' && pl?.sourceRef?.section === 'experience' && pp?.verificationStatus === 'verified' && pp?.sourceRef?.section === 'header' &&
+  pf?.verificationStatus === 'verified' && pli?.verificationStatus === 'not_found' && pg?.verificationStatus === 'not_found' && !get(fm15, '$profile.targetRole'))
+
+// P-16 summary rescue: v1 caps unchanged (8 bullets / 1200 chars); v2 asks for everything
+const tenB = ['NAME', 'SUMMARY', ...Array.from({ length: 10 }, (_, i) => '• Summary point ' + (i + 1)), 'EXPERIENCE', 'x'].join('\n')
+const longP = ['NAME', 'SUMMARY', 'W'.repeat(1500), 'EXPERIENCE', 'x'].join('\n')
+ok('P-16 rescue: v1 path still capped (8 / 1200); v2 path uncapped (10 / 1500)',
+  rescueSummaryFromText(tenB).summaryBullets.length === 8 && rescueSummaryFromText(tenB, { uncapped: true }).summaryBullets.length === 10 &&
+  rescueSummaryFromText(longP).summary.length === 1200 && rescueSummaryFromText(longP, { uncapped: true }).summary.length === 1500)
+
+// P-17 projection to the review screen's shape: nulls → '', NOTHING capped or dropped
+const pj = projectV2ToV1Shape(g4.data)
+ok('P-17 projection keeps all 16 bullets and 800 chars; nulls become empty strings; record counts unchanged',
+  pj.experience[0].bullets.length === 16 && pj.summary.length === 800 && pj.education[0].city === '' && pj.projects[0].dates === '' &&
+  pj.experience.length === g4.data.experience.length && pj.certifications.length === g4.data.certifications.length)
+
+// P-18 v2FromRaw: rescue marks method deterministic; invalid raw rejected
+const rawNoSummary = { name: 'NAME', experience: [{ title: 'x', company: null, city: null, dates: null, bullets: [] }] }
+const e18 = v2FromRaw(rawNoSummary, tenB), e18b = v2FromRaw({ ...rawNoSummary, hobbies: [] }, tenB)
+ok('P-18 v2FromRaw: missing summary rescued uncapped (10) with method deterministic; unknown field → rejected',
+  e18.ok && e18.data.summaryBullets.length === 10 && e18.methods['$.summaryBullets'] === 'deterministic' && !e18b.ok && e18b.issues.some(i => i.code === 'unknown_field'))
+
+// P-19 countV1Loss measures what the v1 sanitizer silently drops (shadow evidence)
+const rawBig = { ...valid, experience: [{ ...valid.experience[0], bullets: bullets16 }], skills: [{ label: 'L', items: Array.from({ length: 45 }, (_, i) => 'skill' + i) }] }
+const lost = countV1Loss(sanitizeResumeData(rawBig), validateResumeDataV2(rawBig).data)
+ok('P-19 v1 loss counter: 16→15 bullets + 45→40 skills = 6 items silently dropped by v1', lost === 6, 'dropped=' + lost)
+
+// P-20 mode switch: unset/unknown → off; recognized values honored
+const saved = process.env.PARSE_V2
+const modes = [undefined, 'shadow', 'ON', 'bogus'].map(v => { if (v === undefined) delete process.env.PARSE_V2; else process.env.PARSE_V2 = v; return parseV2Mode() })
+if (saved === undefined) delete process.env.PARSE_V2; else process.env.PARSE_V2 = saved
+ok('P-20 PARSE_V2: unset→off, shadow→shadow, ON→on, bogus→off', modes.join(',') === 'off,shadow,on,off', modes.join(','))
+
+// P-21 evidence suffix: field PATHS only, never values; display capped with explicit "+N more"
+const sfx = v2EvidenceSuffix(g4.issues, fm15)
+const many21 = v2EvidenceSuffix(Array.from({ length: 13 }, (_, i) => ({ path: '$.x[' + i + ']', code: 'oversize' })), null)
+ok('P-21 log suffix names paths only (oversize at bullets + summary; profile location flagged), no values; >10 paths shows "+3 more"',
+  sfx.includes('$.experience[0].bullets') && sfx.includes('$.summary') && sfx.includes('$profile.location') &&
+  !sfx.includes('Springfield') && !sfx.includes('Jordan') && many21.includes(',+3 more]') && !sfx.includes('duplicate'))
+
+// P-22 rescued summary is size-checked too: kept whole AND flagged (correction 4)
+const e22a = v2FromRaw(rawNoSummary, tenB), e22b = v2FromRaw(rawNoSummary, longP)
+ok('P-22 rescue over limits: 10 bullets (limit 8) and a 1500-char paragraph (limit 600) are kept whole AND flagged oversize',
+  e22a.data.summaryBullets.length === 10 && e22a.issues.some(i => i.path === '$.summaryBullets' && i.code === 'oversize') &&
+  e22b.data.summary.length === 1500 && e22b.issues.some(i => i.path === '$.summary' && i.code === 'oversize'))
+
+// ── Containment (2026-09-25): the v1 path must refuse, never cut ──
+const hit = (list, path) => list.find(x => x.path === path)
+const S758 = 'S'.repeat(758), S600 = 'S'.repeat(600)
+const job = (bullets, extra = {}) => ({ title: 'Engineer', company: 'Fixture Labs', city: null, dates: '2020', bullets, ...extra })
+const nb = n => Array.from({ length: n }, (_, i) => 'Real bullet ' + (i + 1))
+
+ok('C-01 summary: 758 chars flagged (limit 600, actual 758); exactly 600 NOT flagged',
+  hit(legacyCapExceed({ summary: S758 }), '$.summary')?.actual === 758 && legacyCapExceed({ summary: S600 }).length === 0)
+ok('C-02 bullets: 16 flagged at $.experience[0].bullets; exactly 15 NOT flagged and v1 keeps all 15',
+  hit(legacyCapExceed({ experience: [job(nb(16))] }), '$.experience[0].bullets')?.actual === 16 &&
+  legacyCapExceed({ experience: [job(nb(15))] }).length === 0 && sanitizeResumeData({ experience: [job(nb(15))] }).experience[0].bullets.length === 15)
+const trap = ['', '', ...nb(14)]
+ok('C-03 slice-before-filter trap: 2 blanks + 14 real (16 slots) → v1 really keeps only 13, and the detector flags it',
+  sanitizeResumeData({ experience: [job(trap)] }).experience[0].bullets.length === 13 && !!hit(legacyCapExceed({ experience: [job(trap)] }), '$.experience[0].bullets'))
+const headless = { title: '', company: '', city: null, dates: '2020 - 2021', bullets: ['Did a real thing'] }
+ok('C-04 whole record dropped by v1 (no title/company but real bullets) → flagged record_dropped',
+  sanitizeResumeData({ experience: [job(nb(2)), headless] }).experience.length === 1 && hit(legacyCapExceed({ experience: [job(nb(2)), headless] }), '$.experience[1]')?.reason === 'record_dropped')
+ok('C-05 no false positives: an ordinary full resume (all sections, below every cap) → nothing flagged', legacyCapExceed(valid).length === 0)
+const longURL = 'https://example.com/' + 'p'.repeat(110)
+ok('C-06 contact field of 130 chars: flagged at the save limit (120), NOT at the autosave limit (200)',
+  profileCapExceed({ portfolio: longURL }, 120, ['portfolio']).length === 1 && profileCapExceed({ portfolio: longURL }, 200, ['portfolio']).length === 0)
+ok('C-07 pre-containment drafts (conservative): exactly 15 bullets or a 600-char summary flagged; 14 bullets / 599 chars not',
+  !!hit(legacyAtCap({ experience: [job(nb(15))] }), '$.experience[0].bullets') && legacyAtCap({ experience: [job(nb(14))] }).length === 0 &&
+  !!hit(legacyAtCap({ summary: S600 }), '$.summary') && legacyAtCap({ summary: 'S'.repeat(599) }).length === 0)
+const bigText = 'x'.repeat(25000)
+const c8a = computeCapLoss({ name: 'N' }, { name: 'N' }, bigText)
+const c8b = computeCapLoss({ name: 'N', summary: null, summaryBullets: [] }, { name: 'N', summary: null, summaryBullets: nb(8) }, tenB)
+const c8c = computeCapLoss({ name: 'N' }, { name: 'N', summary: S758 }, 'N')
+ok('C-08 parse-time loss: 25,000-char input → $input; rescue of 10 summary bullets (cap 8) → flagged; delivered 758-char summary → flagged',
+  hit(c8a, '$input')?.actual === 25000 && hit(c8b, '$.summaryBullets')?.actual === 10 && hit(c8c, '$.summary')?.actual === 758)
+const msg = CONTAIN_SAVE_MESSAGE(containSections([{ path: '$.summary' }, { path: '$.experience[2].bullets' }, { path: '$profile.portfolio' }]))
+const nts = containNotices([{ path: '$.summaryBullets' }, { path: '$profile.portfolio' }, { path: '$.experience[0].bullets' }])
+ok('C-09 user messages name sections only (Summary, Experience, Contact) — no values; notices land in summary/contact/experience',
+  msg.includes('Summary') && msg.includes('Experience') && msg.includes('Contact') && msg.includes('unchanged') && !msg.includes('$') &&
+  nts.map(n => n.section).sort().join(',') === 'contact,experience,summary')
+
+// C-10 randomized equivalence (fixed seed): the detector flags a payload EXACTLY when
+// sanitizeResumeData loses content. Loss is measured independently: total characters of
+// non-empty collapsed strings (contact excluded — re-derived at save) before vs after.
+{
+  let seed = 20260925
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648 }
+  const pick = a => a[Math.floor(rnd() * a.length)]
+  // Mostly within limits so both outcomes occur often: over-limit text ~1 in 60, arrays over cap ~1 in 20.
+  const txt = () => { const u = rnd(); return u < 0.30 ? '' : u < 0.80 ? 'Short item' : u < 0.95 ? 'S'.repeat(598 + Math.floor(rnd() * 3)) : u < 0.983 ? 'x' : pick(['S'.repeat(601), 'Word '.repeat(130)]) }
+  const list = (cap) => Array.from({ length: rnd() < 0.95 ? Math.floor(rnd() * (cap + 1)) : cap + 1 + Math.floor(rnd() * 3) }, txt)
+  const rec = keys => Object.fromEntries(keys.map(k => [k, rnd() < 0.04 ? '' : 'K']))
+  const gen = () => ({
+    name: txt(), summary: rnd() < 0.5 ? txt() : null, summaryBullets: list(8),
+    skills: Array.from({ length: Math.floor(rnd() * 4) }, () => ({ label: rnd() < 0.1 ? '' : 'L', items: list(40) })),
+    experience: Array.from({ length: Math.floor(rnd() * 5) }, () => ({ ...rec(['title', 'company']), city: txt(), dates: '2020', bullets: list(15) })),
+    projects: Array.from({ length: Math.floor(rnd() * 3) }, () => ({ name: rnd() < 0.1 ? '' : 'P', tech: list(12), dates: '2021', github: '', bullets: list(12) })),
+    education: Array.from({ length: Math.floor(rnd() * 3) }, () => ({ ...rec(['degree', 'school']), city: txt(), dates: '2019', gpa: '' })),
+    certifications: Array.from({ length: rnd() < 0.95 ? Math.floor(rnd() * 5) : 13 + Math.floor(rnd() * 2) }, () => ({ name: rnd() < 0.1 ? '' : 'C', org: txt(), date: '' })),
+    extraSections: [],
+  })
+  const chars = d => { let n = 0; const walk = (v, k) => { if (k === 'contact') return
+    if (typeof v === 'string') { const c = v.replace(/[\s ]+/g, ' ').trim(); if (c && c.toLowerCase() !== 'null') n += c.length }
+    else if (Array.isArray(v)) v.forEach(x => walk(x)); else if (v && typeof v === 'object') Object.entries(v).forEach(([kk, x]) => walk(x, kk)) }
+    walk(d); return n }
+  let agree = 0, lossy = 0, missed = 0, falseAlarm = 0
+  const N = 3000
+  for (let i = 0; i < N; i++) {
+    const d = gen()
+    const lost = chars(sanitizeResumeData(d) || {}) < chars(d)
+    const flagged = legacyCapExceed(d).length > 0
+    if (lost) lossy++
+    if (lost === flagged) agree++; else if (lost) missed++; else falseAlarm++
+  }
+  ok(`C-10 randomized: detector flags EXACTLY the payloads v1 truncates (${N} payloads: ${lossy} lossy, ${N - lossy} lossless) — missed=0, false alarms=0`,
+    agree === N && lossy >= 300 && N - lossy >= 300, `agree=${agree} missed=${missed} falseAlarm=${falseAlarm}`)
+}
 
 const pass = results.filter(Boolean).length
 console.log('── chunk 2 unit fixtures: ' + pass + '/' + results.length + ' PASS ' + (pass === results.length ? '— ALL GREEN' : '— FAILURES ABOVE') + ' ──')

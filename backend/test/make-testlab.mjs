@@ -64,15 +64,34 @@ patch('auth bypass', `function requireUser(req, res, next) {
   const { userId } = getAuth(req)`)
 
 // 5. Deterministic parse stubs (machinery under test, not the model)
-patch('structured stub', 'async function parseResumeStructured(resumeText) {',
-  `async function parseResumeStructured(resumeText) {
-  if (process.env.TEST_STUB_PARSE === '1') return stubStructuredFromText(resumeText)`)
+patch('structured stub', 'async function parseResumeStructured(resumeText, sink) {',
+  `async function parseResumeStructured(resumeText, sink) {
+  // TESTLAB: '1' = valid deterministic payload; 'invalid' = the same payload plus
+  // an unknown field, so schema v2 rejects it (drives the explicit-failure path);
+  // 'long' = a payload over the legacy caps (16 bullets, 700-char summary) that
+  // is cut by the REAL sanitizer, exactly as the live model path would be.
+  const stubMode = process.env.TEST_STUB_PARSE
+  if (stubMode === '1' || stubMode === 'invalid' || stubMode === 'long') {
+    const d = stubStructuredFromText(resumeText)
+    if (stubMode === 'long') {
+      const raw = JSON.parse(JSON.stringify(d))
+      raw.summary = 'Long fixture summary sentence. '.repeat(23).trim()
+      raw.summaryBullets = []
+      if (raw.experience[0]) raw.experience[0].bullets = Array.from({ length: 16 }, (_, i) => 'Fixture bullet number ' + (i + 1))
+      if (sink) sink.raw = JSON.parse(JSON.stringify(raw))
+      return sanitizeResumeData(raw)
+    }
+    if (sink) sink.raw = stubMode === 'invalid'
+      ? { ...JSON.parse(JSON.stringify(d)), hobbies: ['x'] }
+      : JSON.parse(JSON.stringify(d))
+    return d
+  }`)
 {
   const marker = 'async function readProfileFromResume('
   const i = src.indexOf(marker)
   if (i === -1 || src.indexOf(marker, i + 1) !== -1) { console.error('GENERATION FAILED: readProfileFromResume anchor'); process.exit(2) }
   const j = src.indexOf('{', i)
-  src = src.slice(0, j + 1) + "\n  if (process.env.TEST_STUB_PARSE === '1') return stubProfileFromText(arguments[0])" + src.slice(j + 1)
+  src = src.slice(0, j + 1) + "\n  if (['1', 'invalid', 'long'].includes(process.env.TEST_STUB_PARSE)) return stubProfileFromText(arguments[0])" + src.slice(j + 1)
   applied++
 }
 
