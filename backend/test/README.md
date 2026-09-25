@@ -70,6 +70,25 @@ Prints internal `_id`, field path, stored vs expected count/length, status
 (`affected` / `not_affected` / `undetermined`) and whether re-import is required.
 Never names, emails or résumé text. A value at a cap is only `affected` when the
 profile's own confirmed source text shows it continued.
+Wrapped continuation lines after the last stored item count as missing; a line
+that could be a wrap or the next record's header is `undetermined`, never a pass
+(fix 2026-09-25 after a false `not_affected`; self-tests A-09..A-12; A-12 = a whole record lost at the record cap returns `undetermined`, never a pass — record drops below a cap are caught by the comparison, S-02).
+
+## Full source comparison (read-only, decisive)
+
+```powershell
+cd backend
+node scripts\compare-profile-source.mjs --selftest   # S-01..S-13, no database
+node scripts\compare-profile-source.mjs --db=prod    # reads MONGODB_URI_PROD; no writes
+```
+
+Re-extracts each structured profile's stored original file and checks every
+letter of every source line against stored values (no percentage threshold).
+Lines below 100% print content-free diagnostics (gap position, stored paths
+anchored on the line, stored scalar values that explain the gap: an earlier
+identical occurrence, or a URL stored with `https://`). Unexplained residual =
+missing content. Line text goes only to a private OS-temp file — never pasted,
+never committed.
 
 ## Test-only environment variables
 

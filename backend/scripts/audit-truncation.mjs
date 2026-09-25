@@ -65,19 +65,30 @@ function continuation(source, end) {
   }
   return out.replace(/[\s ]+/g, ' ').trim()
 }
-// Bullet-looking lines after `end`, before a heading or a blank-line-separated
-// non-bullet line (the next record's header). Returns a count.
+// Source lines after `end` (the end of the last stored item) that the stored
+// list does not hold: bullet lines, AND wrapped continuation lines. Fix
+// 2026-09-25: the first version stopped at the first non-bullet line, so a PDF
+// wrap right after the last stored fragment hid every dropped bullet behind it
+// (a false not_affected on a real profile). A continuation = a non-bullet line
+// after a line with no sentence-final punctuation that starts lower-case. A
+// non-bullet line after an unfinished line that does NOT start lower-case could
+// be a wrap or the next record's header — that is `ambiguous`, never a pass.
+const TERMINAL = /[.!?;:)"'”’]\s*$/
+const WRAP_START = /^\s*[\p{Ll}(&,]/u
 function bulletsAfter(source, end) {
-  const lines = source.slice(end).split('\n').slice(1)
-  let n = 0
-  for (const raw of lines) {
+  const rest = source.slice(end).split('\n')
+  let prev = (source.slice(source.lastIndexOf('\n', end - 1) + 1, end) + rest[0]).replace(/\r$/, '')
+  let bullets = 0, wraps = 0, ambiguous = false
+  for (const raw of rest.slice(1)) {
     const l = raw.replace(/\r$/, '')
     if (!l.trim()) continue
     if (completenessKey(l)) break
-    if (BULLET.test(l)) { n++; continue }
+    if (BULLET.test(l)) { bullets++; prev = l; continue }
+    if (!TERMINAL.test(prev) && WRAP_START.test(l)) { wraps++; prev = l; continue }
+    if (!TERMINAL.test(prev)) ambiguous = true
     break
   }
-  return n
+  return { bullets, wraps, lines: bullets + wraps, ambiguous }
 }
 
 // Pure decision for one profile: [{path, stored, expected, status, reimport}]
@@ -96,8 +107,9 @@ export function assessTruncation(resumeData, source) {
       const loc = (source && last) ? locate(source, last) : null
       if (!loc) { out.push({ path: c.path, stored: v.length, expected: '?', status: 'undetermined', reimport: 'review' }); continue }
       const more = bulletsAfter(source, loc.end)
-      if (more > 0) out.push({ path: c.path, stored: v.length, expected: v.length + more, status: 'affected', reimport: 'required' })
-      else out.push({ path: c.path, stored: v.length, expected: v.length, status: 'not_affected', reimport: 'no' })
+      if (more.lines > 0) out.push({ path: c.path, stored: v.length, expected: more.wraps ? '>' + v.length : v.length + more.bullets, missingLines: more.lines, status: 'affected', reimport: 'required' })
+      else if (more.ambiguous) out.push({ path: c.path, stored: v.length, expected: '?', missingLines: '?', status: 'undetermined', reimport: 'review' })
+      else out.push({ path: c.path, stored: v.length, expected: v.length, missingLines: 0, status: 'not_affected', reimport: 'no' })
     }
   }
   // Below-cap lists: v1's slice-before-filter trap can leave a CUT list under
@@ -115,7 +127,8 @@ export function assessTruncation(resumeData, source) {
     const loc = last ? locate(source, last) : null
     if (!loc) continue
     const more = bulletsAfter(source, loc.end)
-    if (more > 0) out.push({ path, stored: v.length, expected: v.length + more, status: 'missing_vs_source', reimport: 'review' })
+    if (more.lines > 0) out.push({ path, stored: v.length, expected: more.wraps ? '>' + v.length : v.length + more.bullets, missingLines: more.lines, status: 'missing_vs_source', reimport: 'review' })
+    else if (more.ambiguous) out.push({ path, stored: v.length, expected: '?', missingLines: '?', status: 'undetermined', reimport: 'review' })
   }
   return out
 }
@@ -143,8 +156,36 @@ function selftest() {
   ok('A-07 below-cap list (14 stored, 16 in source \u2014 the blank-item trap) \u2192 missing_vs_source, expected 16, review', rD[0]?.status === 'missing_vs_source' && rD[0].expected === 16 && rD[0].reimport === 'review')
   const rE = assessTruncation({ experience: [{ title: 'Engineer', company: 'Co', bullets: Array.from({ length: 16 }, (_, i) => 'Item ' + i) }] }, srcD)
   ok('A-08 complete list (16 stored, 16 in source) \u2192 nothing reported', rE.length === 0)
-  const ser = JSON.stringify([...rA, ...rB, ...rC, ...rD])
-  ok('A-06 output carries paths and numbers only — no text', !/Word|Bullet|Sentence|Engineer/.test(ser))
+  // A-09: the real false negative — wrapped lines stored as separate bullets, the
+  // 12-bullet project cap reached on a FIRST HALF, so the next source line is a
+  // lower-case continuation; one more wrapped bullet follows. v1 of this script
+  // stopped at the continuation and said not_affected.
+  const wrapped = i => ['• Delivered item ' + i + ' across the reporting', 'layer for finance teams.']
+  const srcF = ['NAME', 'PROJECTS', 'Data Tool', '• Opening item.', ...[0, 1, 2, 3, 4, 5, 6].flatMap(wrapped), 'EDUCATION', 'BS, U'].join('\n')
+  const fragsF = srcF.split('\n').slice(3, 18).map(l => l.replace(/^• /, ''))
+  const rF = assessTruncation({ projects: [{ name: 'Data Tool', tech: [], bullets: fragsF.slice(0, 12) }] }, srcF)
+  const fF = rF.find(x => x.path === '$.projects[0].bullets')
+  ok('A-09 cap reached mid-bullet, next line a wrap (the missed real case) → affected, 3 missing source lines, re-import required',
+    fF?.status === 'affected' && fF.missingLines === 3 && fF.reimport === 'required')
+  // A-10: unfinished last item followed by a capitalised non-bullet line — a wrap or
+  // the next record's header; the script cannot tell, so it must not pass it.
+  const srcG = ['NAME', 'PROJECTS', 'Data Tool', ...Array.from({ length: 12 }, (_, i) => '• Item ' + i + ' built for teams'), 'Azure Data Factory pipelines and reports', 'Beta Tool', '• Shipped'].join('\n')
+  const rG = assessTruncation({ projects: [{ name: 'Data Tool', tech: [], bullets: Array.from({ length: 12 }, (_, i) => 'Item ' + i + ' built for teams') }] }, srcG)
+  ok('A-10 unfinished last item + capitalised non-bullet line → undetermined / review, never not_affected', rG[0]?.status === 'undetermined' && rG[0].reimport === 'review')
+  // A-11: finished last item (full stop) + next record header → still not_affected (no over-flagging).
+  const srcH = ['NAME', 'PROJECTS', 'Data Tool', ...Array.from({ length: 12 }, (_, i) => '• Item ' + i + ' shipped.'), 'Beta Tool', '• Shipped'].join('\n')
+  const rH = assessTruncation({ projects: [{ name: 'Data Tool', tech: [], bullets: Array.from({ length: 12 }, (_, i) => 'Item ' + i + ' shipped.') }] }, srcH)
+  ok('A-11 complete list ending in a full stop, then the next project → not_affected', rH[0]?.status === 'not_affected')
+  // A-12: whole-record loss at the record cap (12 jobs stored, a 13th in the source). The
+  // audit cannot size a lost record from a list of objects, so it must say review —
+  // never not_affected. (Record drops BELOW a cap are the comparison script's job: S-02.)
+  const jobs = Array.from({ length: 13 }, (_, i) => ['Role ' + i + ' | Firm ' + i + ' | 20' + (10 + i), '• Did thing ' + i + '.'])
+  const srcI = ['NAME', 'EXPERIENCE', ...jobs.flat()].join('\n')
+  const rI = assessTruncation({ experience: jobs.slice(0, 12).map((j, i) => ({ title: 'Role ' + i, company: 'Firm ' + i, dates: '20' + (10 + i), bullets: ['Did thing ' + i + '.'] })) }, srcI)
+  const fI = rI.find(x => x.path === '$.experience')
+  ok('A-12 whole record lost at the record cap (12 stored, 13 in source) → undetermined / review, never not_affected', fI?.status === 'undetermined' && fI.reimport === 'review')
+  const ser = JSON.stringify([...rA, ...rB, ...rC, ...rD, ...rF, ...rG, ...rH, ...rI])
+  ok('A-06 output carries paths and numbers only — no text', !/Word|Bullet|Sentence|Engineer|Item|Delivered|finance|Tool|Role|Firm|thing/.test(ser))
   const pass = res.filter(Boolean).length
   console.log(`audit selftest: ${pass}/${res.length} ${pass === res.length ? 'PASS' : 'FAIL'}`)
   return pass === res.length
@@ -178,7 +219,7 @@ for await (const u of cursor) {
   if (found.some(x => x.status === 'missing_vs_source' || x.status === 'undetermined')) reviewUsers++
   for (const x of found) {
     rows++
-    console.log(`user=${u._id} path=${x.path} stored=${x.stored} expected=${x.expected} status=${x.status} reimport=${x.reimport}`)
+    console.log(`user=${u._id} path=${x.path} stored=${x.stored} expected=${x.expected} missing_source_lines=${x.missingLines ?? '-'} status=${x.status} reimport=${x.reimport}`)
   }
 }
 console.log(`audit summary: profiles_scanned=${scanned} profiles_with_rows=${candidates} profiles_affected=${affectedUsers} profiles_needing_review=${reviewUsers} rows=${rows}`)
