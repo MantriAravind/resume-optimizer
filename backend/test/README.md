@@ -26,6 +26,10 @@ node test\unit-chunk2.mjs       # no server, no database, no env vars
 echo $LASTEXITCODE               # 0 = all pass, 1 = failures, 2 = server.js drifted
 ```
 
+L-series (affected-profile lock): the real guard and tracker rule run against a fake
+User model — locked → 423, fails closed (503) when the lock cannot be read, logs route
++ outcome only; plus a static rule that no line of `server.js` writes the lock.
+
 Extracts the real `validateResumeDataV2`, `buildFieldMetaV2` and `buildLineMap`
 from the canonical `server.js` (never copies), then runs the G-series (schema
 v2: unknown fields, invalid types, zero truncation, atom-only dedupe, null
@@ -90,11 +94,37 @@ identical occurrence, or a URL stored with `https://`). Unexplained residual =
 missing content. Line text goes only to a private OS-temp file — never pasted,
 never committed.
 
+## Affected-profile lock (reviewer ruling 2026-09-25)
+
+A profile whose saved details lost content to the legacy caps is marked
+`repair.reimportRequired` by `scripts/mark-reimport-required.mjs` — the only writer;
+no request path sets, changes or clears it (unit L-09, harness R15i). While marked:
+`/optimize` (both paths), `/me/surgical-fit`, `/download-word`, `/download-pdf` → 423
+`reimport_required` before any model call or rate-limit spend; `GET /me/resume` carries
+the status so the UI shows it (Profile banner, optimizer lock screen); tracker resumes
+generated before the repair are reported `resumeInvalid` and not handed out (423
+`resume_invalid`; stored text untouched). The structured `/optimize` path now requires
+sign-in, so the lock cannot be bypassed by dropping the token. After an approved repair
+(`--unlock`), generation works again and only resumes made after the repair are valid.
+
+```powershell
+cd backend
+node scripts\mark-reimport-required.mjs --selftest                 # K-01..K-09, no database
+node scripts\mark-reimport-required.mjs --db=dev --list            # read-only: _id, structured, locked
+node scripts\mark-reimport-required.mjs --db=prod --user=<_id> '--path=projects[0].bullets' --missing-lines=5          # dry run
+node scripts\mark-reimport-required.mjs --db=prod --user=<_id> '--path=projects[0].bullets' --missing-lines=5 --apply  # writes
+```
+
+Dry run by default. `--apply` writes only `repair` (guarded; a second run writes
+nothing) and prints hashes of the resume text, structured data, original file and
+contact profile before and after — they must read UNCHANGED. `--unlock --apply` is for
+use only after the reviewer approves the repair evidence (or to roll the lock back).
+
 ## Test-only environment variables
 
 | Variable | Purpose |
 | --- | --- |
-| `REGRESSION_SUITE=1` | run the full R1–R14 suite, then exit with 0/1 |
+| `REGRESSION_SUITE=1` | run the full R1–R15 suite, then exit with 0/1 |
 | `DRAFT_IMMUTABILITY_TEST=1` | rawText lifecycle hash self-test only |
 | `SWEEP_CONCURRENCY_TEST=1` | parallel-cleanup self-test only |
 | `SIZE_CEILING_TEST_MIB=<n>` | compress the BSON ceiling for boundary tests |

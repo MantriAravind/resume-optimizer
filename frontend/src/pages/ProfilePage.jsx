@@ -32,6 +32,7 @@ const CSS = `
 .pf-banner{display:flex;gap:10px;align-items:center;padding:11px 26px;background:#FFFBEB;
   border-bottom:1px solid #FDE68A;font-size:12.5px;color:#78350F;line-height:1.5}
 .pf-banner svg{width:15px;height:15px;flex:none}
+.pf-banner.lock{background:#FEF2F2;border-bottom-color:#FECACA;color:#7F1D1D}
 
 .pf-htop{padding:17px 26px 0;display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
 .pf-goboard{background:var(--blue);color:#fff;border:0;padding:9px 18px;border-radius:9px;
@@ -282,6 +283,8 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState({})
 
   const [rd, setRd] = useState(null)
+  // Affected-profile lock (2026-09-25): set by the server, shown on every visit until repaired.
+  const [repairLock, setRepairLock] = useState(null)
   const [rdCheck, setRdCheck] = useState(null)
   const [rdNotices, setRdNotices] = useState([])
   const [dirty, setDirty] = useState(false)
@@ -371,6 +374,7 @@ export default function ProfilePage() {
         }
         setProfile(p)
         setRd(data.resumeData || null)
+        setRepairLock(data.repair?.reimportRequired ? data.repair : null)
         // Phase 1: an unconfirmed upload survives a reload — the server returns it
         // as a draft and the page reopens straight into review. The draft holds the
         // PARSED values; edits made in the review before the reload were client
@@ -517,6 +521,7 @@ export default function ProfilePage() {
       if (!p.email && user?.primaryEmailAddress?.emailAddress) p.email = user.primaryEmailAddress.emailAddress
       setProfile(p)
       setRd(data.resumeData || null)
+      setRepairLock(data.repair?.reimportRequired ? data.repair : null)
       setSaved(true)
     } catch {
       setError('Could not restore your saved profile. Please refresh the page.')
@@ -820,6 +825,18 @@ export default function ProfilePage() {
                 <button className="pf-btn primary" onClick={leaveSave}>Save and leave</button>
               </div>
             </div>
+          </div>
+        )}
+
+        {repairLock && (
+          <div className="pf-banner lock" role="alert">
+            <AlertCircle />
+            <span>
+              <b>Your saved profile is missing part of your resume.</b>{' '}
+              Optyply won’t make resumes or Word/PDF files from it until it’s re-imported from your
+              original file, which is kept safe. Until then, use your original resume file, and don’t
+              reuse resumes Optyply made earlier.
+            </span>
           </div>
         )}
 

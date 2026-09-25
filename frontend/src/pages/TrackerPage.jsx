@@ -85,6 +85,12 @@ const CSS = `
   display:inline-flex; align-items:center; gap:5px;
 }
 
+.tk-bad {
+  display:inline-flex; align-items:center; gap:4px; margin-top:5px;
+  font-size:10.5px; font-weight:700; color:#B91C1C; background:#FEF2F2;
+  border:1px solid #FECACA; border-radius:20px; padding:2px 8px;
+}
+.tk-note.bad { background:#FEF2F2; border-color:#FECACA; color:#7F1D1D; margin-top:11px; }
 .tk-note {
   background:#FFFBEB; border:1px solid #FDE68A; border-radius:10px; padding:12px 14px;
   font-size:12px; color:#78350F; line-height:1.6; margin-top:14px;
@@ -215,6 +221,11 @@ export default function TrackerPage() {
       const rt = await fetch(`${BACKEND}/applications/${row._id}/resume`, {
         headers: { Authorization: `Bearer ${token}` },
       })
+      if (rt.status === 423) {
+        const j = await rt.json().catch(() => ({}))
+        alert(j.message || 'This resume may be incomplete. Do not send it again.')
+        return
+      }
       if (!rt.ok) { alert('No optimized resume was saved for this application.'); return }
       const { resumeText } = await rt.json()
 
@@ -224,6 +235,11 @@ export default function TrackerPage() {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ resumeText, font: DOC_FONT, length: 'standard' }),
       })
+      if (res.status === 423) {
+        const j = await res.json().catch(() => ({}))
+        alert(j.message || 'Your profile needs to be re-imported before Optyply can make files from it.')
+        return
+      }
       if (!res.ok) { alert('Download failed. Please try again.'); return }
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
@@ -298,6 +314,11 @@ export default function TrackerPage() {
                         <div className="tk-c">
                           {row.company}{row.location ? ` · ${row.location}` : ''} · {when(row.appliedAt)}
                         </div>
+                        {row.resumeInvalid && (
+                          <div className="tk-bad" title="Made from a profile that was missing part of your resume">
+                            Resume may be incomplete · don’t reuse
+                          </div>
+                        )}
                       </div>
 
                       <div onClick={e => e.stopPropagation()}>
@@ -317,7 +338,9 @@ export default function TrackerPage() {
                       </div>
 
                       <div className="tk-acts" onClick={e => e.stopPropagation()}>
-                        {row.optimized
+                        {row.optimized && row.resumeInvalid
+                          ? <button className="tk-btn" disabled title="This resume may be incomplete">Invalid</button>
+                          : row.optimized
                           ? <button className="tk-btn p" disabled={!!busy} onClick={() => download(row, 'pdf')}>
                               <Download size={11} />{busy === row._id + 'pdf' ? '…' : 'Resume'}
                             </button>
@@ -352,7 +375,15 @@ export default function TrackerPage() {
                         )}
                       </div>
 
-                      {row.optimized && (
+                      {row.optimized && row.resumeInvalid && (
+                        <div className="tk-note bad">
+                          This resume was made from a profile that was missing part of your resume, so it
+                          may be incomplete. Don’t send it again. After your profile is repaired, optimize
+                          this job again to get a complete version.
+                        </div>
+                      )}
+
+                      {row.optimized && !row.resumeInvalid && (
                         <div className="tk-dl">
                           <button className="tk-btn" disabled={!!busy} onClick={() => download(row, 'pdf')}>
                             <Download size={11} />{busy === row._id + 'pdf' ? 'Preparing…' : 'PDF'}

@@ -128,7 +128,7 @@ async function runRegressionSuite() {
   const SECRET = randomUUID()
   process.env.TEST_AUTH_BYPASS_SECRET = SECRET
   process.env.TEST_STUB_PARSE = '1'
-  const uidA = 'regr-sentinel-A', uidB = 'regr-sentinel-B', uidS = 'regr-sentinel-sweep'
+  const uidA = 'regr-sentinel-A', uidB = 'regr-sentinel-B', uidS = 'regr-sentinel-sweep', uidL = 'regr-sentinel-lock'
   const H = b => createHash('sha256').update(b).digest('hex').slice(0, 12)
   const results = []
   const FIXTURE_SHA = createHash('sha256').update(fixtureLines().join('\n'), 'utf8').digest('hex').slice(0, 12)
@@ -149,7 +149,8 @@ async function runRegressionSuite() {
 
   try {
     await new Promise(r => setTimeout(r, 600))
-    for (const uid of [uidA, uidB, uidS]) { await User.deleteOne({ clerkUserId: uid }); await ResumeDraft.deleteOne({ clerkUserId: uid }) }
+    for (const uid of [uidA, uidB, uidS, uidL]) { await User.deleteOne({ clerkUserId: uid }); await ResumeDraft.deleteOne({ clerkUserId: uid }) }
+    await Application.deleteMany({ clerkUserId: { $in: [uidA, uidB, uidS, uidL] } })
     console.log('\u2500\u2500 regression suite start (sentinels reset) \u00b7 fixture sha256=' + FIXTURE_SHA + ' \u00b7 PARSE_V2 at start: ' + parseV2Mode() + ' \u2500\u2500')
 
     // R1 — authentication on every protected endpoint
@@ -457,8 +458,96 @@ async function runRegressionSuite() {
       resumeData: { ...base14 } })
     const r14i = await jpost('/me/profile', uidA, confirmBody(ftxt, base14, legacyOk))
     ok('R14i pre-containment draft below every cap → confirms normally', r14i.status === 200)
-    if (savedV2r14 === undefined) delete process.env.PARSE_V2; else process.env.PARSE_V2 = savedV2r14
 
+    // R15 runs inside R14's PARSE_V2-off window, so its uploads confirm through the
+    // v1 path in every suite mode (off / shadow / on).
+    // R15 — AFFECTED-PROFILE LOCK (reviewer ruling 2026-09-25). A profile marked
+    // re-import-required: optimize (both paths), surgical fit, Word and PDF are refused
+    // 423 before any model call or rate-limit spend; tracker resumes generated before
+    // the repair are reported invalid and not handed out (stored text untouched);
+    // ordinary request paths never set, change or clear the lock; after a repair,
+    // generation works again and only newer resumes are valid. Logs: route + outcome.
+    const lockDoc = { reimportRequired: true, reason: 'legacy_cap_truncation', paths: ['$.projects[0].bullets'], missingSourceLines: 5, markedAt: new Date(Date.now() - 60000) }
+    const lockData = { ...base14 }
+    await User.create({ clerkUserId: uidL, resumeText: ftxt, resumeData: lockData, repair: lockDoc })
+    const oldText = 'Sentinel optimized resume generated before the repair'
+    const appOld = await Application.create({ clerkUserId: uidL, jobId: 'regr-job-old', title: 'T', company: 'C', resumeText: oldText, optimized: true })
+    await Application.create({ clerkUserId: uidL, jobId: 'regr-job-direct', title: 'T', company: 'C' })
+    await Application.create({ clerkUserId: uidA, jobId: 'regr-job-a', title: 'T', company: 'C', resumeText: 'Sentinel A resume', optimized: true })
+    const byJob = (l, j) => l.find(x => x.jobId === j) || {}
+    const logs15 = []
+    const realLog15 = console.log
+    console.log = (...a) => { logs15.push(a.map(String).join(' ')); realLog15(...a) }
+    try {
+      const gmL = await (await fetch(BASE + '/me/resume', { headers: as(uidL) })).json()
+      const gmA = await (await fetch(BASE + '/me/resume', { headers: as(uidA) })).json()
+      ok('R15a GET /me/resume reports the lock to its owner only (status + message; internal paths stay server-side)',
+        gmL.repair?.reimportRequired === true && /original/.test(gmL.repair.message || '') && !JSON.stringify(gmL.repair).includes('projects') && gmA.repair === null)
+      const jobBody = { jobText: 'Sentinel job description text', jobTitle: 'Sentinel' }
+      const o1 = await jpost('/optimize', uidL, { ...jobBody, resumeText: ftxt, resumeData: lockData })
+      const o1j = await o1.json()
+      const o2 = await jpost('/optimize', uidL, { ...jobBody, resumeText: ftxt })
+      ok('R15b locked profile: /optimize refused 423 reimport_required on the structured AND the text path, before any model call',
+        o1.status === 423 && o1j.error === 'reimport_required' && /original/.test(o1j.message || '') && o2.status === 423, o1.status + '/' + o2.status)
+      const o3 = await jpost('/optimize', null, { ...jobBody, resumeText: ftxt, resumeData: lockData })
+      ok('R15c structured /optimize without sign-in → 401 (dropping the token cannot bypass the lock)', o3.status === 401, 'status=' + o3.status)
+      const o4 = await jpost('/optimize', uidA, { resumeText: ftxt, resumeData: base14 })
+      ok('R15d unlocked profile passes the lock (reaches input validation: 400 for the missing job text; no model call)', o4.status === 400, 'status=' + o4.status)
+      docGenLog.delete(uidL)
+      const sf = await jpost('/me/surgical-fit', uidL, { optimizedResume: 'Sentinel text' })
+      const w1 = await jpost('/download-word', uidL, { resumeText: 'Sentinel doc text', kind: 'resume' })
+      const p1 = await jpost('/download-pdf', uidL, { resumeText: 'Sentinel doc text', kind: 'resume' })
+      const w1b = await jpost('/download-word', uidL, { resumeText: 'Sentinel doc text', resumeData: lockData })
+      ok('R15e locked profile: surgical fit, Word, PDF and structured Word all refused 423; hourly allowance untouched',
+        sf.status === 423 && w1.status === 423 && p1.status === 423 && w1b.status === 423 && !(docGenLog.get(uidL) || []).length,
+        [sf.status, w1.status, p1.status, w1b.status].join('/'))
+      docGenLog.delete(uidA)
+      const wA = await jpost('/download-word', uidA, { resumeText: 'Sentinel doc text', kind: 'resume' })
+      docGenLog.delete(uidA)
+      ok('R15f unlocked profile: Word download 200 (the lock is per profile)', wA.status === 200, 'status=' + wA.status)
+      const lsL = (await (await fetch(BASE + '/applications', { headers: as(uidL) })).json()).applications || []
+      const lsA = (await (await fetch(BASE + '/applications', { headers: as(uidA) })).json()).applications || []
+      ok('R15g tracker: the locked profile’s generated resume is reported invalid; its direct apply and another user’s resume are not',
+        byJob(lsL, 'regr-job-old').resumeInvalid === true && byJob(lsL, 'regr-job-direct').resumeInvalid === false && byJob(lsA, 'regr-job-a').resumeInvalid === false)
+      const rr = await fetch(BASE + '/applications/' + appOld._id + '/resume', { headers: as(uidL) })
+      const rrj = await rr.json()
+      const stillOld = await Application.findById(appOld._id).lean()
+      ok('R15h tracker: the invalid resume is not handed out (423 resume_invalid); its stored text is unchanged',
+        rr.status === 423 && rrj.error === 'resume_invalid' && H(stillOld.resumeText) === H(oldText))
+
+      // Ordinary request paths must never set, change or clear the lock.
+      const upL = await uploadAs(uidL, fixture)
+      await jpost('/me/resume/draft', uidL, { resumeData: stubStructuredFromText(upL.body.text || '') })
+      const cL = await jpost('/me/profile', uidL, confirmBody(upL.body.text, stubStructuredFromText(upL.body.text), upL.body.draftId))
+      await jpost('/me/resume/cancel', uidL, {})
+      await jpost('/applications', uidL, { jobId: 'regr-job-direct2', title: 'T', company: 'C' })
+      const lockAfter = (await User.findOne({ clerkUserId: uidL }).select('repair').lean())?.repair
+      ok('R15i upload, draft sync, a successful save, cancel and tracking leave the lock exactly as set',
+        upL.status === 200 && cL.status === 200 && JSON.stringify(lockAfter) === JSON.stringify(lockDoc), 'save=' + cL.status)
+
+      // After an approved repair (what the marker script's --unlock writes).
+      await User.updateOne({ clerkUserId: uidL }, { $set: { 'repair.reimportRequired': false, 'repair.repairedAt': new Date() } })
+      await new Promise(r => setTimeout(r, 25))
+      await jpost('/applications', uidL, { jobId: 'regr-job-new', title: 'T', company: 'C', resumeText: 'Sentinel resume made after the repair' })
+      docGenLog.delete(uidL)
+      const wR = await jpost('/download-word', uidL, { resumeText: 'Sentinel doc text', kind: 'resume' })
+      docGenLog.delete(uidL)
+      const lsR = (await (await fetch(BASE + '/applications', { headers: as(uidL) })).json()).applications || []
+      const newRow = byJob(lsR, 'regr-job-new')
+      const rOld = await fetch(BASE + '/applications/' + appOld._id + '/resume', { headers: as(uidL) })
+      const rNew = await fetch(BASE + '/applications/' + newRow._id + '/resume', { headers: as(uidL) })
+      const gmR = await (await fetch(BASE + '/me/resume', { headers: as(uidL) })).json()
+      ok('R15j after the repair: lock off, Word 200; the pre-repair resume stays invalid (423); a resume made after the repair is valid (200)',
+        gmR.repair === null && wR.status === 200 && byJob(lsR, 'regr-job-old').resumeInvalid === true && rOld.status === 423 && newRow.resumeInvalid === false && rNew.status === 200,
+        [wR.status, rOld.status, rNew.status].join('/'))
+    } finally {
+      console.log = realLog15
+    }
+    const lockLines = logs15.filter(l => l.startsWith('repair lock:'))
+    ok('R15k refusal logs: exactly one line per refusal (8), route + outcome only — no user id, no resume text',
+      lockLines.length === 8 && lockLines.every(l => !l.includes(uidL) && !l.includes(uidA) && !/sentinel/i.test(l)), 'lines=' + lockLines.length)
+
+    if (savedV2r14 === undefined) delete process.env.PARSE_V2; else process.env.PARSE_V2 = savedV2r14
     const pass = results.filter(Boolean).length
     console.log('\u2500\u2500 regression suite: ' + pass + '/' + results.length + ' PASS ' + (pass === results.length ? '\u2014 ALL GREEN' : '\u2014 FAILURES ABOVE') + ' \u2500\u2500')
     process.exitCode = pass === results.length ? 0 : 1
@@ -466,7 +555,8 @@ async function runRegressionSuite() {
     console.error('regression suite crashed:', e.message)
     process.exitCode = 1
   } finally {
-    for (const uid of [uidA, uidB, uidS]) { await User.deleteOne({ clerkUserId: uid }).catch(() => {}); await ResumeDraft.deleteOne({ clerkUserId: uid }).catch(() => {}) }
+    for (const uid of [uidA, uidB, uidS, uidL]) { await User.deleteOne({ clerkUserId: uid }).catch(() => {}); await ResumeDraft.deleteOne({ clerkUserId: uid }).catch(() => {}) }
+    await Application.deleteMany({ clerkUserId: { $in: [uidA, uidB, uidS, uidL] } }).catch(() => {})
     delete process.env.TEST_AUTH_BYPASS_SECRET
     delete process.env.TEST_STUB_PARSE
     console.log('regression suite: sentinels cleaned up, bypass + stub disabled')

@@ -1,7 +1,8 @@
 // backend/test/unit-chunk2.mjs — Phase 2 chunk 2 unit fixtures (committed, reproducible)
 // Extracts the REAL functions from the canonical ../server.js (no copies), then
 // runs the schema-v2 validator fixtures (G-series) and the field-envelope /
-// provenance fixtures (P-series). All fixture data is synthetic.
+// provenance fixtures (P-series), containment (C-series) and the affected-profile
+// lock (L-series). All fixture data is synthetic.
 //
 // Run (from backend/):  node test\unit-chunk2.mjs      Exit: 0 all pass · 1 failures · 2 extraction drift
 import { readFileSync, writeFileSync, mkdtempSync } from 'fs'
@@ -26,6 +27,10 @@ const code = [
   grab('function rescueSummaryFromText(resumeText, opts = {}) {', 'async function parseAndVerifyResume('),
   grab('function parseV2Mode() {', 'async function runParsePipeline('),
   grab('function computeCapLoss(raw, delivered, text) {', 'function draftCapFields(capLoss) {'),
+  // Affected-profile lock: the real guard + tracker rule, run against a fake User model.
+  'let User = null; const __setUser = u => { User = u }',
+  grab('// \u2500\u2500 AFFECTED-PROFILE LOCK', "app.get('/me/job-marks'"),
+  'export { __setUser, reimportGuard, reimportLockFor, trackerResumeInvalid, REIMPORT_MESSAGE, RESUME_INVALID_MESSAGE }',
   'export { validateResumeDataV2, buildFieldMetaV2, buildLineMap, projectV2ToV1Shape, sanitizeResumeData, rescueSummaryFromText, v2FromRaw, countV1Loss, parseV2Mode, v2EvidenceSuffix, legacyCapExceed, profileCapExceed, legacyAtCap, computeCapLoss, containSections, containNotices, CONTAIN_SAVE_MESSAGE }',
 ].join('\n')
 const tmp = join(mkdtempSync(join(tmpdir(), 'optyply-unit-')), 'extracted.mjs')
@@ -315,6 +320,55 @@ ok('C-09 user messages name sections only (Summary, Experience, Contact) — no 
   }
   ok(`C-10 randomized: detector flags EXACTLY the payloads v1 truncates (${N} payloads: ${lossy} lossy, ${N - lossy} lossless) — missed=0, false alarms=0`,
     agree === N && lossy >= 300 && N - lossy >= 300, `agree=${agree} missed=${missed} falseAlarm=${falseAlarm}`)
+}
+
+// ── L-series: affected-profile lock (reviewer ruling 2026-09-25) ──
+{
+  const { __setUser, reimportGuard, reimportLockFor, trackerResumeInvalid, REIMPORT_MESSAGE, RESUME_INVALID_MESSAGE } = mod
+  const fakeUser = docs => ({ findOne: q => ({ select: () => ({ lean: async () => {
+    if (docs === 'throw') throw new Error('db down')
+    return docs[q.clerkUserId] || null } }) }) })
+  const t0 = new Date('2026-09-25T12:00:00Z'), before = new Date('2026-09-25T11:00:00Z'), after = new Date('2026-09-25T13:00:00Z')
+  const locked = { reimportRequired: true, markedAt: t0 }
+  const repaired = { reimportRequired: false, markedAt: t0, repairedAt: t0 }
+  const opt = (resumeAt) => ({ optimized: true, resumeAt })
+  ok('L-01 tracker rule: locked → every generated resume invalid (with or without a timestamp); marked but repair not recorded → invalid; direct applies and never-marked profiles never invalid',
+    trackerResumeInvalid(opt(after), locked) && trackerResumeInvalid(opt(null), locked) && !trackerResumeInvalid({ optimized: false }, locked) &&
+    !trackerResumeInvalid(opt(null), null) && trackerResumeInvalid(opt(null), { reimportRequired: true }) && !trackerResumeInvalid(opt(null), { reimportRequired: false }) &&
+    trackerResumeInvalid(opt(after), { reimportRequired: false, markedAt: t0 }))
+  ok('L-02 tracker rule after repair: made after the repair → valid; before it, or with no timestamp (legacy row) → still invalid',
+    !trackerResumeInvalid(opt(after), repaired) && trackerResumeInvalid(opt(before), repaired) && trackerResumeInvalid(opt(null), repaired) && trackerResumeInvalid(opt(t0), repaired))
+  const run = async (docs, userId) => {
+    __setUser(fakeUser(docs))
+    const out = { status: null, body: null, next: 0, logs: [] }
+    const res = { status(c) { out.status = c; return { json(b) { out.body = b } } } }
+    const realLog = console.log
+    console.log = (...a) => { out.logs.push(a.join(' ')) }
+    try { await reimportGuard('/download-word')({ userId }, res, () => { out.next++ }) } finally { console.log = realLog }
+    return out
+  }
+  const g1 = await run({ u1: { repair: locked } }, 'u1')
+  ok('L-03 guard, locked profile → 423 reimport_required with the plain message; the route handler never runs',
+    g1.status === 423 && g1.body.error === 'reimport_required' && g1.body.message === REIMPORT_MESSAGE && /original/.test(REIMPORT_MESSAGE) && g1.next === 0)
+  const g2 = await run({ u1: { repair: repaired }, u2: {} }, 'u1'), g3 = await run({ u2: {} }, 'u2')
+  ok('L-04 guard, repaired or never-marked profile → passes straight through (no response written)', g2.next === 1 && g2.status === null && g3.next === 1 && g3.status === null)
+  const g4 = await run({ u1: { repair: { reimportRequired: 'true', markedAt: t0 } } }, 'u1')
+  ok('L-05 guard only honours a real boolean lock (the marker script writes true, never a string)', g4.next === 1)
+  const g5 = await run('throw', 'u1')
+  ok('L-06 guard fails CLOSED: lock unreadable → 503, nothing generated', g5.status === 503 && g5.next === 0)
+  ok('L-07 guard logs route + outcome only (no user id)', g1.logs.length === 1 && g1.logs[0].startsWith('repair lock: /download-word refused 423') && !g1.logs[0].includes('u1') && g5.logs.length === 1 && !g5.logs[0].includes('u1'))
+  ok('L-08 lock lookup: no user id → no lookup, not locked', (await reimportLockFor(null)) === null && typeof RESUME_INVALID_MESSAGE === 'string' && /Do not send it again/.test(RESUME_INVALID_MESSAGE))
+  // Static rule: NO request path in server.js may write the lock. Every code line that
+  // mentions it must be a read (the schema line and the /me/resume status are the only
+  // allowed `repair:` keys). The marker script is the only writer.
+  const lines = src.split('\n').map((l, i) => [i + 1, l]).filter(([, l]) => /\brepair\b/.test(l) && !/^\s*\/\//.test(l))
+  const writes = lines.filter(([, l]) =>
+    /\$set|\$unset|\$setOnInsert|\$push|\$pull|updateOne|updateMany|findOneAndUpdate|replaceOne|bulkWrite/.test(l) ||
+    /['"`]repair\./.test(l) || /['"`]repair['"`]\s*\]\s*=/.test(l) || /\.repair\s*=[^=]/.test(l) || /[{,]\s*repair\s*[,}]/.test(l) ||
+    (/(^|[^.\w])repair\s*=[^=]/.test(l) && !/^\s*const repair = owner\?\.repair \|\| null\s*$/.test(l)) ||
+    (/(^|[\s{,])repair\s*:/.test(l) && !/^\s*repair:\s+\{ type: mongoose\.Schema\.Types\.Mixed, default: null \},\s*$/.test(l) && !/^\s*repair: user\?\.repair\?\.reimportRequired === true\s*$/.test(l)))
+  ok('L-09 static: server.js has no write to the lock anywhere (reads only)', lines.length >= 8 && writes.length === 0,
+    'lines=' + lines.length + (writes.length ? ' writes at ' + writes.map(([n]) => n).join(',') : ''))
 }
 
 const pass = results.filter(Boolean).length

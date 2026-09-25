@@ -289,8 +289,16 @@ function analyzeCacheKey(resumeText, jobText, jobTitle = '') {
 const Job = mongoose.models.Job || mongoose.model('Job', jobSchema)
 
 // ── Auth guard — returns a JSON 401 instead of redirecting
-function requireUser(req, res, next) {
+// Identity comes from ONE place. requireUser uses it, and so does the one route that
+// also serves signed-out callers (/optimize), so "who is this" can never be answered
+// two different ways (affected-profile lock, 2026-09-25).
+function resolveUserId(req) {
   const { userId } = getAuth(req)
+  return userId || null
+}
+
+function requireUser(req, res, next) {
+  const userId = resolveUserId(req)
   if (!userId) return res.status(401).json({ error: 'You need to be signed in.' })
   req.userId = userId
   next()
@@ -395,6 +403,14 @@ const userSchema = new mongoose.Schema({
   // city, dates, gpa}], certifications[{name, org, date}], extraSections[] }.
   resumeData:     { type: mongoose.Schema.Types.Mixed },
 
+  // Affected-profile lock (reviewer ruling 2026-09-25). A profile whose saved details
+  // lost content to the legacy caps is marked here by scripts/mark-reimport-required.mjs
+  // (dry run by default) — NO request path ever sets or clears it. Shape:
+  // { reimportRequired, reason, paths[], missingSourceLines, markedAt, repairedAt? }.
+  // While reimportRequired is true, optimize, surgical fit and Word/PDF generation answer
+  // 423, and every tracker resume generated before the repair is reported invalid.
+  repair:         { type: mongoose.Schema.Types.Mixed, default: null },
+
   updatedAt:      { type: Date, default: Date.now },
 })
 
@@ -440,6 +456,10 @@ const applicationSchema = new mongoose.Schema({
   scoreBefore: { type: Number, default: null },
   scoreAfter:  { type: Number, default: null },
   confirmedSkills: { type: [String], default: [] },
+  // When resumeText was last written. Status changes also move updatedAt, so this is
+  // the only reliable answer to "was this resume made before the profile's repair?"
+  // Rows written before this field existed have none and are treated as older.
+  resumeAt:    { type: Date, default: null },
 
   appliedAt:   { type: Date, default: Date.now },
   updatedAt:   { type: Date, default: Date.now },
@@ -488,6 +508,45 @@ const jobMarkSchema = new mongoose.Schema({
 })
 jobMarkSchema.index({ clerkUserId: 1, jobId: 1 }, { unique: true })
 const JobMark = mongoose.models.JobMark || mongoose.model('JobMark', jobMarkSchema)
+
+// ── AFFECTED-PROFILE LOCK (reviewer ruling 2026-09-25) ───────────────────────
+// One plain message everywhere the lock refuses. 423 Locked: the request is valid,
+// the resource is locked until an approved repair clears it.
+const REIMPORT_MESSAGE = 'Part of your resume was cut off when your profile was saved, so Optyply cannot make resumes or Word/PDF files from it until it is re-imported from your original file. Your original file is kept. Until then, use your original resume file, and do not reuse resumes Optyply made earlier.'
+const RESUME_INVALID_MESSAGE = 'This resume was made from a profile that was missing part of your resume, so it may be incomplete. Do not send it again. After your profile is repaired, optimize this job again to get a complete version.'
+
+async function reimportLockFor(userId) {
+  if (!userId) return null
+  const u = await User.findOne({ clerkUserId: userId }).select('repair').lean()
+  return u?.repair?.reimportRequired === true ? u.repair : null
+}
+
+// Route guard for signed-in routes (runs after requireUser, BEFORE the rate limiter so
+// a refused request never spends the user's hourly allowance). Fails CLOSED: if the
+// lock cannot be read, nothing is generated. Logs the route and outcome only.
+function reimportGuard(route) {
+  return async (req, res, next) => {
+    let lock
+    try { lock = await reimportLockFor(req.userId) } catch {
+      console.log(`repair lock: ${route} check failed -> refused 503`)
+      return res.status(503).json({ error: 'Could not check your profile right now. Please try again in a moment.' })
+    }
+    if (!lock) return next()
+    console.log(`repair lock: ${route} refused 423 (reimport required)`)
+    return res.status(423).json({ error: 'reimport_required', message: REIMPORT_MESSAGE })
+  }
+}
+
+// A tracker resume is invalid when its owner's profile was ever marked AND the resume
+// was written before the repair completed (no repairedAt yet = still locked = every
+// stored resume is older). Rows from before resumeAt existed count as older.
+function trackerResumeInvalid(row, repair) {
+  if (!row?.optimized || !repair) return false
+  if (repair.reimportRequired === true) return true   // locked now: every stored resume is older
+  if (!repair.markedAt) return false                  // never marked
+  if (!repair.repairedAt) return true                 // marked, repair not recorded: stay safe
+  return !(row.resumeAt && new Date(row.resumeAt) > new Date(repair.repairedAt))
+}
 
 app.get('/me/job-marks', requireUser, async (req, res) => {
   try {
@@ -573,6 +632,7 @@ app.post('/applications', requireUser, async (req, res) => {
     }
     if (optimized) {
       set.resumeText  = resumeText
+      set.resumeAt    = new Date()
       set.optimized   = true
       // Only an apply can mark a resume as sent, and a later attach must never
       // downgrade one that genuinely was.
@@ -605,7 +665,11 @@ app.get('/applications', requireUser, async (req, res) => {
       .select('-resumeText')
       .sort({ appliedAt: -1 })
       .lean()
-    res.json({ applications: rows })
+    // Affected-profile lock: computed per request from the owner's repair record;
+    // the rows themselves are never modified.
+    const owner = await User.findOne({ clerkUserId: req.userId }).select('repair').lean()
+    const repair = owner?.repair || null
+    res.json({ applications: rows.map(r => ({ ...r, resumeInvalid: trackerResumeInvalid(r, repair) })) })
   } catch (err) {
     console.error('GET /applications failed:', err)
     res.status(500).json({ error: 'Could not load your applications.' })
@@ -618,6 +682,13 @@ app.get('/applications/:id/resume', requireUser, async (req, res) => {
     const doc = await Application.findOne({ _id: req.params.id, clerkUserId: req.userId }).lean()
     if (!doc) return res.status(404).json({ error: 'Not found.' })
     if (!doc.resumeText) return res.status(404).json({ error: 'No optimized resume was saved for this application.' })
+    // Affected-profile lock: a resume generated before the repair may be missing
+    // content. The stored text is kept exactly as it is; it is just not handed out.
+    const owner = await User.findOne({ clerkUserId: req.userId }).select('repair').lean()
+    if (trackerResumeInvalid(doc, owner?.repair || null)) {
+      console.log('repair lock: GET /applications/:id/resume refused 423 (resume generated before repair)')
+      return res.status(423).json({ error: 'resume_invalid', message: RESUME_INVALID_MESSAGE })
+    }
     res.json({ resumeText: doc.resumeText, title: doc.title, company: doc.company })
   } catch (err) {
     console.error('GET /applications/:id/resume failed:', err)
@@ -761,6 +832,10 @@ app.get('/me/resume', requireUser, async (req, res) => {
       // edits these; every optimize reads them. A page or two of strings — small
       // enough to ride the same call.
       resumeData:     user?.resumeData     || null,
+      // Affected-profile lock: status only (the paths are internal and stay server-side).
+      repair: user?.repair?.reimportRequired === true
+        ? { reimportRequired: true, message: REIMPORT_MESSAGE, markedAt: user.repair.markedAt || null }
+        : null,
       draft: draft ? {
         fileName: draft.fileName || '', text: draft.text || '',
         profile: draft.profile || null, resumeData: draft.resumeData || null,
@@ -2253,6 +2328,25 @@ Return ONLY JSON: {"summary": string, "jobs": [[string,...],...], "projectBullet
 app.post('/optimize', async (req, res) => {
   const { resumeText, jobText, confirmedSkills = [], jobTitle = '', yearsMin = null, resumeLayout = null } = req.body
 
+  // Affected-profile lock (2026-09-25). This route also serves signed-out callers
+  // (pasted text), so identity is optional here — except for the STRUCTURED path:
+  // saved profile details only ever come from a signed-in profile, so that path now
+  // requires sign-in, which makes the lock enforceable on it. A signed-in user whose
+  // profile is locked is refused on either path, before any model call.
+  const optUserId = resolveUserId(req)
+  if (req.body?.resumeData && !optUserId) return res.status(401).json({ error: 'You need to be signed in.' })
+  if (optUserId) {
+    let lock
+    try { lock = await reimportLockFor(optUserId) } catch {
+      console.log('repair lock: /optimize check failed -> refused 503')
+      return res.status(503).json({ error: 'Could not check your profile right now. Please try again in a moment.' })
+    }
+    if (lock) {
+      console.log('repair lock: /optimize refused 423 (reimport required)')
+      return res.status(423).json({ error: 'reimport_required', message: REIMPORT_MESSAGE })
+    }
+  }
+
   // ── STRUCTURED PATH (template architecture) ─────────────────────────────
   // Fires when the caller sends the profile's structured details. The legacy
   // text path below is untouched and still serves callers without them.
@@ -2748,7 +2842,7 @@ Respond in this exact JSON format with no extra text:
 // (the public Resume Tool uses it) and cannot load per-user blocks; this one is
 // authed and cheap (one small model call per shorten round, none when all fits).
 
-app.post('/me/surgical-fit', requireUser, async (req, res) => {
+app.post('/me/surgical-fit', requireUser, reimportGuard('/me/surgical-fit'), async (req, res) => {
   const optimizedResume = String(req.body?.optimizedResume || '')
   // A7 final design 2026-09-13: names of tapped skills, for green vs amber preview
   // highlights — display only, never affects the fit or the PDF
@@ -5584,7 +5678,7 @@ function docGenLimiter(req, res, next) {
   next()
 }
 
-app.post('/download-word', requireUser, docGenLimiter, async (req, res) => {
+app.post('/download-word', requireUser, reimportGuard('/download-word'), docGenLimiter, async (req, res) => {
   const { resumeText, font, length, kind, letterText, company } = req.body
   if (String(resumeText || '').length > 200000 || String(letterText || '').length > 60000) {
     return res.status(413).json({ error: 'Document text is too large.' })
@@ -6039,7 +6133,7 @@ async function renderPdfViaPdfShift(html) {
   return Buffer.from(await response.arrayBuffer())
 }
 
-app.post('/download-pdf', requireUser, docGenLimiter, async (req, res) => {
+app.post('/download-pdf', requireUser, reimportGuard('/download-pdf'), docGenLimiter, async (req, res) => {
   const { resumeText, font, length, kind, letterText, company } = req.body
   if (String(resumeText || '').length > 200000 || String(letterText || '').length > 60000) {
     return res.status(413).json({ error: 'Document text is too large.' })

@@ -50,16 +50,19 @@ if (!src.includes("import { randomUUID, createHash } from 'crypto'")) {
 }
 applied++
 
-// 4. Auth bypass — exists ONLY in this generated file, secret self-generated per run
-patch('auth bypass', `function requireUser(req, res, next) {
+// 4. Auth bypass — exists ONLY in this generated file, secret self-generated per run.
+//    Patched into resolveUserId (since 2026-09-25 the single identity source for
+//    requireUser AND the optional-identity check on /optimize), so every route the
+//    harness drives resolves identity exactly the way production does.
+patch('auth bypass', `function resolveUserId(req) {
   const { userId } = getAuth(req)`,
-  `function requireUser(req, res, next) {
+  `function resolveUserId(req) {
   // TESTLAB ONLY: harness bypass; the secret is minted inside runRegressionSuite
   // each run and never logged. Absent the env var this block is inert.
   const bypass = process.env.TEST_AUTH_BYPASS_SECRET
   if (bypass) {
     const h = String(req.headers['x-test-auth'] || '')
-    if (h.startsWith(bypass + ':')) { req.userId = h.slice(bypass.length + 1); return next() }
+    if (h.startsWith(bypass + ':')) return h.slice(bypass.length + 1)
   }
   const { userId } = getAuth(req)`)
 

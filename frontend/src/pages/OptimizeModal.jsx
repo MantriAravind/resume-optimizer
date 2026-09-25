@@ -159,6 +159,7 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
 
   const [phase, setPhase]   = useState('loading') // loading | pick | rewriting | result | error
   const [error, setError]   = useState('')
+  const [lockMessage, setLockMessage] = useState('')   // server's wording when the profile is locked
 
   const [resumeText, setResumeText] = useState('')
   const [resumeLayout, setResumeLayout] = useState(null)   // A7: the resume's own layout, from the PDF
@@ -373,6 +374,15 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
           return
         }
 
+        // Affected-profile lock (2026-09-25): the server marks a profile whose saved
+        // details lost content. Stop here, before anything is analyzed or generated.
+        if (me.repair?.reimportRequired) {
+          setLockMessage(me.repair.message || '')
+          setError('reimport-required')
+          setPhase('error')
+          return
+        }
+
         if (!me.resumeText) {
           setError('no-resume')
           setPhase('error')
@@ -513,9 +523,12 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
     setPromised(liveScore)
     setPhase('rewriting')
     try {
+      // Signed in (2026-09-25): the server needs to know whose profile this is, so a
+      // locked profile can be refused. The structured path requires it.
+      const token = await getToken()
       const res = await fetch(`${BACKEND}/optimize`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           resumeText,
           jobText,
@@ -528,6 +541,13 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
           resumeData: profileRd || undefined,   // Step 4C: structured path when the profile has details
         }),
       })
+      if (res.status === 423) {
+        const j = await res.json().catch(() => ({}))
+        setLockMessage(j.message || '')
+        setError('reimport-required')
+        setPhase('error')
+        return
+      }
       if (!res.ok) throw new Error('optimize failed')
       const d = await res.json()
       setOptimized(d.optimizedResume || '')
@@ -718,6 +738,11 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
           ...(isLetter ? { kind: 'letter', letterText: letterSheetToText(letterRef.current) || letter, company: job.company || '' } : {}),
         }),
       })
+      if (res.status === 423) {
+        const j = await res.json().catch(() => ({}))
+        alert(j.message || 'Your profile needs to be re-imported before Optyply can make files from it.')
+        return
+      }
       if (!res.ok) { alert('Download failed. Please try again.'); return }
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
@@ -840,6 +865,14 @@ export default function OptimizeModal({ job, onClose, onApplied }) {
                   <div className="om-load-t" style={{ marginTop: 10 }}>This job is no longer open</div>
                   <div className="om-load-s">{job.company} closed this posting, so there is nothing to optimize against. Nothing you did caused this. It drops off the board at the next refresh.</div>
                   <button className="om-closed-btn" onClick={onClose}>Back to jobs</button>
+                </>
+              ) : error === 'reimport-required' ? (
+                <>
+                  <div className="om-load-t" style={{ marginTop: 10 }}>Your profile needs to be re-imported first</div>
+                  <div className="om-load-s">
+                    {lockMessage || 'Part of your resume was cut off when your profile was saved, so Optyply cannot make resumes or Word/PDF files from it until it is re-imported from your original file. Your original file is kept. Until then, use your original resume file, and do not reuse resumes Optyply made earlier.'}
+                  </div>
+                  <button className="om-closed-btn" onClick={onClose}>Close</button>
                 </>
               ) : error === 'no-resume' ? (
                 <>
