@@ -100,6 +100,23 @@ export function assessTruncation(resumeData, source) {
       else out.push({ path: c.path, stored: v.length, expected: v.length, status: 'not_affected', reimport: 'no' })
     }
   }
+  // Below-cap lists: v1's slice-before-filter trap can leave a CUT list under
+  // the cap (e.g. 14 of 16), and extraction can also miss bullets. Either way
+  // content is missing vs the confirmed source, so report it for review —
+  // cause is not claimed.
+  const seen = new Set(out.map(x => x.path))
+  const lists = []
+  ;(resumeData?.experience || []).forEach((x, i) => lists.push([`$.experience[${i}].bullets`, x?.bullets]))
+  ;(resumeData?.projects || []).forEach((x, i) => lists.push([`$.projects[${i}].bullets`, x?.bullets]))
+  lists.push(['$.summaryBullets', resumeData?.summaryBullets])
+  for (const [path, v] of lists) {
+    if (seen.has(path) || !Array.isArray(v) || !v.length || !source) continue
+    const last = [...v].reverse().find(x => typeof x === 'string' && x.trim())
+    const loc = last ? locate(source, last) : null
+    if (!loc) continue
+    const more = bulletsAfter(source, loc.end)
+    if (more > 0) out.push({ path, stored: v.length, expected: v.length + more, status: 'missing_vs_source', reimport: 'review' })
+  }
   return out
 }
 
@@ -121,7 +138,12 @@ function selftest() {
   ok('A-04 exactly 15 bullets that really are all of them → not_affected', rB.find(x => x.path === '$.experience[0].bullets')?.status === 'not_affected')
   const rC = assessTruncation({ summary: cut }, 'unrelated text only')
   ok('A-05 value not found in source → undetermined / review (never a guess)', rC[0]?.status === 'undetermined' && rC[0].reimport === 'review')
-  const ser = JSON.stringify([...rA, ...rB, ...rC])
+  const srcD = ['NAME', 'EXPERIENCE', 'Engineer | Co | 2020', ...Array.from({ length: 16 }, (_, i) => '\u2022 Item ' + i)].join('\n')
+  const rD = assessTruncation({ experience: [{ title: 'Engineer', company: 'Co', bullets: Array.from({ length: 14 }, (_, i) => 'Item ' + i) }] }, srcD)
+  ok('A-07 below-cap list (14 stored, 16 in source \u2014 the blank-item trap) \u2192 missing_vs_source, expected 16, review', rD[0]?.status === 'missing_vs_source' && rD[0].expected === 16 && rD[0].reimport === 'review')
+  const rE = assessTruncation({ experience: [{ title: 'Engineer', company: 'Co', bullets: Array.from({ length: 16 }, (_, i) => 'Item ' + i) }] }, srcD)
+  ok('A-08 complete list (16 stored, 16 in source) \u2192 nothing reported', rE.length === 0)
+  const ser = JSON.stringify([...rA, ...rB, ...rC, ...rD])
   ok('A-06 output carries paths and numbers only — no text', !/Word|Bullet|Sentence|Engineer/.test(ser))
   const pass = res.filter(Boolean).length
   console.log(`audit selftest: ${pass}/${res.length} ${pass === res.length ? 'PASS' : 'FAIL'}`)
@@ -141,18 +163,24 @@ if (!uri) { console.error(`SETUP FAILED: ${prod ? 'MONGODB_URI_PROD' : 'MONGODB_
 await mongoose.connect(uri)
 console.log(`audit: connected to database "${mongoose.connection.name}" (read-only pass)`)
 const users = mongoose.connection.db.collection('users')
-let scanned = 0, candidates = 0, affectedUsers = 0, rows = 0
+const totalAccounts = await users.countDocuments({})
+const structured = await users.countDocuments({ resumeData: { $ne: null } })
+const textOnly = await users.countDocuments({ resumeData: null, resumeText: { $nin: [null, ''] } })
+console.log(`audit scope: accounts_total=${totalAccounts} with_structured_resume=${structured} text_only_resume=${textOnly} no_resume=${totalAccounts - structured - textOnly}`)
+console.log('audit scope note: legacy caps apply only to structured resume data; text-only resumes are stored uncapped')
+let scanned = 0, candidates = 0, affectedUsers = 0, reviewUsers = 0, rows = 0
 const cursor = users.find({ resumeData: { $ne: null } }, { projection: { resumeData: 1, resumeText: 1 } })
 for await (const u of cursor) {
   scanned++
   const found = assessTruncation(u.resumeData, u.resumeText || '')
   if (found.length) candidates++
   if (found.some(x => x.status === 'affected')) affectedUsers++
+  if (found.some(x => x.status === 'missing_vs_source' || x.status === 'undetermined')) reviewUsers++
   for (const x of found) {
     rows++
     console.log(`user=${u._id} path=${x.path} stored=${x.stored} expected=${x.expected} status=${x.status} reimport=${x.reimport}`)
   }
 }
-console.log(`audit summary: profiles_scanned=${scanned} profiles_at_a_cap=${candidates} profiles_affected=${affectedUsers} rows=${rows}`)
+console.log(`audit summary: profiles_scanned=${scanned} profiles_with_rows=${candidates} profiles_affected=${affectedUsers} profiles_needing_review=${reviewUsers} rows=${rows}`)
 await mongoose.disconnect()
 process.exit(0)
