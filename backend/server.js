@@ -840,7 +840,7 @@ app.get('/me/resume', requireUser, async (req, res) => {
         fileName: draft.fileName || '', text: draft.text || '',
         profile: draft.profile || null, resumeData: draft.resumeData || null,
         verification: draft.verification || null, completeness: draft.completeness || [],
-        draftId: draft.draftId || '', createdAt: draft.createdAt || null,
+        draftId: draft.draftId || '', createdAt: draft.createdAt || null, expiresAt: draftExpiresAt(draft.createdAt),
       } : null,
     })
   } catch (error) {
@@ -3234,6 +3234,11 @@ const upload = multer({
 // review restores it instead of losing it. Replaced wholesale on every upload,
 // consumed by the save, discarded by cancel. `expires` is a Mongo TTL index:
 // abandoned drafts self-delete ~24h after createdAt.
+// One lifetime for a pending review, used by the TTL index below AND by the
+// expiry time shown to the user, so the two can never disagree. Counted from
+// createdAt (the upload); autosave never extends it (recruiter decision, 2026-09-26).
+const DRAFT_TTL_SECONDS = 60 * 60 * 24
+const draftExpiresAt = createdAt => (createdAt ? new Date(new Date(createdAt).getTime() + DRAFT_TTL_SECONDS * 1000).toISOString() : null)
 const resumeDraftSchema = new mongoose.Schema({
   clerkUserId:  { type: String, required: true, unique: true, index: true },
   fileName:     String,
@@ -3251,7 +3256,7 @@ const resumeDraftSchema = new mongoose.Schema({
   capLoss:      mongoose.Schema.Types.Mixed,   // [{path, limit, actual}] content the v1 caps would drop — paths/counts only
   draftId:      { type: String, default: '' }, // shared with the parked file (orphan sweep)
   baseVersion:  { type: Number, default: 0 },  // user's resumeVersion when this draft was made
-  createdAt:    { type: Date, default: Date.now, expires: 60 * 60 * 24 },
+  createdAt:    { type: Date, default: Date.now, expires: DRAFT_TTL_SECONDS },
 })
 const ResumeDraft = mongoose.model('ResumeDraft', resumeDraftSchema)
 
@@ -4452,7 +4457,10 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
       // A draft write failing must never block the upload; the response still
       // carries everything and the client works exactly as before.
       const completeness = suspect ? [] : [...assessCompleteness(text, structured.data), ...containNotices(capLoss || [])]
+      // Expiry is reported only for a draft that was actually written.
+      let expiresAt = null
       if (!suspect) {
+        const createdAt = new Date()
         try {
           await ResumeDraft.findOneAndUpdate(
             { clerkUserId: req.userId },
@@ -4460,9 +4468,10 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
               profile: profile || null, resumeData: structured.data || null,
               verification: structured.verification || null, completeness,
               ...draftEvidenceFields(text), ...draftV2Fields(v2), ...draftCapFields(capLoss),
-              draftId, baseVersion, createdAt: new Date() },
+              draftId, baseVersion, createdAt },
             { upsert: true },
           )
+          expiresAt = draftExpiresAt(createdAt)
         } catch (e) { console.warn('resume draft save failed:', e.message) }
       }
 
@@ -4483,6 +4492,8 @@ app.post('/me/resume/upload', requireUser, (req, res) => {
         resumeDataVerification: structured.verification,
         completeness,
         draftId,
+        // When the pending review expires (24 h after this upload); null when no draft was written.
+        expiresAt,
         // A7-S2: the fallback sentence, if any, so the client can show it at upload
         compat: compat ? { mode: compat.mode, reason: compat.reason, message: compat.message } : null,
       })
@@ -4608,7 +4619,9 @@ app.post('/me/resume/draft', requireUser, async (req, res) => {
       ...profileCapExceed(req.body?.profile, LEGACY_CAPS.draftProfile, ['firstName', 'lastName', 'email', 'location', 'phone', 'linkedin', 'github', 'portfolio'])]
     if (over.length) {
       console.log(`containment: draft autosave refused count=${over.length} paths[${v2PathList(over.map(x => x.path))}]`)
-      return res.status(422).json({ status: 'content_exceeds_limits', error: CONTAIN_SAVE_MESSAGE(containSections(over)) })
+      // `sections` (names only, never values) lets the review screen say at once
+      // which section's change was not saved (reviewer follow-up 2, 2026-09-25).
+      return res.status(422).json({ status: 'content_exceeds_limits', error: CONTAIN_SAVE_MESSAGE(containSections(over)), sections: containSections(over) })
     }
     const set = buildDraftSyncSet(req.body)
     if (!Object.keys(set).length) return res.status(400).json({ error: 'Nothing to update.' })

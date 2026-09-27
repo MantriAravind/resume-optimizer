@@ -33,6 +33,14 @@ const CSS = `
   border-bottom:1px solid #FDE68A;font-size:12.5px;color:#78350F;line-height:1.5}
 .pf-banner svg{width:15px;height:15px;flex:none}
 .pf-banner.lock{background:#FEF2F2;border-bottom-color:#FECACA;color:#7F1D1D}
+/* Autosave outcome card: fixed, so it stays in view wherever the user is editing
+   (a sticky bar would not stick: the layout's overflow-x makes its own scroll box). */
+.pf-syncbar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:55;width:calc(100% - 40px);max-width:720px;
+  display:flex;gap:10px;align-items:flex-start;padding:13px 16px;background:#FEF2F2;border:1px solid #FECACA;border-radius:12px;
+  color:#7F1D1D;font-size:12.5px;line-height:1.5;box-shadow:0 10px 30px rgba(127,29,29,.15)}
+.pf-syncbar svg{width:16px;height:16px;flex:none;margin-top:1px}
+.pf-syncbar-acts{display:flex;gap:8px;margin-top:9px;flex-wrap:wrap}
+.pf.has-syncbar{padding-bottom:150px}
 
 .pf-htop{padding:17px 26px 0;display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
 .pf-goboard{background:var(--blue);color:#fff;border:0;padding:9px 18px;border-radius:9px;
@@ -178,6 +186,14 @@ const CSS = `
 .pf-pending svg{width:16px;height:16px;flex:none;color:#B45309}
 .pf-pending span{flex:1}
 .pf-pending .pf-btn{flex:none}
+/* Autosave status (recruiter decision 5): one named state, always visible in the sticky review banner. */
+.pf-pending .pf-savestate{flex:none;display:inline-block;padding:5px 10px;border-radius:999px;
+  background:#fff;border:1px solid #FDE68A;color:#78350F;font-size:12px;font-weight:700;white-space:nowrap}
+.pf-pending .pf-savestate.saved{background:#F0FDF4;border-color:#BBF7D0;color:#166534}
+.pf-pending .pf-savestate.failed,.pf-pending .pf-savestate.refused,.pf-pending .pf-savestate.conflict,
+.pf-pending .pf-savestate.expired{background:#FEF2F2;border-color:#FECACA;color:#991B1B}
+.pf-savestate button{border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer;
+  text-decoration:underline;text-underline-offset:2px}
 .pf-toast{position:fixed;right:22px;top:72px;background:#172033;color:#fff;padding:11px 15px;border-radius:9px;
   font-size:12.5px;font-weight:650;opacity:0;transform:translateY(-6px);pointer-events:none;transition:.2s;z-index:60}
 .pf-toast.show{opacity:1;transform:translateY(0)}
@@ -192,7 +208,8 @@ const CSS = `
 @media (max-width:640px){ .pf-body,.pf-htop{padding-left:16px;padding-right:16px}
   .pf-tabs{margin-left:16px;margin-right:16px} .pf-fgrid{grid-template-columns:1fr}
   .pf-identity{grid-template-columns:44px 1fr} .pf-identity .pf-status{grid-column:1/-1;width:max-content}
-  .pf-frow2{grid-template-columns:38px 1fr} .pf-frow2 .pf-actions{grid-column:1/-1} }
+  .pf-frow2{grid-template-columns:38px 1fr} .pf-frow2 .pf-actions{grid-column:1/-1}
+  .pf-pending{flex-wrap:wrap} }
 `
 
 function formatDate(iso) {
@@ -289,6 +306,7 @@ export default function ProfilePage() {
   const [rdNotices, setRdNotices] = useState([])
   const [dirty, setDirty] = useState(false)
   const [draftId, setDraftId] = useState('')
+  const [draftExpiresAt, setDraftExpiresAt] = useState(null)   // server time the pending review expires (upload + 24 h)
   const [dirtySections, setDirtySections] = useState([])
   const [leaveAsk, setLeaveAsk] = useState(null)
   const [ackAsk, setAckAsk] = useState(null)
@@ -314,47 +332,251 @@ export default function ProfilePage() {
   // skipped Save, went to the board, and was confused that matches used the old
   // resume. The pending state must be impossible to miss and hard to abandon.
   const [pendingUpload, setPendingUpload] = useState(false)
+  // Autosave status (recruiter decision 5, 2026-09-25). While a review is pending,
+  // exactly one of these is true and the banner shows it by name:
+  //   'saving'   an edit is waiting for, or in, its sync          → "Saving…"
+  //   'saved'    the server draft holds everything on screen       → "Saved"
+  //   'failed'   the sync failed; retrying can help               → "Save failed — Retry"
+  //   'refused'  the server refused the content (hard size limit);
+  //              repeating the same request cannot succeed        → "Not saved — action required"
+  //   'conflict' the draft changed elsewhere; autosave STOPS so a
+  //              newer version is never overwritten               → "Changed in another tab — Reload"
+  //   'expired'  the draft no longer exists on the server         → "Not saved — action required"
+  // The user's latest text always stays on screen. Only the server's section
+  // names are shown — no resume text is logged anywhere.
+  const [saveState, setSaveState] = useState('saved')
+  const [refusedSections, setRefusedSections] = useState([])
+  const saveStateRef = useRef('saved')
+  const lastSynced = useRef(null)            // last state the server accepted: { rd, contact }
+  const syncTimer = useRef(null)             // debounce timer of the waiting edit
+  const syncChain = useRef(Promise.resolve()) // syncs run one at a time, in order
+  const syncBusy = useRef(false)
+  const syncHalted = useRef(false)           // set by 'conflict' / 'expired' (and by leaving without the latest change)
+  const editSeq = useRef(0)                  // bumps on every edit; a reply for an older edit never sets the status
+  const reviewGen = useRef(0)                // bumps per review (upload, reload, discard, confirm); stale replies are ignored
+  const allowUnload = useRef(false)          // Reload chosen on purpose: no browser leave prompt
+  const rdRef = useRef(rd); rdRef.current = rd
+  const profileRef = useRef(profile); profileRef.current = profile
+  const draftExpiresAtRef = useRef(null); draftExpiresAtRef.current = draftExpiresAt
+  // An open entry editor holds edits that are NOT in the review yet (they join it
+  // on Save). Only an open entry that was actually changed counts as an unsaved
+  // local edit; both sides go through the same date composition as Save does.
+  const entryChanged = (() => {
+    const bl = list => (list || []).map(b => String(b).trim()).filter(Boolean)
+    const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+    if (editingExp !== null && expDraft) {
+      const o = rd?.experience?.[editingExp] || {}
+      const d = splitDates(o.dates)
+      return !same(
+        { t: o.title || '', c: o.company || '', ci: o.city || '', d: composeDates(d.start, d.end, d.current), b: bl(o.bullets) },
+        { t: expDraft.title || '', c: expDraft.company || '', ci: expDraft.city || '', d: composeDates(expDraft._start, expDraft._end, expDraft._current), b: bl(expDraft.bullets) })
+    }
+    if (editingProj !== null && projDraft) {
+      const o = rd?.projects?.[editingProj] || {}
+      const d = splitDates(o.dates)
+      const tech = x => (Array.isArray(x) ? x : []).map(t => String(t).trim()).filter(Boolean)
+      return !same(
+        { n: o.name || '', te: tech(o.tech), d: composeDates(d.start, d.end, d.current), g: o.github || '', b: bl(o.bullets) },
+        { n: projDraft.name || '', te: tech(projDraft.tech), d: composeDates(projDraft._start, projDraft._end, projDraft._current), g: projDraft.github || '', b: bl(projDraft.bullets) })
+    }
+    return false
+  })()
+  const entryChangedRef = useRef(false); entryChangedRef.current = entryChanged
 
+  function setSave(state, sections = []) {
+    saveStateRef.current = state
+    setSaveState(state)
+    setRefusedSections(state === 'refused' ? sections : [])
+  }
+  function resetAutosave(synced) {
+    clearTimeout(syncTimer.current); syncTimer.current = null
+    reviewGen.current += 1
+    syncHalted.current = false
+    lastSynced.current = synced
+    setSave('saved')
+  }
+  const contactOf = p => Object.fromEntries(CONTACT_FIELDS.map(([k]) => [k, String(p?.[k] ?? '')]))
+
+  // One draft sync. Always sends the NEWEST content (read from refs at send time).
+  async function doSync() {
+    if (syncHalted.current) return saveStateRef.current
+    syncBusy.current = true
+    const gen = reviewGen.current
+    const seq = editSeq.current
+    const rdNow = rdRef.current
+    const contact = contactOf(profileRef.current)
+    let next = 'failed'
+    let sections = []
+    let accepted = false
+    try {
+      const token = await getToken()
+      const res = await fetch(`${BACKEND}/me/resume/draft`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resumeData: rdNow, profile: contact }),
+      })
+      const j = await res.json().catch(() => ({}))
+      if (res.ok && j.updated !== false) {
+        accepted = true
+        next = 'saved'
+      } else if (res.ok) {
+        next = 'expired'
+      } else if (res.status === 422) {
+        next = 'refused'
+        sections = Array.isArray(j.sections) ? j.sections.filter(x => typeof x === 'string') : []
+      } else if (res.status === 409) {
+        next = 'conflict'
+      }
+    } catch { /* network failure: 'failed' */ }
+    syncBusy.current = false
+    // A reply that belongs to an earlier review (a new upload, reload, discard or
+    // confirmation happened meanwhile) changes nothing on this one.
+    if (gen !== reviewGen.current) return saveStateRef.current
+    if (accepted) lastSynced.current = { rd: rdNow ? structuredClone(rdNow) : null, contact }
+    if (next === 'conflict' || next === 'expired') syncHalted.current = true
+    // An edit made while this request was out has its own sync coming, and that
+    // sync reports the final status. Halting outcomes apply at once.
+    if (seq === editSeq.current || syncHalted.current) setSave(next, sections)
+    return saveStateRef.current
+  }
+  function queueSync() {
+    syncChain.current = syncChain.current.then(doSync, doSync)
+    return syncChain.current
+  }
+  // Before leaving: send a waiting edit NOW, wait for any sync in flight, report the outcome.
+  async function flushAutosave() {
+    if (!pendingUpload) return 'saved'
+    if (syncTimer.current) {
+      clearTimeout(syncTimer.current); syncTimer.current = null
+      return queueSync()
+    }
+    await syncChain.current
+    return saveStateRef.current
+  }
+  const withTimeout = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r('saving'), ms))])
+  function retrySync() {
+    if (!pendingUpload || syncHalted.current) return Promise.resolve(saveStateRef.current)
+    setSave('saving')
+    return queueSync()
+  }
+
+  // Leaving the page by any route (including the browser's Back button) sends an
+  // edit that is still waiting instead of dropping it silently. Declared BEFORE the
+  // autosave effect on purpose: React runs unmount cleanups in declaration order,
+  // so this sees the waiting timer before the autosave cleanup clears it.
+  useEffect(() => () => {
+    if (syncTimer.current) { clearTimeout(syncTimer.current); syncTimer.current = null; queueSync() }
+  }, [])
+
+  // Phase 1.4: while a review is pending, edits sync into the server-side draft,
+  // debounced to ~1.5 s after the last change. Content identical to what the server
+  // already holds is not re-sent (no needless sync after upload, load or undo).
   useEffect(() => {
-    if (!pendingUpload && !dirty) return
-    const warn = e => { e.preventDefault(); e.returnValue = '' }
+    if (!pendingUpload || syncHalted.current) return
+    editSeq.current += 1
+    const last = lastSynced.current
+    if (last && !syncBusy.current && JSON.stringify(last.rd ?? null) === JSON.stringify(rd ?? null)
+      && JSON.stringify(last.contact) === JSON.stringify(contactOf(profile))) {
+      setSave('saved')
+      return
+    }
+    setSave('saving')
+    syncTimer.current = setTimeout(() => { syncTimer.current = null; queueSync() }, 1500)
+    return () => { clearTimeout(syncTimer.current); syncTimer.current = null }
+  }, [pendingUpload, rd, profile])
+
+  // Reload/close protection: only while something on screen is NOT safely saved.
+  // A saved review needs none — it restores from the server on reload.
+  const unsavedReview = pendingUpload && (['saving', 'failed', 'refused'].includes(saveState) || entryChanged)
+  useEffect(() => {
+    if (!unsavedReview && !(dirty && !pendingUpload)) return
+    const warn = e => { if (allowUnload.current) return; e.preventDefault(); e.returnValue = '' }
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
-  }, [pendingUpload, dirty])
+  }, [unsavedReview, dirty, pendingUpload])
 
-  // Leave guard registration (2026-09-22, his spec item 1): while this page holds
-  // unsaved work — typed edits or a pending upload — every sidebar exit goes
-  // through the Save-or-Discard dialog below instead of silently dropping it.
-  // Window registry, not a context import, so the layout stays uncoupled from
-  // page file paths.
+  // Leave guard registration (2026-09-22, his spec item 1): the sidebar asks this
+  // page before every exit. Window registry, not a context import, so the layout
+  // stays uncoupled from page file paths.
   useEffect(() => {
     window.__optyplyLeaveGuard = {
       dirty: () => dirty || pendingUpload,
-      ask: () => new Promise(resolve => setLeaveAsk({ resolve })),
+      ask: () => askToLeave(),
     }
     return () => { window.__optyplyLeaveGuard = null }
-  }, [dirty, pendingUpload])
+  })
 
-  // Phase 1.4: while a review is pending, typed edits sync into the server-side
-  // draft, debounced to ~1.5s after the last keystroke. Fire-and-forget: a missed
-  // sync costs at most that edit on a reload, never an error in the user's face.
-  useEffect(() => {
-    if (!pendingUpload) return
-    const t = setTimeout(async () => {
-      try {
-        const token = await getToken()
-        await fetch(`${BACKEND}/me/resume/draft`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            resumeData: rd,
-            profile: Object.fromEntries(CONTACT_FIELDS.map(([k]) => [k, profile[k] || ''])),
-          }),
-        })
-      } catch { /* silent — draft sync is best-effort */ }
-    }, 1500)
-    return () => clearTimeout(t)
-  }, [pendingUpload, rd, profile, getToken])
+  // One leave decision for the sidebar and the in-page exits.
+  //  - No review pending: the saved-profile dialog (Stay / Discard changes /
+  //    Save and leave) for unsaved section edits, as before.
+  //  - Review pending (recruiter decisions 3, 5, 12 and the 2026-09-26 note):
+  //    leaving never confirms or discards the new resume. A waiting edit is sent
+  //    first. If everything is then saved, the user just leaves — no dialog — and
+  //    the next page shows a brief, non-blocking note with the expiry time. A
+  //    blocking dialog appears only when something would be lost: a save still
+  //    pending or failed, a refused change, a conflict, or a changed open entry.
+  //    "Leave without latest changes" drops only the unsaved browser edit — the
+  //    server-side draft keeps its last saved version and reopens on return.
+  async function askToLeave() {
+    if (!pendingUpload) return new Promise(resolve => setLeaveAsk({ resolve, review: false }))
+    const state = await withTimeout(flushAutosave(), 8000)
+    if (state === 'saved' && !entryChangedRef.current) { leaveSavedReview(); return true }
+    return new Promise(resolve => setLeaveAsk({ resolve, review: true, state, entryChanged: entryChangedRef.current, busy: false }))
+  }
+  // Hands the next page a one-time, non-blocking note (window registry, the same
+  // pattern as the leave guard; SidebarLayout shows it for a few seconds).
+  function leaveSavedReview() {
+    const t = draftExpiresAtRef.current ? new Date(draftExpiresAtRef.current) : null
+    const when = t && !isNaN(t.getTime())
+      ? t.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+      : ''
+    window.__optyplyNotice = {
+      at: Date.now(),
+      text: when
+        ? `Your resume review is saved as a draft. You can return before ${when} to finish it.`
+        : 'Your resume review is saved as a draft. You can return within 24 hours of uploading to finish it.',
+      action: { label: 'Continue review', path: '/profile' },
+    }
+  }
+  function closeLeave(proceed) {
+    const ask = leaveAsk
+    setLeaveAsk(null)
+    ask?.resolve(proceed)
+  }
+  function leaveWithoutLatest() {
+    // Nothing unsaved may be sent after this point.
+    clearTimeout(syncTimer.current); syncTimer.current = null
+    syncHalted.current = true
+    closeLeave(true)
+  }
+  async function leaveRetry() {
+    setLeaveAsk(a => (a ? { ...a, busy: true } : a))
+    const state = await withTimeout(retrySync(), 8000)
+    if (state === 'saved' && !entryChangedRef.current) { leaveSavedReview(); closeLeave(true); return }
+    setLeaveAsk(a => (a ? { ...a, busy: false, state } : a))
+  }
+  function reloadPage() {
+    allowUnload.current = true
+    window.location.reload()
+  }
+
+  // Undo latest change: back to the last version the server accepted. The
+  // restored state equals the server draft, so no new sync is needed.
+  function undoRefusedChange() {
+    const last = lastSynced.current
+    if (!last) return
+    setRd(last.rd ? structuredClone(last.rd) : null)
+    setProfile(p => ({ ...p, ...last.contact }))
+    setEditingExp(null); setExpDraft(null); setEditingProj(null); setProjDraft(null)
+  }
+  // Continue editing: take the user to the section the refusal names.
+  function goToRefused() {
+    const label = refusedSections[0]
+    const id = label === 'Name' ? 'contact' : Object.keys(SECTION_LABELS).find(k => SECTION_LABELS[k] === label)
+    setTab('resume')
+    if (id) setSection(id)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -390,9 +612,12 @@ export default function ProfilePage() {
             return next
           })
           setRd(d.resumeData || null)
+          resetAutosave({ rd: d.resumeData ? structuredClone(d.resumeData) : null,
+            contact: Object.fromEntries(CONTACT_FIELDS.map(([k]) => [k, String(d.profile?.[k] ?? '').trim()])) })
           setRdCheck(d.verification || null)
           setRdNotices(Array.isArray(d.completeness) ? d.completeness : [])
           setDraftId(d.draftId || '')
+          setDraftExpiresAt(d.expiresAt || null)
           setSaved(false)
           setPendingUpload(true)
           setTab('resume'); setSection('contact')
@@ -440,9 +665,12 @@ export default function ProfilePage() {
         return next
       })
       setRd(data.resumeData || null)
+      resetAutosave({ rd: data.resumeData ? structuredClone(data.resumeData) : null,
+        contact: Object.fromEntries(CONTACT_FIELDS.map(([k]) => [k, String(data.profile?.[k] ?? '').trim()])) })
       setRdCheck(data.resumeDataVerification || null)
       setRdNotices(Array.isArray(data.completeness) ? data.completeness : [])
       setDraftId(data.draftId || '')
+      setDraftExpiresAt(data.expiresAt || null)
       setReplacing(false)
       setSaved(false)
       setEditingExp(null); setEditingProj(null)
@@ -460,7 +688,7 @@ export default function ProfilePage() {
   // dialog as the sidebar guard — found 2026-09-22: it bypassed the guard.
   async function guardedSection(next) {
     if (dirty && !pendingUpload && next !== section) {
-      const ok = await new Promise(resolve => setLeaveAsk({ resolve }))
+      const ok = await new Promise(resolve => setLeaveAsk({ resolve, review: false }))
       if (!ok) return
     }
     setSection(next)
@@ -468,27 +696,23 @@ export default function ProfilePage() {
 
   async function guardedNav(path) {
     if (dirty || pendingUpload) {
-      const ok = await new Promise(resolve => setLeaveAsk({ resolve }))
+      const ok = await askToLeave()
       if (!ok) return
     }
     navigate(path)
   }
 
+  // Saved-profile dialog only (no review pending): section-level Save / Discard.
   async function leaveSave() {
     const ok = await handleSave()
     const ask = leaveAsk; setLeaveAsk(null)
     ask?.resolve(!!ok)
   }
   async function leaveDiscard() {
-    if (pendingUpload) {
-      try {
-        const token = await getToken()
-        await fetch(`${BACKEND}/me/resume/cancel`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
-      } catch { /* draft TTL cleans up; leaving proceeds regardless */ }
-    }
-    // Discard must actually restore the saved data, not just clear the flag —
-    // a section-switch discard STAYS on this page, so the edited state would
-    // otherwise still be on screen pretending to be saved.
+    // Discards the unsaved section edits only — never a resume draft (recruiter
+    // decision 12). Discard must actually restore the saved data, not just clear
+    // the flag — a section-switch discard STAYS on this page, so the edited state
+    // would otherwise still be on screen pretending to be saved.
     await restoreSaved()
     const ask = leaveAsk; setLeaveAsk(null)
     ask?.resolve(true)
@@ -504,12 +728,14 @@ export default function ProfilePage() {
   // review can always be exited without saving and without trapping anyone.
   async function restoreSaved() {
     setPendingUpload(false)
+    resetAutosave(null)
     setScrambled(false)
     setRdCheck(null)
     setRdNotices([])
     setDirty(false)
     setDirtySections([])
     setDraftId('')
+    setDraftExpiresAt(null)
     setLoading(true)
     try {
       const token = await getToken()
@@ -589,10 +815,12 @@ export default function ProfilePage() {
       if (rdUse) setRd({ ...rdUse, skills: cleanSkills(rdUse.skills) })
       setSaved(true)
       setPendingUpload(false)
+      resetAutosave(null)
       setRdNotices([])
       setDirty(false)
       setDirtySections([])
       setDraftId('')
+      setDraftExpiresAt(null)
       setUpdatedAt(data.updatedAt)
       ping(msg || 'Changes saved')
       setTimeout(() => setSaved(false), 3000)
@@ -789,11 +1017,66 @@ export default function ProfilePage() {
     </>
   )
 
+  // Wording for a refused autosave (recruiter decision 5): names the section(s) the
+  // server reported; never shows or logs the content itself.
+  const joinNames = l => (l.length <= 1 ? (l[0] || '') : l.slice(0, -1).join(', ') + ' and ' + l[l.length - 1])
+  const namedRefusal = refusedSections.length > 0 && !refusedSections.some(n => n === 'Whole resume' || n === 'Resume')
+  const refusedTitle = namedRefusal
+    ? `Not saved — ${joinNames(refusedSections)} ${refusedSections.length === 1 ? 'is' : 'are'} too large to save without cutting content.`
+    : 'Not saved — your latest change is too large to save without cutting content.'
+  const showSyncCard = pendingUpload && ['refused', 'failed', 'conflict', 'expired'].includes(saveState)
+
+  // The review-pending leave dialog, matched to what is actually unsaved.
+  const leaveView = leaveAsk?.review ? (
+    leaveAsk.state === 'refused' ? { kind: 'refused', title: refusedTitle,
+      body: 'Your latest text is still on the page. Undo it or shorten it, or leave without it — the rest of your review stays saved as a draft.' }
+    : leaveAsk.state === 'failed' ? { kind: 'failed', title: 'Save failed',
+      body: 'Your latest change couldn’t be saved — the connection or the server had a problem. It is still on the page. If you leave now, only this change is lost; the rest of your review stays saved as a draft.' }
+    : leaveAsk.state === 'saving' ? { kind: 'failed', title: 'Still saving your latest change',
+      body: 'It hasn’t reached the server yet. If you leave now, only this change may be lost; the rest of your review stays saved as a draft.' }
+    : leaveAsk.state === 'conflict' ? { kind: 'conflict', title: 'Changed in another tab',
+      body: 'This review was changed in another tab, so autosave stopped here to avoid overwriting the newer version. Reload to continue with the newest version. If you leave now, changes made in this tab since then are lost.' }
+    : leaveAsk.state === 'expired' ? { kind: 'expired', title: 'This review is no longer available',
+      body: 'It expired (reviews last 24 hours from upload) or was discarded in another tab. Your current resume was not changed. Upload the file again to start a new review.' }
+    : { kind: 'entry', title: 'An open entry has unsaved changes',
+      body: 'Changes in the open entry aren’t in your review yet. Continue editing, or leave without those changes — the rest of your review stays saved as a draft.' }
+  ) : null
+
   return (
     <SidebarLayout>
-      <div className="pf">
+      <div className={`pf${showSyncCard ? ' has-syncbar' : ''}`}>
         <style>{CSS}</style>
         <div className={`pf-toast ${toast ? 'show' : ''}`}>{toast}</div>
+
+        {showSyncCard && (
+          <div className="pf-syncbar" role="alert" aria-live="assertive">
+            <AlertCircle />
+            <div>
+              {saveState === 'refused' ? (<>
+                <b>{refusedTitle}</b>{' '}
+                Your latest text is still shown here. Shorten it, or undo the latest change to go back to your last saved
+                version. The rest of your review is saved as a draft. If you leave or reload now, this change will be lost.
+              </>) : saveState === 'conflict' ? (<>
+                <b>Changed in another tab.</b> This review was changed in another tab or by a newer version of Optyply, so
+                autosave has stopped here to avoid overwriting it. Reload to continue with the newest version.
+              </>) : saveState === 'expired' ? (<>
+                <b>This review is no longer available.</b> It expired (reviews last 24 hours from upload) or was discarded
+                in another tab. Your current resume was not changed. Discard this review and upload the file again.
+              </>) : (<>
+                <b>Save failed.</b> Your latest change couldn’t be saved — the connection or the server had a problem. Your
+                text is still shown here. Retry, or keep editing and it will try again. If you leave or reload now, this
+                change will be lost.
+              </>)}
+              <div className="pf-syncbar-acts">
+                {saveState === 'refused' && <button className="pf-btn" onClick={goToRefused}>Continue editing</button>}
+                {saveState === 'refused' && lastSynced.current && <button className="pf-btn" onClick={undoRefusedChange}>Undo latest change</button>}
+                {saveState === 'failed' && <button className="pf-btn" onClick={() => retrySync()}>Retry</button>}
+                {saveState === 'conflict' && <button className="pf-btn" onClick={reloadPage}>Reload</button>}
+                {saveState === 'expired' && <button className="pf-btn" onClick={cancelUpload}>Discard this review</button>}
+              </div>
+            </div>
+          </div>
+        )}
 
         {ackAsk && (
           <div className="pf-leave-overlay">
@@ -811,18 +1094,45 @@ export default function ProfilePage() {
           </div>
         )}
 
-        {leaveAsk && (
+        {leaveAsk && !leaveAsk.review && (
           <div className="pf-leave-overlay">
-            <div className="pf-leave-box">
-              <h3>Unsaved changes</h3>
+            <div className="pf-leave-box" role="dialog" aria-modal="true" aria-labelledby="pf-leave-title">
+              <h3 id="pf-leave-title">Unsaved changes</h3>
               <p>
-                Your profile has unsaved changes{dirtySections.length ? <> in <b>{dirtySections.join(', ')}</b></> : (pendingUpload ? ' from your new resume upload' : '')}.
+                Your profile has unsaved changes{dirtySections.length ? <> in <b>{dirtySections.join(', ')}</b></> : ''}.
                 {' '}Save them before moving on, or discard them?
               </p>
               <div className="pf-leave-btns">
-                <button className="pf-btn" onClick={() => { const a = leaveAsk; setLeaveAsk(null); a.resolve(false) }}>Stay</button>
+                <button className="pf-btn" onClick={() => closeLeave(false)}>Stay</button>
                 <button className="pf-btn" onClick={leaveDiscard}>Discard changes</button>
                 <button className="pf-btn primary" onClick={leaveSave}>Save and leave</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {leaveView && (
+          <div className="pf-leave-overlay">
+            <div className="pf-leave-box" role="dialog" aria-modal="true" aria-labelledby="pf-leave-title">
+              <h3 id="pf-leave-title">{leaveView.title}</h3>
+              <p>{leaveView.body}</p>
+              <div className="pf-leave-btns">
+                {leaveView.kind === 'expired' ? (<>
+                  <button className="pf-btn" onClick={() => closeLeave(false)}>Stay</button>
+                  <button className="pf-btn primary" onClick={leaveWithoutLatest}>Leave</button>
+                </>) : (<>
+                  <button className="pf-btn" onClick={() => closeLeave(false)} disabled={leaveAsk.busy}>
+                    {leaveView.kind === 'conflict' ? 'Stay' : 'Continue editing'}
+                  </button>
+                  {leaveView.kind === 'failed' && (
+                    <button className="pf-btn" onClick={leaveRetry} disabled={leaveAsk.busy}>{leaveAsk.busy ? 'Saving…' : 'Retry save'}</button>
+                  )}
+                  {leaveView.kind === 'refused' && lastSynced.current && (
+                    <button className="pf-btn" onClick={() => { undoRefusedChange(); closeLeave(false) }}>Undo latest change</button>
+                  )}
+                  {leaveView.kind === 'conflict' && <button className="pf-btn" onClick={reloadPage}>Reload</button>}
+                  <button className="pf-btn" onClick={leaveWithoutLatest} disabled={leaveAsk.busy}>Leave without latest changes</button>
+                </>)}
               </div>
             </div>
           </div>
@@ -867,7 +1177,14 @@ export default function ProfilePage() {
           {pendingUpload && (
             <div className="pf-pending">
               <AlertCircle />
-              <span><b>New resume uploaded — not saved yet.</b> Optyply is still using your previous resume. Review the details below, then press Save.</span>
+              <span><b>New resume uploaded — not in use yet.</b> Optyply is still using your previous resume. Your edits are saved to this review draft as you go; pressing a Save button makes the new resume the one Optyply uses.</span>
+              <span className={`pf-savestate ${saveState}`} role="status" aria-live="polite">
+                {saveState === 'saving' ? 'Saving…'
+                  : saveState === 'saved' ? 'Saved'
+                  : saveState === 'failed' ? <>Save failed — <button type="button" onClick={() => retrySync()}>Retry</button></>
+                  : saveState === 'conflict' ? <>Changed in another tab — <button type="button" onClick={reloadPage}>Reload</button></>
+                  : 'Not saved — action required'}
+              </span>
               <button className="pf-btn" onClick={cancelUpload} disabled={saving}>Discard</button>
               <button className="pf-btn primary" onClick={() => handleSave('Resume saved')} disabled={saving}>
                 {saving ? 'Saving…' : 'Save now'}

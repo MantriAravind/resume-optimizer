@@ -5,7 +5,7 @@
 // Sitting at a cap alone is never treated as proof (a real bullet list can
 // have exactly 15 items); the source text decides.
 //
-// Output: internal Mongo _id, field path, stored vs expected counts/lengths,
+// Output: hashed id label (id:<hash>, never the raw _id), field path, stored vs expected counts/lengths,
 // status, whether re-import is required. NEVER names, emails, or resume text.
 // The script performs no writes of any kind (find() with projection only).
 //
@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync, mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
+import { idLabel, evidenceHashChecks } from './lib/evidence-hash.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const src = readFileSync(join(here, '..', 'server.js'), 'utf8')
@@ -186,6 +187,9 @@ function selftest() {
   ok('A-12 whole record lost at the record cap (12 stored, 13 in source) → undetermined / review, never not_affected', fI?.status === 'undetermined' && fI.reimport === 'review')
   const ser = JSON.stringify([...rA, ...rB, ...rC, ...rD, ...rF, ...rG, ...rH, ...rI])
   ok('A-06 output carries paths and numbers only — no text', !/Word|Bullet|Sentence|Engineer|Item|Delivered|finance|Tool|Role|Firm|thing/.test(ser))
+  for (const [name, cond] of evidenceHashChecks()) ok('A-13 evidence hash v1: ' + name, cond)
+  const me = readFileSync(fileURLToPath(import.meta.url), 'utf8')
+  ok('A-14 output never prints a raw database id (every user= line goes through idLabel)', !me.includes('user=${' + 'u._id}') && me.includes('user=${idLabel(u._id)}'))
   const pass = res.filter(Boolean).length
   console.log(`audit selftest: ${pass}/${res.length} ${pass === res.length ? 'PASS' : 'FAIL'}`)
   return pass === res.length
@@ -219,7 +223,7 @@ for await (const u of cursor) {
   if (found.some(x => x.status === 'missing_vs_source' || x.status === 'undetermined')) reviewUsers++
   for (const x of found) {
     rows++
-    console.log(`user=${u._id} path=${x.path} stored=${x.stored} expected=${x.expected} missing_source_lines=${x.missingLines ?? '-'} status=${x.status} reimport=${x.reimport}`)
+    console.log(`user=${idLabel(u._id)} path=${x.path} stored=${x.stored} expected=${x.expected} missing_source_lines=${x.missingLines ?? '-'} status=${x.status} reimport=${x.reimport}`)
   }
 }
 console.log(`audit summary: profiles_scanned=${scanned} profiles_with_rows=${candidates} profiles_affected=${affectedUsers} profiles_needing_review=${reviewUsers} rows=${rows}`)

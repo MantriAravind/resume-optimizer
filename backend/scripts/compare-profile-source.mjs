@@ -11,6 +11,8 @@
 //     stored with an added https://). Only the unexplained residual can be loss.
 //   • source order — each stored list appears in the original's order
 //   • record counts, bullet counts and field presence per section
+// Fingerprints use the canonical evidence hash (lib/evidence-hash.mjs, h1:…) and
+// database ids print only as id:<hash>.
 // Output is numbers, booleans and line numbers only — never résumé text. If
 // any lines are unaccounted for, their text is written to a private file in the
 // OS temp directory (outside the repo) for the operator's own review; it is
@@ -24,7 +26,7 @@ import { readFileSync, writeFileSync, mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, dirname } from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
-import { createHash } from 'crypto'
+import { h1, idLabel, evidenceHashChecks } from './lib/evidence-hash.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const src = readFileSync(join(here, '..', 'server.js'), 'utf8')
@@ -267,6 +269,9 @@ function selftest() {
   const strip = r => JSON.stringify({ ...r, unaccounted: r.unaccounted.map(({ text, ...rest }) => rest), explained: r.explained.map(({ text, ...rest }) => rest) })
   const pub = [r2, r7, r8, r9, r10, r11, r12, r13].map(strip).join('')
   { const leak = pub.match(/Beta|Shipped|Acme|Python|Sample|pat-sample|example|reconciliation|ingestion|Senior|platform/i); ok('S-06 printable result carries no résumé text' + (leak ? ' (leaked: ' + leak[0] + ')' : ''), !leak) }
+  for (const [name, cond] of evidenceHashChecks()) ok('S-14 evidence hash v1: ' + name, cond)
+  const me = readFileSync(fileURLToPath(import.meta.url), 'utf8')
+  ok('S-15 output never prints a raw database id (every user= line goes through idLabel)', !me.includes('user=${' + 'u._id}') && me.includes('user=${idLabel(u._id)}'))
   const pass = res.filter(Boolean).length
   console.log(`compare selftest: ${pass}/${res.length} ${pass === res.length ? 'PASS' : 'FAIL'}`)
   return pass === res.length
@@ -286,15 +291,14 @@ await mongoose.connect(uri)
 console.log(`compare: connected to database "${mongoose.connection.name}" (read-only pass)`)
 const users = mongoose.connection.db.collection('users')
 const cursor = users.find({ resumeData: { $ne: null } }, { projection: { resumeData: 1, resumeText: 1, profile: 1, 'resumeFile.data': 1, 'resumeFile.name': 1, 'resumeFile.size': 1 } })
-const sha = t => createHash('sha256').update(String(t || ''), 'utf8').digest('hex').slice(0, 12)
 let n = 0
 for await (const u of cursor) {
   n++
   const f = u.resumeFile
-  if (!f?.data) { console.log(`user=${u._id} original_file=absent -> cannot compare (review)`); continue }
+  if (!f?.data) { console.log(`user=${idLabel(u._id)} original_file=absent -> cannot compare (review)`); continue }
   const buf = Buffer.isBuffer(f.data) ? f.data : Buffer.from(f.data.buffer || f.data)
   const { text } = await extractText(buf, f.name || '')
-  console.log(`user=${u._id} original_file=present bytes=${buf.length} extracted_chars=${text.length} extracted_sha=${sha(text)} confirmed_text_sha=${sha(u.resumeText)} same_text=${sha(text) === sha(u.resumeText)}`)
+  console.log(`user=${idLabel(u._id)} original_file=present bytes=${buf.length} extracted_chars=${text.length} extracted_text=${h1(text)} confirmed_text=${h1(u.resumeText || '')} same_text=${h1(text) === h1(u.resumeText || '')}`)
   const r = compareToSource(u.resumeData, u.profile, text)
   const s = r.sections
   console.log(`  contact: stored_fields=${s.contact.stored}`)
@@ -317,7 +321,7 @@ for await (const u of cursor) {
   console.log(`  stored values not located in their own section: ${r.notInSection.length}${r.notInSection.length ? ' [' + r.notInSection.join(', ') + ']' : ''}`)
   if (r.unaccounted.length || r.explained.length) {
     const dir = mkdtempSync(join(tmpdir(), 'optyply-review-'))
-    const file = join(dir, `lines-below-100-${u._id}.txt`)
+    const file = join(dir, `lines-below-100-${idLabel(u._id).slice(3)}.txt`)
     writeFileSync(file, [...r.explained.map(x => ['PRESENT', x]), ...r.unaccounted.map(x => [x.at === 'all' ? 'MISSING' : 'REVIEW', x])]
       .map(([v, x]) => `${v} line ${x.line} [${x.section}] residual=${x.residual}: ${x.text}`).join('\n') + '\n')
     console.log(`  text of these lines for YOUR review only (do not paste): ${file}`)

@@ -191,6 +191,23 @@ async function runRegressionSuite() {
     ok('R3 ack recorded with sections', Array.isArray(uAck?.completenessAck?.sections) && uAck.completenessAck.sections.includes('summary'))
     ok('R2/R3 replacement semantics: text + file name active after confirm', uAck?.resumeText === up1b.body.text && uAck?.resumeFileName === 'sentinel.pdf')
 
+    // R16 — the review's expiry is reported to the page, fixed at upload + 24 h, and
+    // never extended by autosave (recruiter decisions 2026-09-26). The review is then
+    // discarded so R4 onward see the same state as before.
+    const up16 = await uploadAs(uidA, fixture)
+    const dr16 = await ResumeDraft.findOne({ clerkUserId: uidA }).select('createdAt').lean()
+    const want16 = dr16?.createdAt ? new Date(new Date(dr16.createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString() : 'none'
+    ok('R16a upload reports expiresAt = draft createdAt + 24 h', up16.status === 200 && up16.body?.expiresAt === want16, 'match=' + (up16.body?.expiresAt === want16))
+    const g16 = await (await fetch(BASE + '/me/resume', { headers: as(uidA) })).json()
+    ok('R16b GET /me/resume returns the same expiresAt with the draft', g16?.draft?.expiresAt === want16)
+    await new Promise(r => setTimeout(r, 1100))
+    const s16 = await jpost('/me/resume/draft', uidA, { resumeData: { ...stubStructuredFromText(up16.body.text || ''), summaryBullets: ['Edited during review.'] } })
+    const dr16b = await ResumeDraft.findOne({ clerkUserId: uidA }).select('createdAt').lean()
+    const g16b = await (await fetch(BASE + '/me/resume', { headers: as(uidA) })).json()
+    ok('R16c an accepted autosave leaves createdAt and expiresAt unchanged',
+      s16.status === 200 && new Date(dr16b?.createdAt).getTime() === new Date(dr16?.createdAt).getTime() && g16b?.draft?.expiresAt === want16)
+    await jpost('/me/resume/cancel', uidA, {})
+
     // R4 — original-file preservation, byte-exact
     const rf = await fetch(BASE + '/me/resume-file', { headers: as(uidA) })
     const rfBuf = Buffer.from(await rf.arrayBuffer())
@@ -440,9 +457,10 @@ async function runRegressionSuite() {
     ok('R14f confirming that draft → 422 even WITH the completeness acknowledgment; draft and uploaded file kept; active resume untouched',
       r14f.status === 422 && !!d14b && k14s4.resumeVersion === k14s3.resumeVersion && JSON.stringify(k14s4.resumeData) === JSON.stringify(k14s3.resumeData))
     const r14g = await jpost('/me/resume/draft', uidA, { resumeData: { ...u14.body.resumeData, summary: 'A'.repeat(758) } })
+    const j14g = await r14g.json()
     const d14c = await ResumeDraft.findOne({ clerkUserId: uidA }).lean()
-    ok('R14g autosave of an over-limit edit → 422 and NO write (draft keeps its last complete version)',
-      r14g.status === 422 && d14c.resumeData.summary === d14b.resumeData.summary)
+    ok('R14g autosave of an over-limit edit → 422 naming the section (sections=[Summary], no values) and NO write (draft keeps its last complete version)',
+      r14g.status === 422 && JSON.stringify(j14g.sections) === '["Summary"]' && !/A{20}/.test(JSON.stringify(j14g)) && d14c.resumeData.summary === d14b.resumeData.summary)
     await jpost('/me/resume/cancel', uidA, {})
 
     const uv14 = (await snapA()).resumeVersion || 0

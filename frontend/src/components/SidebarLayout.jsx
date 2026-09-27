@@ -115,6 +115,24 @@ const CSS = `
 .sl-collapsed .sl-user { justify-content: center; }
 .sl-collapsed .sl-user-info { display: none; }
 
+/* One-time note handed over by the page just left (e.g. "review saved as a draft").
+   Non-blocking: fixed at the bottom, closes itself, never stops navigation. */
+.sl-notice {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 70;
+  width: max-content; max-width: calc(100% - 32px); display: flex; align-items: center; gap: 12px;
+  padding: 11px 10px 11px 16px; background: #172033; color: #fff; border-radius: 10px;
+  font-size: 13px; line-height: 1.45; box-shadow: 0 10px 30px rgba(0,0,0,.22);
+}
+.sl-notice-act {
+  flex: none; border: 1px solid rgba(255,255,255,.4); background: none; color: #fff; cursor: pointer;
+  font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 5px 10px; border-radius: 7px;
+}
+.sl-notice-act:hover { background: rgba(255,255,255,.12); }
+.sl-notice-x {
+  flex: none; border: none; background: none; color: #CBD5E1; cursor: pointer;
+  font-family: inherit; font-size: 18px; line-height: 1; padding: 2px 6px;
+}
+
 /* ---- Auto-collapse on small screens (always icon-only; hide the manual toggle) ---- */
 @media (max-width: 820px) {
   .sl-sidebar { width: 68px; }
@@ -154,6 +172,23 @@ export default function SidebarLayout({ children }) {
     }
     navigate(path)
   }
+
+  // One-time note from the page the user just left (2026-09-26: leaving a fully
+  // saved résumé review is not blocked; the next page says the review is saved and
+  // until when). Same window-registry pattern as the leave guard. Shown for 8 s.
+  const [notice, setNotice] = useState(null)
+  useEffect(() => {
+    const n = window.__optyplyNotice
+    if (n && typeof n.text === 'string' && Date.now() - (n.at || 0) < 10000) {
+      window.__optyplyNotice = null
+      setNotice(n)
+    }
+  }, [])
+  useEffect(() => {
+    if (!notice) return
+    const t = setTimeout(() => setNotice(null), 8000)
+    return () => clearTimeout(t)
+  }, [notice])
 
   function toggleCollapsed() {
     setCollapsed(prev => {
@@ -232,6 +267,18 @@ export default function SidebarLayout({ children }) {
       <div className="sl-content">
         {children}
       </div>
+
+      {notice && (
+        <div className="sl-notice" role="status" aria-live="polite">
+          <span>{notice.text}</span>
+          {notice.action && (
+            <button className="sl-notice-act" onClick={() => { const a = notice.action; setNotice(null); go(a.path) }}>
+              {notice.action.label}
+            </button>
+          )}
+          <button className="sl-notice-x" onClick={() => setNotice(null)} aria-label="Dismiss">×</button>
+        </div>
+      )}
     </div>
   )
 }

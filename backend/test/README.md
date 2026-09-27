@@ -76,13 +76,13 @@ Never names, emails or résumé text. A value at a cap is only `affected` when t
 profile's own confirmed source text shows it continued.
 Wrapped continuation lines after the last stored item count as missing; a line
 that could be a wrap or the next record's header is `undetermined`, never a pass
-(fix 2026-09-25 after a false `not_affected`; self-tests A-09..A-12; A-12 = a whole record lost at the record cap returns `undetermined`, never a pass — record drops below a cap are caught by the comparison, S-02).
+(fix 2026-09-25 after a false `not_affected`; self-tests A-09..A-12; A-12 = a whole record lost at the record cap returns `undetermined`, never a pass — record drops below a cap are caught by the comparison, S-02). A-13/A-14: hashed id labels.
 
 ## Full source comparison (read-only, decisive)
 
 ```powershell
 cd backend
-node scripts\compare-profile-source.mjs --selftest   # S-01..S-13, no database
+node scripts\compare-profile-source.mjs --selftest   # S-01..S-15, no database
 node scripts\compare-profile-source.mjs --db=prod    # reads MONGODB_URI_PROD; no writes
 ```
 
@@ -93,6 +93,39 @@ anchored on the line, stored scalar values that explain the gap: an earlier
 identical occurrence, or a URL stored with `https://`). Unexplained residual =
 missing content. Line text goes only to a private OS-temp file — never pasted,
 never committed.
+
+## Autosave refusal is visible (reviewer follow-up 2, 2026-09-25)
+
+`POST /me/resume/draft` refuses an over-limit edit with 422 and `sections`
+(names only, never values; harness R14g).
+
+Review-screen behavior (recruiter decision 5, 2026-09-25 — workflow step 1). The
+sticky review banner always shows one autosave status: **Saving…** · **Saved** ·
+**Save failed — Retry** · **Not saved — action required** · **Changed in another
+tab — Reload**. A refusal shows a card "Not saved — [Section] is too large to save
+without cutting content.", keeps the latest text on screen, and offers **Continue
+editing** (opens that section) and **Undo latest change** (back to the last version
+the server accepted) — never Retry, since repeating the same request cannot succeed.
+A 409 stops autosave until reload, so a newer version is never overwritten.
+
+Leaving during a review never confirms or discards the new resume. A waiting edit
+is sent first (navigation waits up to 8 s for it); then a blocking dialog appears
+only when something would be lost: refused → Continue editing / Undo latest change /
+Leave without latest changes; failed or still saving → Continue editing / Retry save /
+Leave without latest changes; conflict → Stay / Reload / Leave without latest changes;
+a changed open entry → Continue editing / Leave without latest changes. "Leave without
+latest changes" drops only the unsaved browser edit; the server draft keeps its last
+saved version. The browser reload prompt appears only while something is unsaved
+(saving, failed, refused, or a changed open entry).
+
+Navigation note (recruiter, 2026-09-26): when everything is saved, leaving is not
+blocked at all — the next page shows a brief, self-closing note: "Your resume review
+is saved as a draft. You can return before [expiry time] to finish it." The expiry
+comes from the server (`expiresAt` = draft `createdAt` + 24 h, on the upload
+response and on `GET /me/resume`; one constant, `DRAFT_TTL_SECONDS`, also drives the
+TTL index). Autosave never extends it (harness R16a–c).
+Manual UI check: UI-11 (601-character summary → refused; undo; failed with the
+backend stopped → Retry; leave in each state; reload prompt only when unsaved).
 
 ## Affected-profile lock (reviewer ruling 2026-09-25)
 
@@ -109,7 +142,7 @@ sign-in, so the lock cannot be bypassed by dropping the token. After an approved
 
 ```powershell
 cd backend
-node scripts\mark-reimport-required.mjs --selftest                 # K-01..K-09, no database
+node scripts\mark-reimport-required.mjs --selftest                 # K-01..K-11, no database
 node scripts\mark-reimport-required.mjs --db=dev --list            # read-only: _id, structured, locked
 node scripts\mark-reimport-required.mjs --db=prod --user=<_id> '--path=projects[0].bullets' --missing-lines=5          # dry run
 node scripts\mark-reimport-required.mjs --db=prod --user=<_id> '--path=projects[0].bullets' --missing-lines=5 --apply  # writes
@@ -120,11 +153,26 @@ nothing) and prints hashes of the resume text, structured data, original file an
 contact profile before and after — they must read UNCHANGED. `--unlock --apply` is for
 use only after the reviewer approves the repair evidence (or to roll the lock back).
 
+## Evidence hygiene: one fingerprint method, no raw ids (2026-09-25)
+
+Every script whose output is shared as evidence fingerprints values with
+`scripts/lib/evidence-hash.mjs`, version **h1**: SHA-256 (first 12 hex) of a
+string's raw UTF-8 bytes, a file's bytes, or canonical JSON (sorted keys) for
+anything else — so the same résumé text prints the same `h1:` value in the
+comparison and the lock script. A different method would be `h2:`; `h1` never
+changes meaning. Database ids print only as `id:<hash>`; the lock script's
+`--list` is the one operator-only exception (it prints full ids so one can be
+picked, and says so). Self-tests A-13/A-14, S-14/S-15, K-07/K-10/K-11.
+
+For clean UTF-8 evidence files on Windows, run
+`[Console]::OutputEncoding = [System.Text.Encoding]::UTF8` in the PowerShell
+window before `node … | Out-File -Encoding utf8 …`.
+
 ## Test-only environment variables
 
 | Variable | Purpose |
 | --- | --- |
-| `REGRESSION_SUITE=1` | run the full R1–R15 suite, then exit with 0/1 |
+| `REGRESSION_SUITE=1` | run the full R1–R16 suite, then exit with 0/1 |
 | `DRAFT_IMMUTABILITY_TEST=1` | rawText lifecycle hash self-test only |
 | `SWEEP_CONCURRENCY_TEST=1` | parallel-cleanup self-test only |
 | `SIZE_CEILING_TEST_MIB=<n>` | compress the BSON ceiling for boundary tests |

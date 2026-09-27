@@ -18,7 +18,7 @@
 // Output: internal _id, field paths, counts, timestamps, 12-char hashes. Never résumé
 // text or personal data.
 // Exit: 0 done · 1 selftest failed / request refused · 2 setup error
-import { createHash } from 'crypto'
+import { h1, idLabel, bytesOf, evidenceHashChecks } from './lib/evidence-hash.mjs'
 
 const PATH_RE = /^\$\.[a-zA-Z]+(\[\d+\])?(\.[a-zA-Z]+)?$/
 const ID_RE = /^[0-9a-f]{24}$/
@@ -73,23 +73,12 @@ export function plan(doc, o, now) {
   return { action: 'lock', filter: { _id: doc._id, 'repair.reimportRequired': { $ne: true } }, update: { $set: { repair: buildLock(o, now) } } }
 }
 
-const sha = v => createHash('sha256').update(v === undefined ? 'undefined' : Buffer.isBuffer(v) ? v : JSON.stringify(v), typeof v === 'string' ? 'utf8' : undefined).digest('hex').slice(0, 12)
-// Exact bytes of a stored file whether it arrives as a Buffer, a Uint8Array or a BSON
-// Binary (whose .buffer is the Uint8Array of its content).
-const bytesOf = f => {
-  const d = f?.data
-  if (!d) return null
-  if (Buffer.isBuffer(d)) return d
-  if (d instanceof Uint8Array) return Buffer.from(d.buffer, d.byteOffset, d.byteLength)
-  if (d.buffer instanceof Uint8Array) return Buffer.from(d.buffer.buffer, d.buffer.byteOffset, d.buffer.byteLength)
-  return Buffer.from(d)
-}
 // Fingerprint of everything the lock must never touch: hashes only.
 async function fingerprint(users, id) {
   const d = await users.findOne({ _id: id }, { projection: { resumeText: 1, resumeData: 1, 'resumeFile.data': 1, profile: 1, resumeVersion: 1 } })
   if (!d) return null
-  const f = bytesOf(d.resumeFile)
-  return { text: sha(d.resumeText ?? ''), data: sha(d.resumeData ?? null), file: f ? sha(f) : 'none', profile: sha(d.profile ?? null), version: d.resumeVersion ?? 0 }
+  const f = bytesOf(d.resumeFile?.data)
+  return { text: h1(d.resumeText ?? ''), data: h1(d.resumeData ?? null), file: f ? h1(f) : 'none', profile: h1(d.profile ?? null), version: d.resumeVersion ?? 0 }
 }
 const fpLine = fp => `resume_text=${fp.text} resume_data=${fp.data} original_file=${fp.file} contact_profile=${fp.profile} resume_version=${fp.version}`
 const lockLine = r => !r ? 'none' : `reimportRequired:${r.reimportRequired} reason:${r.reason} paths:[${(r.paths || []).join(',')}] missing_source_lines:${r.missingSourceLines} marked_at:${r.markedAt ? new Date(r.markedAt).toISOString() : '-'} repaired_at:${r.repairedAt ? new Date(r.repairedAt).toISOString() : '-'}`
@@ -100,7 +89,7 @@ export async function execute({ users, apps, id, o, now, log }) {
   const doc = raw ? { _id: raw._id, repair: raw.repair || null, structured } : null
   const p = plan(doc, o, now)
   if (p.action === 'refuse') { log(`mark: REFUSED — ${p.why}. Nothing written.`); return { code: 1, plan: p } }
-  log(`mark: user=${String(id)} structured_profile=${structured ? 'yes' : 'no'} lock_before=${lockLine(doc.repair)}`)
+  log(`mark: user=${idLabel(id)} structured_profile=${structured ? 'yes' : 'no'} lock_before=${lockLine(doc.repair)}`)
   const optimizedRows = await apps.countDocuments({ clerkUserId: raw.clerkUserId, optimized: true })
   const fp0 = await fingerprint(users, id)
   log(`mark: untouchable fields before: ${fpLine(fp0)}`)
@@ -127,6 +116,7 @@ export async function execute({ users, apps, id, o, now, log }) {
 // ids and yes/no flags only.
 export async function listUsers(users, log) {
   const rows = await users.find({}, { projection: { _id: 1, repair: 1, updatedAt: 1 } }).limit(50).toArray()
+  log('list: OPERATOR-ONLY — full database ids so you can pick one for --user; do not include this listing in shared evidence')
   for (const r of rows) {
     const structured = (await users.countDocuments({ _id: r._id, resumeData: { $ne: null } })) > 0
     log(`list: user=${String(r._id)} structured_profile=${structured ? 'yes' : 'no'} locked=${r.repair?.reimportRequired === true ? 'yes' : 'no'} updated=${r.updatedAt ? new Date(r.updatedAt).toISOString().slice(0, 10) : '-'}`)
@@ -224,7 +214,7 @@ export async function selftest() {
     +new Date(ul.markedAt) === +now && ul.reason === 'legacy_cap_truncation' && ul.paths.length === 1 && r6c.plan.action === 'none' && r6b.code === 0)
 
   const allLogs = [r1, r2, r3, r6a, r6b, r6c, ...refusals].flatMap(r => r.logs).join('\n')
-  ok('K-07 output carries ids, paths, counts and hashes only — no resume or contact values', allLogs.length > 0 && !allLogs.includes('SENTINEL') && !allLogs.includes('example.com') && !allLogs.includes('user_sentinel'))
+  ok('K-07 output carries hashed id labels, paths, counts and hashes only — no raw database id, no resume or contact values', allLogs.length > 0 && !allLogs.includes(ID) && allLogs.includes('user=' + idLabel(ID)) && !allLogs.includes('SENTINEL') && !allLogs.includes('example.com') && !allLogs.includes('user_sentinel'))
 
   const a = parseArgs(['--path=projects[0].bullets']), b = parseArgs(['--path=$.projects[0].bullets'])
   ok('K-08 --path accepts projects[0].bullets or $.projects[0].bullets (same stored path)', a.paths[0] === b.paths[0] && a.paths[0] === '$.projects[0].bullets')
@@ -232,7 +222,11 @@ export async function selftest() {
   const n9 = await listUsers(db9.users, l => l9.push(l))
   const bad9 = validate(parseArgs(['--db=prod', '--list', '--apply']))
   ok('K-09 --list is read-only: ids + yes/no flags only (structured, locked), zero writes; --list refuses any other option',
-    n9 === 1 && db9.st.writes === 0 && l9[0] === `list: user=${ID} structured_profile=yes locked=yes updated=-` && !l9.join('').includes('SENTINEL') && typeof bad9 === 'string')
+    n9 === 1 && db9.st.writes === 0 && /OPERATOR-ONLY/.test(l9[0]) && l9[1] === `list: user=${ID} structured_profile=yes locked=yes updated=-` && !l9.join('').includes('SENTINEL') && typeof bad9 === 'string')
+  for (const [name, cond] of evidenceHashChecks()) ok('K-10 evidence hash v1: ' + name, cond)
+  const fpLine2 = r2.logs.find(l => l.includes('untouchable fields before')) || ''
+  ok('K-11 fingerprints use the shared h1 method: the resume-text fingerprint equals h1 of the raw text (the same value the comparison script prints)',
+    fpLine2.includes('resume_text=' + h1(base.resumeText)) && fpLine2.includes('original_file=' + h1(Buffer.from(SECRET))))
   const pass = res.filter(Boolean).length
   console.log(`mark selftest: ${pass}/${res.length} ${pass === res.length ? 'PASS' : 'FAIL'}`)
   return pass === res.length
